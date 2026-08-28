@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"lore/internal/connectors/conformance"
 	"lore/internal/entities"
 )
 
@@ -255,6 +256,23 @@ func allDocs(batches []entities.Batch) []entities.Document {
 }
 
 // --- tests -----------------------------------------------------------------
+
+// The shared contract suite: batch-cursor honesty, document identity,
+// idempotency and resumability, asserted identically for every connector. What
+// the fixtures promise beyond the contract is the tests below.
+func TestConformance(t *testing.T) {
+	s := newStub(t)
+	docs := 0
+	for _, batch := range wantBatchedIDs() {
+		docs += len(batch)
+	}
+	conformance.Run(t, func() entities.Connector { return s.connector([]string{fixtureRepo}) }, conformance.Fixture{
+		Docs: docs,
+		// A commit whose committed date ties with the cursor's second is
+		// replayed rather than risked; nothing else re-enters the stream.
+		ReplayableTypes: []entities.DocType{entities.DocTypeCommit},
+	})
+}
 
 func TestChangesStreamsOldestFirstInBatches(t *testing.T) {
 	s := newStub(t)
