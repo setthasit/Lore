@@ -2,9 +2,15 @@ package repositories
 
 import (
 	"context"
+	"errors"
 
 	"lore/internal/entities"
 )
+
+// ErrLeaseLost reports that the caller is no longer the sync lease's holder:
+// another process took the lease over. Implementations wrap it so a caller can
+// tell "your round must stop" apart from "the store could not be reached".
+var ErrLeaseLost = errors.New("sync lease lost to another holder")
 
 // Errors are returned raw with context; classifying them is the service layer's
 // job.
@@ -51,7 +57,8 @@ type IndexStore interface {
 	// any caller may take it over; re-acquiring one already held restarts it.
 	TryAcquireLease(ctx context.Context, holder string) (bool, error)
 
-	// Fails when holder is no longer the holder — how a round learns to stop.
+	// Fails with an error wrapping ErrLeaseLost when holder is no longer the
+	// holder — how a round learns to stop. Any other error is the store failing.
 	HeartbeatLease(ctx context.Context, holder string) error
 
 	// No-op when the lease was already taken over or released.

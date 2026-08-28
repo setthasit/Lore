@@ -1,0 +1,679 @@
+package services_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"iter"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+
+	"go.uber.org/mock/gomock"
+
+	"lore/internal/entities"
+	"lore/internal/errors/internalerror"
+	mock_embedder "lore/internal/mocks/embedder"
+	mock_entities "lore/internal/mocks/entities"
+	mock_repositories "lore/internal/mocks/repositories"
+	mock_services "lore/internal/mocks/services"
+	"lore/internal/repositories"
+	"lore/internal/services"
+)
+
+// The identity contract restated: a round compares the configured embedder's
+// identity against this meta key and refuses to mix vector spaces.
+const (
+	metaKeyEmbedderIdentity = "embedder_identity"
+	currentIdentity         = "openai/text-embedding-3-small/1536"
+	previousIdentity        = "ollama/nomic-embed-text/768"
+)
+
+var errSyncStore = errors.New("store is on fire")
+
+// syncMocks is one round's collaborators, all on a single strict controller: a
+// call the test did not declare fails it, which is how "never checkpoints a
+// batch it could not commit" is asserted — by declaring no SetCursor.
+type syncMocks struct {
+	ctrl    *gomock.Controller
+	store   *mock_repositories.MockIndexStore
+	chunker *mock_services.MockChunker
+	emb     *mock_embedder.MockEmbedder
+}
+
+func newSyncMocks(t *testing.T) syncMocks {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+
+	return syncMocks{
+		ctrl:    ctrl,
+		store:   mock_repositories.NewMockIndexStore(ctrl),
+		chunker: mock_services.NewMockChunker(ctrl),
+		emb:     mock_embedder.NewMockEmbedder(ctrl),
+	}
+}
+
+// heldLease is the lease lifecycle of a round that gets to run: taken once,
+// released exactly once however the round ends.
+func (m syncMocks) heldLease() {
+	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
+	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
+}
+
+// matchingIdentity is an index already built with the configured embedder, so
+// the round proceeds without touching the chunk layer.
+func (m syncMocks) matchingIdentity() {
+	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
+}
+
+func (m syncMocks) connector(name string) *mock_entities.MockConnector {
+	conn := mock_entities.NewMockConnector(m.ctrl)
+	conn.EXPECT().Name().Return(name).AnyTimes()
+
+	return conn
+}
+
+func (m syncMocks) orchestrator(connectors ...entities.Connector) services.SyncOrchestrator {
+	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb)
+}
+
+// syncStreamItem is one (Batch, error) pair a connector yields.
+type syncStreamItem struct {
+	batch entities.Batch
+	err   error
+}
+
+func syncBatch(cursor entities.Cursor, docs ...entities.Document) syncStreamItem {
+	return syncStreamItem{batch: entities.Batch{Docs: docs, Cursor: cursor}}
+}
+
+func syncFailure(err error) syncStreamItem { return syncStreamItem{err: err} }
+
+// syncStream is a connector's change stream that counts how many items it got
+// to yield, so a test can prove the orchestrator abandoned the iterator instead
+// of draining it after a syncFailure.
+type syncStream struct {
+	items  []syncStreamItem
+	yields int
+}
+
+func newSyncStream(items ...syncStreamItem) *syncStream { return &syncStream{items: items} }
+
+func (s *syncStream) seq() iter.Seq2[entities.Batch, error] {
+	return func(yield func(entities.Batch, error) bool) {
+		for _, item := range s.items {
+			s.yields++
+			if !yield(item.batch, item.err) {
+				return
+			}
+		}
+	}
+}
+
+func syncDoc(id entities.DocID) entities.Document {
+	return entities.Document{
+		ID:      id,
+		Source:  "github",
+		Type:    entities.DocTypePR,
+		RepoRef: "github:acme/lore",
+		Title:   "Checkpoint per batch",
+		Body:    "the sync round commits, then checkpoints",
+	}
+}
+
+func syncChunks(id entities.DocID, texts ...string) []entities.Chunk {
+	chunks := make([]entities.Chunk, len(texts))
+	for i, text := range texts {
+		chunks[i] = entities.Chunk{DocID: id, Ordinal: i, Text: text, Source: "github"}
+	}
+
+	return chunks
+}
+
+// withSyncVectors copies chunks with embeddings attached — the shape ReplaceChunks
+// must receive. It copies because the orchestrator fills the very slice the
+// chunker handed it, which would otherwise mutate the expectation too.
+func withSyncVectors(chunks []entities.Chunk, vectors [][]float32) []entities.Chunk {
+	out := make([]entities.Chunk, len(chunks))
+	copy(out, chunks)
+	for i := range out {
+		out[i].Embedding = vectors[i]
+	}
+
+	return out
+}
+
+func assertSyncKind(t *testing.T, err error, want internalerror.Kind) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("Sync() = nil, want a %v error", want)
+	}
+	if got := internalerror.KindOf(err); got != want {
+		t.Fatalf("Sync() error kind = %v, want %v (%v)", got, want, err)
+	}
+}
+
+// A batch is the checkpoint unit: documents, chunks and vectors are all durable
+// before the cursor that skips past them ever is.
+func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.matchingIdentity()
+
+	doc := syncDoc("github:pr:1")
+	next := entities.Cursor{"updated_at": "2024-03-02T09:30:00Z"}
+	vectors := [][]float32{{0.1, 0.2}, {0.3, 0.4}}
+	texts := []string{"first chunk", "second chunk"}
+	stored := withSyncVectors(syncChunks(doc.ID, texts...), vectors)
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), entities.Cursor{"updated_at": "2024-03-01T00:00:00Z"}).
+		Return(newSyncStream(syncBatch(next, doc)).seq())
+
+	gomock.InOrder(
+		m.store.EXPECT().Cursor(gomock.Any(), "github").
+			Return(entities.Cursor{"updated_at": "2024-03-01T00:00:00Z"}, nil),
+		m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil),
+		m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, texts...)),
+		m.emb.EXPECT().Embed(gomock.Any(), texts).Return(vectors, nil),
+		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, stored).Return(nil),
+		m.store.EXPECT().SetCursor(gomock.Any(), "github", next).Return(nil),
+		m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil),
+	)
+
+	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// Every way a batch can fail leaves the previous checkpoint standing: the cursor
+// is never written for a batch that did not fully commit, and the lease is
+// always handed back.
+func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
+	t.Parallel()
+
+	doc := syncDoc("github:pr:1")
+	committed := entities.Cursor{"updated_at": "1"}
+	chunks := syncChunks(doc.ID, "only chunk")
+
+	tests := []struct {
+		name      string
+		setup     func(m syncMocks, conn *mock_entities.MockConnector)
+		want      internalerror.Kind
+		wantCause error
+	}{
+		{
+			name: "cursor unreadable, so the connector is never asked for changes",
+			setup: func(m syncMocks, _ *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errSyncStore)
+			},
+			want:      internalerror.KindInternal,
+			wantCause: errSyncStore,
+		},
+		{
+			name: "connector fails on its first batch",
+			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(errSyncStore)).seq())
+			},
+			want:      internalerror.KindInternal,
+			wantCause: errSyncStore,
+		},
+		{
+			name: "documents cannot be stored",
+			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
+				m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(errSyncStore)
+			},
+			want:      internalerror.KindInternal,
+			wantCause: errSyncStore,
+		},
+		{
+			name: "embedder fails",
+			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
+				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
+				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.emb.EXPECT().Embed(gomock.Any(), []string{"only chunk"}).Return(nil, errSyncStore)
+			},
+			want:      internalerror.KindInternal,
+			wantCause: errSyncStore,
+		},
+		{
+			name: "embedder answers with the wrong number of vectors",
+			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
+				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
+				m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "a", "b"))
+				m.emb.EXPECT().Embed(gomock.Any(), []string{"a", "b"}).
+					Return([][]float32{{0.1}}, nil)
+			},
+			// The embedder's own answer is the fault, so there is no
+			// underlying error to carry.
+			want: internalerror.KindInternal,
+		},
+		{
+			name: "chunks cannot be stored",
+			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
+				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
+				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.emb.EXPECT().Embed(gomock.Any(), gomock.Any()).Return([][]float32{{0.1}}, nil)
+				m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, gomock.Any()).Return(errSyncStore)
+			},
+			want:      internalerror.KindInternal,
+			wantCause: errSyncStore,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.heldLease()
+			m.matchingIdentity()
+
+			conn := m.connector("github")
+			// No SetCursor is declared: the strict controller turns any
+			// checkpoint of an uncommitted batch into a test failure.
+			tt.setup(m, conn)
+
+			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, tt.want)
+			if tt.wantCause != nil && !errors.Is(err, tt.wantCause) {
+				t.Errorf("Sync() error = %v, want it to wrap %v", err, tt.wantCause)
+			}
+		})
+	}
+}
+
+// A connector that dies mid-stream keeps everything it already delivered: the
+// first batch stays checkpointed, and the stream is abandoned rather than
+// drained.
+func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.matchingIdentity()
+
+	first := entities.Cursor{"page": "1"}
+	stream := newSyncStream(
+		syncBatch(first),
+		syncFailure(errSyncStore),
+		syncBatch(entities.Cursor{"page": "3"}),
+	)
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(stream.seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
+	// Exactly one checkpoint, for the batch that committed.
+	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
+	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
+
+	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	assertSyncKind(t, err, internalerror.KindInternal)
+
+	if stream.yields != 2 {
+		t.Errorf("connector yielded %d items, want 2 — the round must abandon the stream, not drain it", stream.yields)
+	}
+}
+
+// Losing the lease mid-round stops the round: the heartbeat is how a holder
+// learns it was taken over, and continuing to write would race the new holder.
+// A heartbeat that fails for any other reason is the store failing, not the
+// lease moving, and saying otherwise would send the user chasing a phantom.
+func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		heartbeat error
+		want      internalerror.Kind
+	}{
+		{
+			name:      "the lease was taken over",
+			heartbeat: fmt.Errorf("sqlite: sync lease is not held by %q: %w", "daemon/1", repositories.ErrLeaseLost),
+			want:      internalerror.KindPrecondition,
+		},
+		{
+			name:      "the store could not be reached",
+			heartbeat: errSyncStore,
+			want:      internalerror.KindInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.heldLease()
+			m.matchingIdentity()
+
+			first := entities.Cursor{"page": "1"}
+			stream := newSyncStream(syncBatch(first), syncBatch(entities.Cursor{"page": "2"}))
+
+			conn := m.connector("github")
+			conn.EXPECT().Changes(gomock.Any(), nil).Return(stream.seq())
+
+			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+			m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
+			m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
+			m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(tt.heartbeat)
+
+			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, tt.want)
+
+			if stream.yields != 1 {
+				t.Errorf("connector yielded %d items, want 1 — a round whose heartbeat failed must stop", stream.yields)
+			}
+		})
+	}
+}
+
+// A round that loses the lease race writes nothing at all — not even a release,
+// which would disturb the holder that won.
+func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(false, nil)
+
+	conn := m.connector("github")
+
+	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	assertSyncKind(t, err, internalerror.KindPrecondition)
+
+	if !strings.Contains(err.Error(), "lease") {
+		t.Errorf("Sync() error = %q, want it to name the lease", err)
+	}
+}
+
+// The mismatch is refused with the remedy spelled out, and nothing is written:
+// re-embedding costs real money and is the caller's call.
+func TestSyncRefusesAnEmbedderIdentityMismatch(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
+
+	conn := m.connector("github")
+
+	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	assertSyncKind(t, err, internalerror.KindPrecondition)
+
+	for _, want := range []string{"lore sync --reembed", previousIdentity, currentIdentity} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Sync() error = %q, want it to name %q", err, want)
+		}
+	}
+}
+
+// An index with no recorded identity is one with no vectors: the configured
+// embedder defines the space instead of conflicting with it.
+func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+
+	gomock.InOrder(
+		m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return("", nil),
+		m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
+	)
+
+	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// --reembed rebuilds the chunk layer: rewind every connector, wipe, and only
+// then record the new identity. Rewinding first means an interrupted rebuild
+// re-streams everything and replaces whatever chunks survived; recording the
+// identity last keeps the mismatch error standing until the rebuild is set up.
+func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		stored string
+	}{
+		{name: "identity changed", stored: previousIdentity},
+		{name: "identity unchanged, the caller still asked for a rebuild", stored: currentIdentity},
+		{name: "identity never recorded", stored: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.heldLease()
+			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
+			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(tt.stored, nil)
+
+			github, notion := m.connector("github"), m.connector("notion")
+			github.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+			notion.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+
+			gomock.InOrder(
+				m.store.EXPECT().SetCursor(gomock.Any(), "github", nil).Return(nil),
+				m.store.EXPECT().SetCursor(gomock.Any(), "notion", nil).Return(nil),
+				m.store.EXPECT().WipeChunks(gomock.Any()).Return(nil),
+				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+				// The full backfill that follows starts from the rewound cursors.
+				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
+				m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil),
+			)
+
+			err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{Reembed: true})
+			if err != nil {
+				t.Fatalf("Sync(Reembed) = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// A re-embed that cannot finish leaves the identity untouched, so the next round
+// still knows the chunk layer needs rebuilding.
+func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(m syncMocks)
+	}{
+		{
+			name: "the cursor cannot be rewound",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().SetCursor(gomock.Any(), "github", nil).Return(errSyncStore)
+			},
+		},
+		{
+			name: "the chunk layer cannot be wiped",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().SetCursor(gomock.Any(), "github", nil).Return(nil)
+				m.store.EXPECT().WipeChunks(gomock.Any()).Return(errSyncStore)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.heldLease()
+			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
+			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
+			// No SetMeta is declared: the strict controller fails the test if a
+			// half-finished rebuild claims the new identity.
+			tt.setup(m)
+
+			conn := m.connector("github")
+
+			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{Reembed: true})
+			assertSyncKind(t, err, internalerror.KindInternal)
+		})
+	}
+}
+
+// Each connector carries its own cursor and its own checkpoints; one source's
+// position never leaks into another's.
+func TestSyncProcessesConnectorsIndependently(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.matchingIdentity()
+
+	ghDoc := syncDoc("github:pr:1")
+	noDoc := entities.Document{ID: "notion:page:9", Source: "notion", Type: entities.DocTypePage}
+	ghCursor := entities.Cursor{"updated_at": "gh-1"}
+	noCursor := entities.Cursor{"last_edited_time": "no-1"}
+
+	github, notion := m.connector("github"), m.connector("notion")
+	github.EXPECT().Changes(gomock.Any(), entities.Cursor{"updated_at": "gh-0"}).
+		Return(newSyncStream(syncBatch(ghCursor, ghDoc)).seq())
+	notion.EXPECT().Changes(gomock.Any(), nil).
+		Return(newSyncStream(syncBatch(noCursor, noDoc)).seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(entities.Cursor{"updated_at": "gh-0"}, nil)
+	m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil)
+
+	for _, doc := range []entities.Document{ghDoc, noDoc} {
+		m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil)
+		m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "body"))
+		m.emb.EXPECT().Embed(gomock.Any(), []string{"body"}).Return([][]float32{{0.5}}, nil)
+		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID,
+			withSyncVectors(syncChunks(doc.ID, "body"), [][]float32{{0.5}})).Return(nil)
+	}
+	m.store.EXPECT().SetCursor(gomock.Any(), "github", ghCursor).Return(nil)
+	m.store.EXPECT().SetCursor(gomock.Any(), "notion", noCursor).Return(nil)
+	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Times(2).Return(nil)
+
+	if err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// A document whose body chunks to nothing still replaces its chunk set, or the
+// previous edit's chunks stay retrievable and cite text that no longer exists.
+func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.matchingIdentity()
+
+	doc := syncDoc("github:pr:1")
+	doc.Body = ""
+	cursor := entities.Cursor{"page": "1"}
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(cursor, doc)).seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil)
+	m.chunker.EXPECT().Chunk(doc).Return(nil)
+	// No Embed is declared: an empty chunk set must not cost an embedding call.
+	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, nil).Return(nil)
+	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
+	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
+
+	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// The holder names the process, so a blocked round can say who is holding the
+// lease, and every lease call in one round speaks for the same holder.
+func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
+	t.Parallel()
+
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown-host"
+	}
+	want := host + "/" + strconv.Itoa(os.Getpid())
+
+	m := newSyncMocks(t)
+	m.matchingIdentity()
+	m.store.EXPECT().TryAcquireLease(gomock.Any(), want).Return(true, nil)
+	m.store.EXPECT().HeartbeatLease(gomock.Any(), want).Return(nil)
+	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(entities.Cursor{"page": "1"})).seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
+	m.store.EXPECT().SetCursor(gomock.Any(), "github", entities.Cursor{"page": "1"}).Return(nil)
+
+	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// A workspace may declare no sources at all; a round over none of them is a
+// round that takes the lease, finds nothing to do, and hands it back.
+func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.heldLease()
+	m.matchingIdentity()
+
+	if err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+// The lease comes back even when the caller's context is already cancelled:
+// otherwise an interrupted round wedges the next one until the TTL lapses.
+func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.matchingIdentity()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
+	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(released context.Context, _ string) error {
+			if released.Err() != nil {
+				t.Errorf("ReleaseLease context = %v, want one the cancellation did not reach", released.Err())
+			}
+
+			return nil
+		})
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(context.Canceled)).seq())
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+
+	assertSyncKind(t, m.orchestrator(conn).Sync(ctx, services.SyncOptions{}), internalerror.KindInternal)
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lore/internal/entities"
+	"lore/internal/repositories"
 )
 
 const leaseTTL = 60 * time.Second
@@ -115,6 +116,8 @@ func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error
 	return affected > 0, nil
 }
 
+// A heartbeat that updates no row means holder lost the lease; that case wraps
+// repositories.ErrLeaseLost so callers can tell it from an unreachable store.
 func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 	res, err := s.db.ExecContext(ctx, heartbeatLeaseSQL, formatTime(s.now()), syncLockID, holder)
 	if err != nil {
@@ -125,7 +128,7 @@ func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 		return fmt.Errorf("sqlite: heartbeat sync lease for %q: %w", holder, err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("sqlite: sync lease is not held by %q", holder)
+		return fmt.Errorf("sqlite: sync lease is not held by %q: %w", holder, repositories.ErrLeaseLost)
 	}
 	return nil
 }

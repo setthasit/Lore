@@ -7,6 +7,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.23.1
 	github.com/spf13/cobra v1.10.2
 	github.com/tetratelabs/wazero v1.11.0
+	go.uber.org/mock v0.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -14,7 +15,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	go.uber.org/mock v0.6.0 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
