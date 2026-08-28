@@ -1,0 +1,85 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 42,
+            "title": "Fix auth timeout",
+            "body": "Closes #41\nDesign: https://www.notion.so/acme/Auth-spec-abc123\nTracking PROJ-123.",
+            "url": "https://github.com/acme/widgets/pull/42",
+            "createdAt": "2024-04-28T08:00:00Z",
+            "updatedAt": "2024-05-04T15:00:00Z",
+            "headRefName": "feature/PROJ-456-auth-timeout",
+            "author": {
+              "login": "ada"
+            },
+            "closingIssuesReferences": {
+              "nodes": [
+                {
+                  "number": 41
+                }
+              ]
+            },
+            "commits": {
+              "pageInfo": {
+                "hasNextPage": true,
+                "endCursor": "cHJjb21taXRjdXJzb3I6MQ=="
+              },
+              "nodes": [
+                {
+                  "commit": {
+                    "oid": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432"
+                  }
+                }
+              ]
+            },
+            "reviews": {
+              "pageInfo": {
+                "hasNextPage": true,
+                "endCursor": "cmV2aWV3Y3Vyc29yOjE="
+              },
+              "nodes": [
+                {
+                  "id": "PRR_kwDOAbCdEf1",
+                  "databaseId": 8801,
+                  "state": "APPROVED",
+                  "body": "LGTM. Matches PROJ-123.",
+                  "url": "https://github.com/acme/widgets/pull/42#pullrequestreview-8801",
+                  "createdAt": "2024-05-02T09:00:00Z",
+                  "updatedAt": "2024-05-02T09:05:00Z",
+                  "author": {
+                    "login": "grace"
+                  },
+                  "comments": {
+                    "pageInfo": {
+                      "hasNextPage": true,
+                      "endCursor": "cmV2aWV3Y29tbWVudGN1cnNvcjox"
+                    },
+                    "nodes": [
+                      {
+                        "databaseId": 9901,
+                        "body": "nit: pass ctx here, see #41",
+                        "path": "internal/auth/auth.go",
+                        "url": "https://github.com/acme/widgets/pull/42#discussion_r9901",
+                        "createdAt": "2024-05-02T09:01:00Z",
+                        "updatedAt": "2024-05-02T09:01:00Z",
+                        "author": {
+                          "login": "grace"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

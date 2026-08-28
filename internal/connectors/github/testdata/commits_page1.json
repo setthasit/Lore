@@ -1,0 +1,40 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": {
+        "target": {
+          "history": {
+            "pageInfo": {
+              "hasNextPage": true,
+              "endCursor": "Y29tbWl0Y3Vyc29yOjE="
+            },
+            "nodes": [
+              {
+                "oid": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+                "url": "https://github.com/acme/widgets/commit/9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+                "messageHeadline": "Fix auth timeout on cold start",
+                "message": "Fix auth timeout on cold start\n\nCloses #41 and unblocks PROJ-123.\nSpec: https://www.notion.so/acme/Auth-spec-abc123.\nFollow-up to 1a2b3c4.\n",
+                "committedDate": "2024-05-03T12:00:00Z",
+                "authoredDate": "2024-05-03T11:45:00Z",
+                "changedFilesIfAvailable": 2,
+                "author": {
+                  "name": "Ada Lovelace",
+                  "user": {
+                    "login": "ada"
+                  }
+                },
+                "associatedPullRequests": {
+                  "nodes": [
+                    {
+                      "number": 42
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

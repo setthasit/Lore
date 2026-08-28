@@ -1,0 +1,34 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": {
+        "target": {
+          "history": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "oid": "1a2b3c4d5e6f708192a3b4c5d6e7f80910111213",
+                "url": "https://github.com/acme/widgets/commit/1a2b3c4d5e6f708192a3b4c5d6e7f80910111213",
+                "messageHeadline": "Add widget cache",
+                "message": "Add widget cache\n\nPROJ-123 groundwork. PROJ-123 again to prove dedupe.\n",
+                "committedDate": "2024-05-01T09:30:00Z",
+                "authoredDate": "2024-05-01T09:30:00Z",
+                "changedFilesIfAvailable": 1,
+                "author": {
+                  "name": "Grace Hopper",
+                  "user": null
+                },
+                "associatedPullRequests": {
+                  "nodes": []
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

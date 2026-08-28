@@ -1,0 +1,21 @@
+{
+  "sha": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+  "commit": {
+    "message": "Fix auth timeout on cold start"
+  },
+  "files": [
+    {
+      "filename": "internal/auth/auth.go",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 3
+    },
+    {
+      "filename": "internal/auth/auth_test.go",
+      "previous_filename": "internal/auth/old_auth_test.go",
+      "status": "renamed",
+      "additions": 40,
+      "deletions": 0
+    }
+  ]
+}
