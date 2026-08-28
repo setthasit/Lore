@@ -1,0 +1,22 @@
+# Agent working state — never committed, never referenced from repo files
+docs/lore/plans/
+
+# Abandoned research — kept locally, not part of the repo
+docs/v2/
+
+# Go build artifacts
+bin/
+dist/
+*.test
+coverage.out
+
+# Local indexes and dev certificates
+*.db
+certs/
+
+# Environment / secrets
+.env
+.env.*
+
+# OS / editor noise
+.DS_Store
