@@ -18,10 +18,7 @@ import (
 const (
 	sourceName = "github"
 
-	// defaultBatchSize is the document count that closes a batch. Batches close
-	// on a unit boundary (a pull request plus its reviews, an issue plus its
-	// comments), so a batch may overshoot; the cursor it carries always points
-	// at a complete unit.
+	// defaultBatchSize closes a batch on the next unit boundary, so it may overshoot.
 	defaultBatchSize = 50
 
 	cursorUpdatedSuffix = ":updated_at"
@@ -30,19 +27,14 @@ const (
 
 var _ entities.Connector = (*Connector)(nil)
 
-// Connector ingests commits, pull requests, reviews, review comments, issues and
-// issue comments for a fixed list of repositories.
 type Connector struct {
 	client    *client
 	repos     []string
 	batchSize int
 }
 
-// Option adjusts a Connector at construction.
 type Option func(*Connector)
 
-// WithHTTPClient replaces the HTTP client, e.g. to install a proxy or a
-// different timeout.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Connector) {
 		if h != nil {
@@ -71,12 +63,8 @@ func withBackoff(base time.Duration) Option {
 	return func(c *Connector) { c.client.baseBackoff = base }
 }
 
-// NewConnector builds a connector for repos ("owner/name" each), authenticating
-// with the personal access token. An empty baseURL means github.com; GitHub
-// Enterprise Server passes its REST root ("https://host/api/v3").
-//
-// Values are explicit on purpose: resolving the token from the environment is
-// the injector's job, not the connector's.
+// NewConnector builds a connector for repos ("owner/name" each). An empty baseURL
+// means github.com; GitHub Enterprise Server passes its REST root, "https://host/api/v3".
 func NewConnector(token string, repos []string, baseURL string, opts ...Option) *Connector {
 	c := &Connector{
 		client:    newClient(token, baseURL),
@@ -89,11 +77,9 @@ func NewConnector(token string, repos []string, baseURL string, opts ...Option) 
 	return c
 }
 
-// Name identifies the connector and prefixes every DocID it mints.
 func (c *Connector) Name() string { return sourceName }
 
-// Changes streams every document updated after the per-repo watermark in cursor,
-// oldest-first, repository by repository in configured order.
+// Changes walks the configured repositories in order, oldest-first within each.
 func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Seq2[entities.Batch, error] {
 	return func(yield func(entities.Batch, error) bool) {
 		state := cloneCursor(cursor)
@@ -123,8 +109,6 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 					continue // already yielded under this cursor
 				}
 				docs = append(docs, u.docs...)
-				// A replayed unit sits at or below the watermark, so the cursor
-				// only ever moves forward.
 				if u.key.after(pos) {
 					pos = u.key
 					writeCursor(state, r, pos)
@@ -144,7 +128,6 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 	}
 }
 
-// repo is a parsed "owner/name" entry from the configured repository list.
 type repo struct {
 	owner string
 	name  string
@@ -159,19 +142,15 @@ func parseRepo(s string) (repo, error) {
 	return repo{owner: owner, name: name, slug: s}, nil
 }
 
-// ref is the Document.RepoRef form, "github:owner/name".
 func (r repo) ref() string { return sourceName + ":" + r.slug }
 
-// numberRef is how a "#123" style reference is emitted: qualified with the
-// repository, because the number alone means nothing outside it.
+// A "#123" reference means nothing outside its repository, so it is qualified.
 func (r repo) numberRef(number int) string {
 	return r.slug + "#" + strconv.Itoa(number)
 }
 
-// unitKey totally orders the top-level items of a repository. The document id
-// breaks ties, because GitHub timestamps have second precision and a single
-// second routinely holds several updates; without the tiebreak a cursor could
-// not distinguish "already yielded" from "same second, not yet yielded".
+// The document id breaks ties: GitHub timestamps have second precision, so a
+// watermark alone cannot tell an already-yielded item from a new one.
 type unitKey struct {
 	updatedAt time.Time
 	docID     entities.DocID
@@ -186,25 +165,17 @@ func (k unitKey) compare(o unitKey) int {
 
 func (k unitKey) after(o unitKey) bool { return k.compare(o) > 0 }
 
-// unit is one top-level item and its dependent documents: a commit alone, a pull
-// request with its reviews and review comments, an issue with its comments.
-// Dependents ride along with their parent because their own edit times are
-// invisible to the watermark — GitHub bumps the parent's updatedAt when a
-// comment changes, which is what pulls the whole unit back into the stream.
+// A unit is a top-level item plus its dependents. Dependents have no watermark of
+// their own — GitHub bumps the parent's updatedAt when a comment changes.
 type unit struct {
 	key  unitKey
 	docs []entities.Document
 
-	// replayOnTie exempts the unit from the document-id tiebreak, so an item
-	// sharing the watermark's second is emitted again instead of being judged
-	// already-seen. Commits set it: they are immutable and can be pushed long
-	// after their committed date, so one lost at a tie would never come back,
-	// whereas an editable pull request or issue re-enters on its next edit.
+	// replayOnTie exempts the unit from the tiebreak: a commit is immutable and can
+	// be pushed long after its committed date, so one lost at a tie never comes back.
 	replayOnTie bool
 }
 
-// emitAfter reports whether the unit still has to be emitted at cursor position
-// from.
 func (u *unit) emitAfter(from unitKey) bool {
 	if u.replayOnTie {
 		return !u.key.updatedAt.Before(from.updatedAt)
@@ -212,14 +183,7 @@ func (u *unit) emitAfter(from unitKey) bool {
 	return u.key.after(from)
 }
 
-// repoUnits fetches everything changed in a repository since from and returns it
-// ordered oldest-first.
-//
-// GitHub returns these connections newest-first and offers no ascending order
-// for commit history, so a watermark sync reads the changed prefix and reverses
-// it here. That buffers one sync round's worth of documents per repository; the
-// first backfill of a large repository is the peak, and batch cursors make an
-// interrupted one resumable rather than fatal.
+// Connections arrive newest-first, so the changed prefix is buffered and reversed.
 func (c *Connector) repoUnits(ctx context.Context, r repo, from unitKey) ([]unit, error) {
 	var since any
 	if !from.updatedAt.IsZero() {
@@ -255,10 +219,8 @@ func (c *Connector) repoUnits(ctx context.Context, r repo, from unitKey) ([]unit
 	return units, nil
 }
 
-// collectUnits drains a newest-first walk, stopping at the first item strictly
-// older than the watermark: everything behind it in that connection is older
-// still. Items sharing the watermark's second keep being read, and the unit key
-// decides which of them was already yielded.
+// The walk stops at the first item strictly older than the watermark; everything
+// behind it is older still. Items sharing that second keep being read.
 func collectUnits[T any](
 	from unitKey,
 	updatedAt func(*T) time.Time,
@@ -284,8 +246,6 @@ func collectUnits[T any](
 	}
 	return units, buildErr
 }
-
-// --- normalization ---------------------------------------------------------
 
 func (c *Connector) commitUnit(ctx context.Context, r repo, n *commitNode) (unit, error) {
 	doc := newDocument(entities.DocTypeCommit, r, r.slug+"/commit/"+n.OID)
@@ -326,8 +286,6 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
 	var refs refSet
-	// Explicit API relations first: the resolver turns a full 40-character SHA
-	// and a closing-issue number into pr_closes_issue / commit_in_pr edges.
 	for _, issue := range n.ClosingIssuesReferences.Nodes {
 		refs.add(entities.RefKindPRNumber, r.numberRef(issue.Number))
 	}
@@ -356,9 +314,6 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 	return unit{key: unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID}, docs: docs}, nil
 }
 
-// reviewDocs normalizes one review and its inline comments. Their ids hang off
-// the pull request's external id with the review's web URL fragment appended, so
-// stripping the fragment yields the thread they belong to.
 func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, number int, rv *reviewNode) ([]entities.Document, error) {
 	doc := newDocument(entities.DocTypePRReview, r, prExternal+commentFragment(rv.URL, "pullrequestreview-", rv.DatabaseID))
 	doc.Title = reviewTitle(r, number, rv.State)
@@ -445,9 +400,7 @@ func newDocument(t entities.DocType, r repo, externalID string) entities.Documen
 	}
 }
 
-// timestamps returns the event and edit times, filling either from the other
-// when the source left one empty: an unedited object and a commit without an
-// author date both have to arrive with both fields set.
+// Either timestamp fills from the other when the source left one empty.
 func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	switch {
 	case updated.IsZero():
@@ -458,9 +411,7 @@ func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	return created, updated
 }
 
-// commentFragment mirrors the web URL fragment identifying a comment-like
-// object ("#issuecomment-9"). The API URL carries it; the database id is the
-// fallback for a response that omitted the URL.
+// The API URL carries the fragment; the database id is the fallback when it is absent.
 func commentFragment(url, prefix string, databaseID int64) string {
 	if _, fragment, ok := strings.Cut(url, "#"); ok && fragment != "" {
 		return "#" + fragment
@@ -483,15 +434,10 @@ func reviewCommentTitle(r repo, number int, path string) string {
 	return title + " (" + path + ")"
 }
 
-// --- references ------------------------------------------------------------
-
 var (
-	// ticketKeyPattern is the Jira-style key that makes commit and PR text
-	// resolve against ingested tickets.
 	ticketKeyPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
 
-	// urlPattern deliberately keeps bracketing characters out of the match so a
-	// markdown link yields the bare URL.
+	// Bracketing characters stay out of the match so a markdown link yields a bare URL.
 	urlPattern = regexp.MustCompile(`https?://[^\s<>()\[\]{}"'` + "`" + `]+`)
 
 	// crossRefPattern matches "#123" and "owner/repo#123".
@@ -504,9 +450,8 @@ var (
 // urlTrailing is punctuation that ends a sentence rather than a URL.
 const urlTrailing = ".,;:!?"
 
-// refSet accumulates a document's references, dropping duplicates while keeping
-// first-seen order. Explicit API relations are added before text matches, so the
-// resolver sees the authoritative form of a reference first.
+// refSet drops duplicates while keeping first-seen order. Explicit API relations are
+// added before text matches, so the resolver sees the authoritative form first.
 type refSet struct {
 	seen map[entities.RawRef]struct{}
 	refs []entities.RawRef
@@ -533,9 +478,7 @@ func (s *refSet) addAll(kind entities.RefKind, values []string) {
 	}
 }
 
-// addText extracts every textual reference form from a body, title or branch
-// name. Precision is the resolver's problem: an unresolvable match stays a
-// pending ref and never becomes an edge.
+// Precision is the resolver's problem: an unresolvable match never becomes an edge.
 func (s *refSet) addText(r repo, text string) {
 	if text == "" {
 		return
@@ -560,10 +503,7 @@ func (s *refSet) addText(r repo, text string) {
 
 func (s *refSet) slice() []entities.RawRef { return s.refs }
 
-// --- cursor ----------------------------------------------------------------
-
-// readCursor decodes a repository's watermark. A malformed watermark is an error
-// rather than a silent full re-backfill.
+// A malformed watermark is an error rather than a silent full re-backfill.
 func readCursor(c entities.Cursor, r repo) (unitKey, error) {
 	raw := c[r.slug+cursorUpdatedSuffix]
 	if raw == "" {
@@ -581,8 +521,7 @@ func writeCursor(c entities.Cursor, r repo, k unitKey) {
 	c[r.slug+cursorDocSuffix] = string(k.docID)
 }
 
-// cloneCursor copies the cursor so a yielded batch owns its own map: the caller
-// persists it, and the iterator keeps advancing.
+// A yielded batch owns its own map: the caller persists it while the iterator advances.
 func cloneCursor(c entities.Cursor) entities.Cursor {
 	if len(c) == 0 {
 		return entities.Cursor{}

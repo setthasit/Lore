@@ -16,21 +16,17 @@ import (
 const (
 	defaultBaseURL = "https://api.github.com"
 
-	// requestTimeout bounds a single HTTP attempt. GraphQL pages with nested
-	// connections are the slow case; retries get a fresh timeout each attempt.
+	// requestTimeout bounds one attempt; retries get a fresh timeout each.
 	requestTimeout = 60 * time.Second
 
 	// defaultMaxAttempts counts the first try, so four retries follow it.
 	defaultMaxAttempts = 5
 
-	// defaultBaseBackoff doubles per attempt up to maxBackoff whenever the
-	// response carries no server-provided delay.
+	// defaultBaseBackoff doubles per attempt up to maxBackoff, absent a server delay.
 	defaultBaseBackoff = time.Second
 	maxBackoff         = 30 * time.Second
 
-	// maxRetryWait caps a server-requested delay. A longer wait is refused
-	// rather than slept through: the sync round ends, the last batch cursor
-	// stays durable, and the scheduler resumes from it on the next tick.
+	// maxRetryWait caps a server-requested delay; a longer one ends the sync round.
 	maxRetryWait = 2 * time.Minute
 
 	// maxResponseBytes guards against an unbounded read of a malformed body.
@@ -39,21 +35,15 @@ const (
 	// maxErrorBody bounds how much of a failing body reaches an error message.
 	maxErrorBody = 512
 
-	// Page sizes are fixed rather than configurable: GitHub rejects a query
-	// whose *potential* node count exceeds 500,000, and PRs nest two levels
-	// (reviews, then review comments), so prPageSize * nestedPageSize^2 is the
-	// number that has to stay small.
+	// GitHub rejects a query whose potential node count exceeds 500,000, and PRs nest
+	// two levels, so prPageSize * nestedPageSize^2 is the number that has to stay small.
 	pageSize       = 50
 	prPageSize     = 20
 	nestedPageSize = 20
 )
 
-// client is the GitHub transport: one GraphQL endpoint for reading objects and
-// one REST endpoint for a commit's touched-file list, which GraphQL does not
-// expose at all.
-//
-// The token only ever reaches the Authorization header. Nothing here logs, and
-// no error message includes a header or the token.
+// client is the GitHub transport. The token only ever reaches the Authorization
+// header: nothing here logs, and no error message carries a header.
 type client struct {
 	http        *http.Client
 	baseURL     string
@@ -79,9 +69,8 @@ func newClient(token, baseURL string) *client {
 	}
 }
 
-// graphqlURL resolves the GraphQL endpoint. GitHub Enterprise Server splits the
-// two APIs (REST at https://host/api/v3, GraphQL at https://host/api/graphql)
-// whereas github.com serves both under https://api.github.com.
+// GitHub Enterprise Server splits the APIs (REST /api/v3, GraphQL /api/graphql);
+// github.com serves both under api.github.com.
 func (c *client) graphqlURL() string {
 	if root, ok := strings.CutSuffix(c.baseURL, "/api/v3"); ok {
 		return root + "/api/graphql"
@@ -106,9 +95,8 @@ type graphQLError struct {
 
 type graphQLErrors []graphQLError
 
-// err turns a GraphQL error array into one error. A RATE_LIMITED entry is the
-// primary GraphQL limit, which arrives as HTTP 200 with no Retry-After, so it is
-// marked retryable and falls back to exponential backoff.
+// A RATE_LIMITED entry is the primary GraphQL limit: HTTP 200 with no Retry-After,
+// so it is marked retryable and falls back to exponential backoff.
 func (e graphQLErrors) err() error {
 	if len(e) == 0 {
 		return nil
@@ -132,17 +120,14 @@ func (e graphQLErrors) err() error {
 	return err
 }
 
-// retryableError marks a failure worth another attempt. after carries a
-// server-requested delay; zero means "use exponential backoff".
 type retryableError struct {
 	err   error
-	after time.Duration
+	after time.Duration // server-requested delay; zero means exponential backoff
 }
 
 func (e *retryableError) Error() string { return e.err.Error() }
 func (e *retryableError) Unwrap() error { return e.err }
 
-// execute POSTs a GraphQL query and decodes data into out.
 func (c *client) execute(ctx context.Context, query string, variables map[string]any, out any) error {
 	body, err := json.Marshal(graphQLRequest{Query: query, Variables: variables})
 	if err != nil {
@@ -150,8 +135,6 @@ func (c *client) execute(ctx context.Context, query string, variables map[string
 	}
 
 	var resp graphQLResponse
-	// The check runs inside the retry loop so a RATE_LIMITED payload — which is
-	// a 200 — is retried on the same attempt budget as a 429.
 	_, err = c.do(ctx, http.MethodPost, c.graphqlURL(), body, func(payload []byte) error {
 		resp = graphQLResponse{}
 		if err := json.Unmarshal(payload, &resp); err != nil {
@@ -171,8 +154,7 @@ func (c *client) execute(ctx context.Context, query string, variables map[string
 	return nil
 }
 
-// do runs one request with retries. check validates a 200 payload and may
-// itself demand a retry.
+// check validates a 200 payload and may itself demand a retry.
 func (c *client) do(ctx context.Context, method, url string, body []byte, check func([]byte) error) ([]byte, error) {
 	for attempt := 1; ; attempt++ {
 		payload, err := c.attempt(ctx, method, url, body)
@@ -243,16 +225,8 @@ func (c *client) attempt(ctx context.Context, method, url string, body []byte) (
 	return nil, statusErr
 }
 
-// retryableStatus decides whether a non-200 deserves another attempt.
-//
-// Exact triggers:
-//   - 429 Too Many Requests — GitHub's secondary (abuse) rate limit; always
-//     retryable, and it always carries Retry-After.
-//   - 403 Forbidden — retryable *only* with rate-limit evidence: a Retry-After
-//     header, x-ratelimit-remaining: 0 (primary limit exhausted), or a body
-//     message naming the secondary rate limit / abuse detection mechanism.
-//     A bare 403 is a permissions or SSO problem that retrying cannot fix.
-//   - 500, 502, 503, 504 — GraphQL answers an internal timeout with 502.
+// A bare 403 is a permissions or SSO problem, so it is retryable only with
+// rate-limit evidence. GraphQL answers an internal timeout with 502.
 func retryableStatus(status int, header http.Header, payload []byte) bool {
 	switch status {
 	case http.StatusTooManyRequests:
@@ -269,9 +243,7 @@ func retryableStatus(status int, header http.Header, payload []byte) bool {
 	return false
 }
 
-// retryDelay reads the server's own instruction: Retry-After (seconds or
-// HTTP-date), else the primary-limit reset epoch once the quota is exhausted.
-// Zero means the caller should back off exponentially instead.
+// Retry-After, else the primary-limit reset epoch; zero means back off exponentially.
 func retryDelay(header http.Header, now time.Time) time.Duration {
 	if raw := strings.TrimSpace(header.Get("Retry-After")); raw != "" {
 		if seconds, err := strconv.Atoi(raw); err == nil {
@@ -311,9 +283,8 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// apiMessage extracts the human-readable part of an error body: REST uses
-// {"message": …}, GraphQL uses {"errors": [{"message": …}]}. Anything else is
-// returned truncated, so an HTML error page cannot flood an error string.
+// REST uses {"message": …}, GraphQL {"errors": [{"message": …}]}. Anything else is
+// truncated so an HTML error page cannot flood an error string.
 func apiMessage(payload []byte) string {
 	var body struct {
 		Message string        `json:"message"`
@@ -337,15 +308,12 @@ func truncate(s string) string {
 	return s[:maxErrorBody] + "…"
 }
 
-// --- wire shapes -----------------------------------------------------------
-
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
 	EndCursor   string `json:"endCursor"`
 }
 
-// next reports the cursor for the following page. An empty endCursor ends
-// pagination even when hasNextPage is set, so a malformed page cannot loop.
+// An empty endCursor ends pagination even when hasNextPage is set.
 func (p pageInfo) next() (string, bool) {
 	if !p.HasNextPage || p.EndCursor == "" {
 		return "", false
@@ -385,8 +353,7 @@ type commitNode struct {
 	} `json:"associatedPullRequests"`
 }
 
-// author prefers the linked GitHub account and falls back to the raw git author
-// name, which is all an unlinked commit carries.
+// Falls back to the raw git author name, which is all an unlinked commit carries.
 func (c *commitNode) author() string {
 	if c.Author == nil {
 		return ""
@@ -397,9 +364,7 @@ func (c *commitNode) author() string {
 	return c.Author.Name
 }
 
-// touchesFiles reports whether the touched-file list is worth a REST call. A
-// null changedFilesIfAvailable means GitHub could not compute the count, and the
-// file list may still exist, so it is fetched.
+// A null changedFilesIfAvailable means the count is unknown, so the list is fetched.
 func (c *commitNode) touchesFiles() bool {
 	return c.ChangedFiles == nil || *c.ChangedFiles > 0
 }
@@ -553,12 +518,8 @@ type issueCommentsResponse struct {
 	} `json:"repository"`
 }
 
-// --- queries ---------------------------------------------------------------
-//
-// Each query is named so a fixture server (and GitHub's own request log) can
-// tell them apart. Top-level connections come back newest-first: GitHub offers
-// no ascending order for commit history, and descending order lets an
-// incremental sync stop at the watermark instead of paging to the repo's start.
+// Top-level connections come back newest-first, and GitHub offers no ascending order
+// for commit history, so an incremental sync can stop at the watermark.
 
 const commitsQuery = `query LoreCommits($owner: String!, $name: String!, $first: Int!, $after: String, $since: GitTimestamp) {
   repository(owner: $owner, name: $name) {
@@ -703,11 +664,8 @@ const issueCommentsQuery = `query LoreIssueComments($owner: String!, $name: Stri
   }
 }`
 
-// --- paginated reads -------------------------------------------------------
-
-// eachCommit walks default-branch history newest-first, stopping when visit
-// returns false. since filters on committed date server-side; pass nil for a
-// full backfill.
+// eachCommit walks default-branch history newest-first. since filters on committed
+// date server-side; nil means a full backfill.
 func (c *client) eachCommit(ctx context.Context, r repo, since any, visit func(*commitNode) bool) error {
 	var after any
 	for {
@@ -734,8 +692,7 @@ func (c *client) eachCommit(ctx context.Context, r repo, since any, visit func(*
 	}
 }
 
-// eachPullRequest walks pull requests newest-first by update time. GitHub offers
-// no since filter here, so visit stops the walk at the watermark.
+// GitHub offers no since filter here, so visit stops the walk at the watermark.
 func (c *client) eachPullRequest(ctx context.Context, r repo, visit func(*prNode) bool) error {
 	var after any
 	for {
@@ -758,9 +715,7 @@ func (c *client) eachPullRequest(ctx context.Context, r repo, visit func(*prNode
 	}
 }
 
-// eachIssue walks issues newest-first by update time; since is the server-side
-// filterBy watermark. Pull requests are excluded by the issues connection
-// itself.
+// since is the server-side filterBy watermark; the issues connection excludes PRs.
 func (c *client) eachIssue(ctx context.Context, r repo, since any, visit func(*issueNode) bool) error {
 	var after any
 	for {
@@ -783,8 +738,6 @@ func (c *client) eachIssue(ctx context.Context, r repo, since any, visit func(*i
 	}
 }
 
-// reviews returns every review of a pull request, extending the page that came
-// with the pull request itself.
 func (c *client) reviews(ctx context.Context, r repo, number int, first reviewConnection) ([]reviewNode, error) {
 	nodes := first.Nodes
 	pi := first.PageInfo
@@ -807,8 +760,6 @@ func (c *client) reviews(ctx context.Context, r repo, number int, first reviewCo
 	}
 }
 
-// reviewComments returns every comment of one review, extending the page that
-// came with the review.
 func (c *client) reviewComments(ctx context.Context, reviewID string, first reviewCommentConnection) ([]reviewCommentNode, error) {
 	nodes := first.Nodes
 	pi := first.PageInfo
@@ -827,8 +778,6 @@ func (c *client) reviewComments(ctx context.Context, reviewID string, first revi
 	}
 }
 
-// commitOIDs returns every commit SHA of a pull request, extending the page that
-// came with the pull request.
 func (c *client) commitOIDs(ctx context.Context, r repo, number int, first prCommitConnection) ([]string, error) {
 	oids := make([]string, 0, len(first.Nodes))
 	pi := first.PageInfo
@@ -853,8 +802,6 @@ func (c *client) commitOIDs(ctx context.Context, r repo, number int, first prCom
 	}
 }
 
-// issueComments returns every comment of an issue, extending the page that came
-// with the issue.
 func (c *client) issueComments(ctx context.Context, r repo, number int, first issueCommentConnection) ([]issueCommentNode, error) {
 	nodes := first.Nodes
 	pi := first.PageInfo
@@ -874,9 +821,8 @@ func (c *client) issueComments(ctx context.Context, r repo, number int, first is
 	}
 }
 
-// commitFiles lists the paths a commit touched. GraphQL exposes only a changed
-// file *count*, so this is the one REST call in the connector; renames
-// contribute both the new and the previous path.
+// GraphQL exposes only a changed-file count, so this is the connector's one REST
+// call. Renames contribute both the new and the previous path.
 func (c *client) commitFiles(ctx context.Context, r repo, oid string) ([]string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/commits/%s", c.baseURL, r.owner, r.name, oid)
 	payload, err := c.do(ctx, http.MethodGet, url, nil, nil)

@@ -59,8 +59,6 @@ func wantCursors() []entities.Cursor {
 	}
 }
 
-// --- stub API --------------------------------------------------------------
-
 var operationPattern = regexp.MustCompile(`query\s+(\w+)`)
 
 // stub replays hand-written fixtures shaped like real GraphQL and REST
@@ -201,8 +199,6 @@ func (s *stub) authHeader() string {
 	return s.auth
 }
 
-// --- iteration helpers -----------------------------------------------------
-
 type stream struct {
 	batches  []entities.Batch
 	err      error
@@ -255,11 +251,6 @@ func allDocs(batches []entities.Batch) []entities.Document {
 	return docs
 }
 
-// --- tests -----------------------------------------------------------------
-
-// The shared contract suite: batch-cursor honesty, document identity,
-// idempotency and resumability, asserted identically for every connector. What
-// the fixtures promise beyond the contract is the tests below.
 func TestConformance(t *testing.T) {
 	s := newStub(t)
 	docs := 0
@@ -550,7 +541,6 @@ func TestDocumentMetadata(t *testing.T) {
 	}
 }
 
-// externalID drops the "github:<type>:" prefix of a DocID.
 func externalID(t *testing.T, id entities.DocID) string {
 	t.Helper()
 	parts := strings.SplitN(string(id), ":", 3)

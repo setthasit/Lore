@@ -8,32 +8,21 @@ import (
 	"lore/internal/entities"
 )
 
-// Fixture declares what the connector's test source holds. It exists so the
-// suite can tell a satisfied contract from a source that yields nothing: every
-// assertion below holds vacuously over an empty stream.
 type Fixture struct {
 	// Docs is the number of documents one full, cursor-less stream yields.
 	Docs int
 
-	// ResumeAfterBatch indexes the full-stream batch whose cursor the
-	// resumability check resumes from — the crash point being simulated: that
-	// batch was committed, everything after it was not. Zero, the first batch,
-	// exercises the longest replay window; the index has to leave at least one
-	// batch behind it.
+	// ResumeAfterBatch indexes the full-stream batch whose cursor the resume check
+	// starts from: that batch was committed, everything after it was not.
 	ResumeAfterBatch int
 
-	// ReplayableTypes lists the DocTypes the connector's package doc declares as
-	// replayed on resume: immutable records it re-yields rather than risk
-	// dropping, such as a commit whose watermark ties with the cursor's second.
-	// Only these types may reappear below a resume position, where upsert by
-	// DocID absorbs them; any other reappearance is a duplicate.
+	// ReplayableTypes may reappear below the resume position — immutable records the
+	// connector re-yields rather than risk dropping. Any other reappearance is a duplicate.
 	ReplayableTypes []entities.DocType
 }
 
-// Run asserts the connector contract against fixture. newConnector is called
-// once per stream and must return a connector over the same unchanged source
-// every time; a connector that caches nothing between streams may return the
-// same instance.
+// Run asserts the connector contract against fixture. newConnector is called once
+// per stream and must open the same unchanged source every time.
 func Run(t *testing.T, newConnector func() entities.Connector, fixture Fixture) {
 	t.Helper()
 	if newConnector == nil {
@@ -59,9 +48,6 @@ func Run(t *testing.T, newConnector func() entities.Connector, fixture Fixture) 
 	t.Run("resume from a mid-stream cursor", func(t *testing.T) { assertResumable(t, newConnector, full, fixture) })
 }
 
-// assertBatchCursors checks that every batch is checkpointable. The batch is the
-// checkpoint unit: a batch whose cursor says nothing cannot be committed without
-// re-reading the stream from the start after a crash.
 func assertBatchCursors(t *testing.T, batches []entities.Batch) {
 	for i, b := range batches {
 		if len(b.Cursor) == 0 {
@@ -70,8 +56,6 @@ func assertBatchCursors(t *testing.T, batches []entities.Batch) {
 	}
 }
 
-// assertIdentity checks the fields every downstream stage needs: an id to upsert
-// by, a source and type to route on, a URL to cite, and both timestamps.
 func assertIdentity(t *testing.T, batches []entities.Batch, source string) {
 	for i, b := range batches {
 		for j, d := range b.Docs {
@@ -102,9 +86,6 @@ func assertIdentity(t *testing.T, batches []entities.Batch, source string) {
 	}
 }
 
-// assertIdempotent checks that an unchanged source streams identically twice.
-// Without this a re-run after a failed sync round could not be trusted to
-// reproduce what the interrupted round had already committed.
 func assertIdempotent(t *testing.T, newConnector func() entities.Connector, full []entities.Batch) {
 	second, err := collect(newConnector(), nil)
 	if err != nil {
@@ -124,11 +105,6 @@ func assertIdempotent(t *testing.T, newConnector func() entities.Connector, full
 	}
 }
 
-// assertResumable simulates a crash after batch fixture.ResumeAfterBatch was
-// committed: that batch's cursor is durable, the batches after it are not. The
-// documents already covered plus the resumed stream have to add up to exactly
-// the full stream — no document lost, none yielded twice unless its type is
-// declared replayable.
 func assertResumable(t *testing.T, newConnector func() entities.Connector, full []entities.Batch, fixture Fixture) {
 	if len(full) < 2 {
 		t.Fatalf("the full stream has %d batch(es): a mid-stream resume needs at least two", len(full))
@@ -188,8 +164,6 @@ func assertResumable(t *testing.T, newConnector func() entities.Connector, full 
 	}
 }
 
-// collect drains a stream to completion. An error ends the read the way the
-// orchestrator ends a round: nothing past it is trusted.
 func collect(c entities.Connector, cursor entities.Cursor) ([]entities.Batch, error) {
 	var batches []entities.Batch
 	for batch, err := range c.Changes(context.Background(), cursor) {
@@ -209,7 +183,6 @@ func countDocs(batches []entities.Batch) int {
 	return n
 }
 
-// ids flattens a stream to its document ids in yield order.
 func ids(batches []entities.Batch) []entities.DocID {
 	out := make([]entities.DocID, 0, countDocs(batches))
 	for _, b := range batches {

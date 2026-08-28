@@ -71,9 +71,6 @@ func plainBody(paragraphs int) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// assertInvariants checks what every chunk of every document must satisfy:
-// sequential 0-based ordinals, copied metadata, non-empty valid text and no
-// embedding (the sync service fills vectors later).
 func assertInvariants(t *testing.T, doc entities.Document, chunks []entities.Chunk) {
 	t.Helper()
 	for i, c := range chunks {
