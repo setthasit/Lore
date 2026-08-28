@@ -7,7 +7,11 @@ import (
 	"strconv"
 )
 
-const schemaVersion = "1"
+// schemaVersion is the on-disk schema generation; an incompatible bump is
+// resolved by rebuilding the workspace file, never migrating it. Generation 2
+// added cursors.updated_at — without the bump a generation-1 file would pass
+// the identity check and fail raw on the first SetCursor.
+const schemaVersion = "2"
 
 // Keys the store itself owns in the meta table.
 const (
@@ -76,8 +80,9 @@ CREATE TABLE IF NOT EXISTS pending_refs (
 ) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS cursors (
-	connector TEXT PRIMARY KEY,
-	payload   TEXT NOT NULL
+	connector  TEXT PRIMARY KEY,
+	payload    TEXT NOT NULL,
+	updated_at TEXT NOT NULL
 ) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS sync_lock (

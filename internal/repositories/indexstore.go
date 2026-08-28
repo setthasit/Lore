@@ -64,5 +64,10 @@ type IndexStore interface {
 	// No-op when the lease was already taken over or released.
 	ReleaseLease(ctx context.Context, holder string) error
 
+	// Stats reports the index's operational state: contents, checkpoint
+	// freshness per connector, and lease state. An empty index reports zeros
+	// and no rows, not an error.
+	Stats(ctx context.Context) (entities.IndexStats, error)
+
 	Close() error
 }

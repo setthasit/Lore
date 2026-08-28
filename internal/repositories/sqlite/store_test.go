@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,36 @@ func TestOpenIsIdempotentAndGuardsVectorWidth(t *testing.T) {
 
 	if _, err := Open(path, testDims+1); err == nil {
 		t.Error("reopening with a different vector width succeeded, want an error")
+	}
+}
+
+// A file written by an older generation of the schema is refused rather than
+// used: the index is derived data, so the answer is deleting it and re-syncing,
+// and the alternative is a file whose tables are one generation behind the SQL
+// this build runs against them.
+func TestOpenRefusesAnOlderSchemaGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workspace.db")
+
+	s, err := Open(path, testDims)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_, err = s.db.ExecContext(context.Background(),
+		`UPDATE meta SET value = '1' WHERE key = ?`, metaKeySchemaVersion)
+	if err != nil {
+		t.Fatalf("age the recorded generation: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stale, err := Open(path, testDims)
+	if err == nil {
+		_ = stale.Close()
+		t.Fatal("reopening a generation-1 file succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), metaKeySchemaVersion) || !strings.Contains(err.Error(), schemaVersion) {
+		t.Errorf("error %q does not name the recorded and expected generations", err)
 	}
 }
 

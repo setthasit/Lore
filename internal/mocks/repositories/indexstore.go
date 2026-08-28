@@ -200,6 +200,21 @@ func (mr *MockIndexStoreMockRecorder) SetMeta(ctx, key, value any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetMeta", reflect.TypeOf((*MockIndexStore)(nil).SetMeta), ctx, key, value)
 }
 
+// Stats mocks base method.
+func (m *MockIndexStore) Stats(ctx context.Context) (entities.IndexStats, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Stats", ctx)
+	ret0, _ := ret[0].(entities.IndexStats)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Stats indicates an expected call of Stats.
+func (mr *MockIndexStoreMockRecorder) Stats(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stats", reflect.TypeOf((*MockIndexStore)(nil).Stats), ctx)
+}
+
 // TryAcquireLease mocks base method.
 func (m *MockIndexStore) TryAcquireLease(ctx context.Context, holder string) (bool, error) {
 	m.ctrl.T.Helper()

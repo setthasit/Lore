@@ -19,8 +19,10 @@ const syncLockID = 1
 const (
 	selectCursorSQL = `SELECT payload FROM cursors WHERE connector = ?`
 	upsertCursorSQL = `
-INSERT INTO cursors (connector, payload) VALUES (?, ?)
-ON CONFLICT(connector) DO UPDATE SET payload = excluded.payload`
+INSERT INTO cursors (connector, payload, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(connector) DO UPDATE SET
+	payload    = excluded.payload,
+	updated_at = excluded.updated_at`
 
 	selectMetaSQL = `SELECT value FROM meta WHERE key = ?`
 	upsertMetaSQL = `
@@ -45,12 +47,15 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 	return c, nil
 }
 
+// SetCursor stamps the row with the store clock, not a timestamp parsed from
+// the opaque Cursor: checkpoint freshness must be answerable for every
+// connector alike.
 func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("sqlite: encode cursor of %q: %w", connector, err)
 	}
-	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, connector, string(payload)); err != nil {
+	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, connector, string(payload), formatTime(s.now())); err != nil {
 		return fmt.Errorf("sqlite: write cursor of %q: %w", connector, err)
 	}
 	return nil
