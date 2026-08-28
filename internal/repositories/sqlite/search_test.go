@@ -10,8 +10,7 @@ import (
 	"lore/internal/entities"
 )
 
-// corpusEntry is one document with one chunk, so a document id names a hit
-// unambiguously.
+// One document with one chunk, so a document id names a hit unambiguously.
 type corpusEntry struct {
 	id        entities.DocID
 	source    string
@@ -26,11 +25,9 @@ func day(month, d int) time.Time {
 	return time.Date(2025, time.Month(month), d, 12, 0, 0, 0, time.UTC)
 }
 
-// searchCorpus is deliberately shaped for ranking assertions: "sqlite" occurs in
-// two of the five chunks (so BM25's IDF term stays positive and term frequency
-// decides the order), "lore" occurs in all of them (so a filter test can match
-// everything and see only the filter exclude rows), and the embeddings are unit
-// axes plus two diagonals, giving every pair a distinct L2 distance.
+// Shaped for ranking assertions: "sqlite" is in two of the five chunks so BM25's
+// IDF stays positive, "lore" is in all five so a filter test sees only the filter
+// exclude rows, and the embeddings give every pair a distinct L2 distance.
 var searchCorpus = []corpusEntry{{
 	id:        entities.NewDocID("github", entities.DocTypeCommit, "abcdef0123456789"),
 	source:    "github",
@@ -141,7 +138,6 @@ func TestSearchLexicalRanksByRelevance(t *testing.T) {
 		t.Fatalf("hits = %v, want %v (three mentions before one, non-matching chunks absent)", got, want)
 	}
 
-	// Score is negated BM25: higher is better, and the ranking is by Score.
 	if hits[0].Score <= hits[1].Score {
 		t.Errorf("scores = %v, %v; want the first hit to score higher", hits[0].Score, hits[1].Score)
 	}
@@ -149,8 +145,6 @@ func TestSearchLexicalRanksByRelevance(t *testing.T) {
 		t.Errorf("score = %v, want a positive relevance", hits[1].Score)
 	}
 
-	// A hit carries its parent document id plus the chunk metadata filters match
-	// on, and no embedding.
 	top := hits[0]
 	e := searchCorpus[0]
 	if top.Text != e.text || top.Ordinal != 0 || top.Source != e.source ||
@@ -168,7 +162,6 @@ func TestSearchLexicalRanksByRelevance(t *testing.T) {
 		t.Errorf("hit carries an embedding of %d dimensions, want none", len(top.Embedding))
 	}
 
-	// k bounds the list.
 	hits, err = s.SearchLexical(context.Background(), "sqlite", entities.Filters{}, 1)
 	if err != nil {
 		t.Fatalf("SearchLexical (k=1): %v", err)
@@ -183,8 +176,7 @@ func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 	seedSearchCorpus(t, s)
 	ctx := context.Background()
 
-	// Quotes, FTS5 operator words, wildcards and stray punctuation are terms,
-	// not syntax: the words get searched and nothing errors.
+	// Operator words, wildcards and unbalanced quotes are terms, not syntax.
 	questions := []string{
 		`Why did we pick "SQLite" AND NOT postgres? (see ADR-3)`,
 		`sqlite OR`,
@@ -203,7 +195,6 @@ func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 		}
 	}
 
-	// Terms are OR-ed, so a question spanning two topics recalls both.
 	hits, err := s.SearchLexical(ctx, `Why did we pick "SQLite" AND NOT postgres? (see ADR-3)`, entities.Filters{}, 10)
 	if err != nil {
 		t.Fatalf("SearchLexical: %v", err)
@@ -218,7 +209,6 @@ func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 		}
 	}
 
-	// Text with no indexable word matches nothing, and is not an error.
 	hits, err = s.SearchLexical(ctx, "?!! *** ...", entities.Filters{}, 10)
 	if err != nil {
 		t.Fatalf("SearchLexical (punctuation only): %v", err)
@@ -249,7 +239,6 @@ func TestSearchVectorRanksByDistance(t *testing.T) {
 		t.Fatalf("hits = %v, want %v (nearest first)", got, want)
 	}
 
-	// Score is the negated L2 distance: higher is better, 0 is identical.
 	if got, exp := float64(hits[0].Score), -math.Sqrt(0.01+0.01); math.Abs(got-exp) > 1e-5 {
 		t.Errorf("top score = %v, want %v", got, exp)
 	}
@@ -262,7 +251,6 @@ func TestSearchVectorRanksByDistance(t *testing.T) {
 		t.Error("hit carries an embedding, want none")
 	}
 
-	// An exact match scores 0.
 	hits, err = s.SearchVector(context.Background(), []float32{0, 0, 1}, entities.Filters{}, 1)
 	if err != nil {
 		t.Fatalf("SearchVector (exact): %v", err)
@@ -272,8 +260,8 @@ func TestSearchVectorRanksByDistance(t *testing.T) {
 	}
 }
 
-// filterCases exercise every filter dimension against a query that matches the
-// whole corpus, so anything missing from the result was excluded by the filter.
+// The query matches the whole corpus, so anything missing was excluded by the
+// filter.
 var filterCases = []struct {
 	name   string
 	filter entities.Filters

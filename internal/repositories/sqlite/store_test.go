@@ -54,7 +54,6 @@ func TestOpenCreatesEverySchemaObject(t *testing.T) {
 		t.Errorf("schema version = %q, want %q", version, schemaVersion)
 	}
 
-	// The DSN's pragmas reach every pooled connection.
 	var journal string
 	if err := s.db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journal); err != nil {
 		t.Fatalf("read journal_mode: %v", err)
@@ -119,7 +118,7 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 		t.Fatalf("UpsertDocuments: %v", err)
 	}
 
-	// Upsert is keyed by DocID: a second write updates in place.
+	// Keyed by DocID: a second write updates in place.
 	doc.Title = "Pick SQLite (revised)"
 	if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
 		t.Fatalf("UpsertDocuments (update): %v", err)
@@ -176,7 +175,6 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 	}
 	assertCounts(t, s, 2, 2, 1)
 
-	// The vector row is rowid-aligned with its chunk and queryable by KNN.
 	var (
 		alignedOrdinal int
 		distance       float64
@@ -196,7 +194,6 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 		t.Errorf("distance to itself = %v, want ~0", distance)
 	}
 
-	// The lexical row is rowid-aligned too.
 	var ftsOrdinal int
 	err = s.db.QueryRowContext(ctx, `
 		SELECT c.ordinal FROM chunks_fts f JOIN chunks c ON c.id = f.rowid
@@ -208,7 +205,7 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 		t.Errorf("lexical hit ordinal = %d, want 1", ftsOrdinal)
 	}
 
-	// Replacing leaves no stale derived rows behind.
+	// Narrowing the chunk set leaves no stale lexical or vector rows.
 	if err := s.ReplaceChunks(ctx, docID, []entities.Chunk{chunk}); err != nil {
 		t.Fatalf("ReplaceChunks (replace): %v", err)
 	}

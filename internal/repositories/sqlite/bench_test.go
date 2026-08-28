@@ -1,12 +1,5 @@
 package sqlite
 
-// These benchmarks answer one question: is the pure-Go driver
-// (ncruces/go-sqlite3 running SQLite as WASM, plus the sqlite-vec build it
-// carries) fast enough to keep cgo out of the project? They measure the three
-// operations the daemon repeats — ingest, lexical search, vector search — on a
-// corpus shaped like a real workspace, because the correctness fixtures are far
-// too small to say anything about cost.
-
 import (
 	"context"
 	"fmt"
@@ -21,51 +14,36 @@ import (
 )
 
 const (
-	// benchDims is the width of a small local embedding model (all-MiniLM and
-	// its relatives). It is what sizes the vec0 column, and therefore the KNN
-	// scan, realistically without bloating the temporary file.
+	// Width of a small local embedding model, so the KNN scan is realistic.
 	benchDims = 128
 
-	// benchChunksPerDoc and benchChunkWords approximate what the chunker emits
-	// for an average PR or page: ten windows of a few hundred bytes each.
 	benchChunksPerDoc = 10
 	benchChunkWords   = 60
-
-	// benchRarePerChunk is how many low-frequency tokens a chunk carries.
 	benchRarePerChunk = 3
+	benchTitleWords   = 8
 
-	// benchTitleWords is how much of the body the title repeats.
-	benchTitleWords = 8
-
-	// benchIngestBatch is the document batch UpsertDocuments is called with. One
-	// batch is one document transaction plus benchIngestBatch chunk
+	// One batch is one document transaction plus benchIngestBatch chunk
 	// transactions, because ReplaceChunks is per document by contract.
 	benchIngestBatch = 100
 
-	// benchSearchDocs sizes the search corpus: 1,000 documents, so ~10,000
-	// chunks and ~10,000 vectors.
+	// 1,000 documents, so ~10,000 chunks and ~10,000 vectors.
 	benchSearchDocs = 1000
 
-	// benchK is the k a hybrid retrieval leg asks one strategy for.
 	benchK = 12
 
-	// benchQueryCount is how many distinct queries the search loops rotate
-	// through, so a benchmark reports the cost of searching rather than the cost
+	// Rotated so a benchmark reports the cost of searching rather than the cost
 	// of SQLite's page cache holding one query's postings list.
 	benchQueryCount = 16
 
-	// benchSeed fixes every word choice and every vector component. Combined
-	// with a per-document generator, it makes document i identical in every
-	// benchmark and on every run.
+	// Fixes every word choice and vector component: with a per-document
+	// generator, document i is identical in every benchmark and on every run.
 	benchSeed = 20250827
 )
 
-// benchEpoch anchors the corpus in time; documents are spaced an hour apart.
 var benchEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// benchCommonWords is the high-frequency half of the vocabulary: stop words and
-// domain terms. They are what give BM25 long postings lists to walk, which is
-// the cost a natural-language query actually pays.
+// The high-frequency half of the vocabulary, which is what gives BM25 the long
+// postings lists a natural-language query actually pays for.
 var benchCommonWords = strings.Fields(`
 	the a an of to and or in for on with from into that this when why where
 	service store index query chunk document embedding vector search request
@@ -73,9 +51,8 @@ var benchCommonWords = strings.Fields(`
 	page thread comment schema migration transaction connection pool cache
 	latency deploy rollback config token limit worker queue batch flush`)
 
-// benchRareStems compose the low-frequency vocabulary. They are deliberately
-// disjoint from benchCommonWords: a stem that leaked into both halves would stop
-// being selective.
+// Disjoint from benchCommonWords: a stem in both halves would stop being
+// selective.
 var benchRareStems = strings.Fields(`
 	auth gate shard lease quorum proxy spool ledger vault beacon cursor digest
 	entropy fabric girder harbor jitter lattice mantle nexus oracle parcel
@@ -83,9 +60,8 @@ var benchRareStems = strings.Fields(`
 	delta ember fjord glyph hollow ivory jasper kiln lumen marrow nimbus
 	obsidian plume`)
 
-// benchRareWords is every ordered pair of stems, a pool large enough that a
-// token lands in a handful of the ten thousand chunks — as selective as a real
-// identifier, ticket key or symbol name.
+// Every ordered pair of stems, so a token lands in a handful of the ten thousand
+// chunks — as selective as a real identifier or symbol name.
 var benchRareWords = func() []string {
 	words := make([]string, 0, len(benchRareStems)*len(benchRareStems))
 	for _, head := range benchRareStems {
@@ -96,8 +72,6 @@ var benchRareWords = func() []string {
 	return words
 }()
 
-// benchQueryTemplates phrase the queries as questions, the way retrieval
-// receives them: mostly stop words, one domain term, one selective token.
 var benchQueryTemplates = []string{
 	"why did the %s %s change",
 	"who reviewed the %s %s migration",
@@ -134,9 +108,8 @@ func openBenchStore(b *testing.B) *Store {
 	return s
 }
 
-// benchDoc builds document i and its chunks. Everything is derived from i alone,
-// because the generator is seeded per document: the same index means the same
-// bytes whatever order or iteration count the benchmark loop settles on.
+// The generator is seeded per document, so index i means the same bytes whatever
+// order or iteration count the benchmark loop settles on.
 func benchDoc(i int) (entities.Document, []entities.Chunk) {
 	rng := rand.New(rand.NewPCG(benchSeed, uint64(i)))
 	kind := benchDocKinds[i%len(benchDocKinds)]
@@ -179,8 +152,6 @@ func benchDoc(i int) (entities.Document, []entities.Chunk) {
 	return doc, chunks
 }
 
-// benchChunkText draws a chunk's words: mostly common vocabulary with a few rare
-// tokens sprinkled over it.
 func benchChunkText(rng *rand.Rand) string {
 	words := make([]string, benchChunkWords)
 	for i := range words {
@@ -192,16 +163,13 @@ func benchChunkText(rng *rand.Rand) string {
 	return strings.Join(words, " ")
 }
 
-// benchTitle is the document's opening words, the way a commit subject or page
-// heading relates to its body.
 func benchTitle(text string) string {
 	words := strings.SplitN(text, " ", benchTitleWords+1)
 	return strings.Join(words[:benchTitleWords], " ")
 }
 
-// benchVector is a chunk or query embedding. The components are plain uniform
-// noise: vec0's KNN is a brute-force scan whose cost depends on how many vectors
-// there are and how wide they are, not on what they hold.
+// Uniform noise is fine: vec0's KNN is a brute-force scan whose cost depends on
+// how many vectors there are and how wide they are, not on what they hold.
 func benchVector(rng *rand.Rand) []float32 {
 	v := make([]float32, benchDims)
 	for i := range v {
@@ -219,8 +187,6 @@ func benchBatch(start, n int) ([]entities.Document, [][]entities.Chunk) {
 	return docs, chunks
 }
 
-// ingestBatch writes one batch the way the indexer does: the documents in a
-// single transaction, then each document's chunks.
 func ingestBatch(b *testing.B, s *Store, docs []entities.Document, chunks [][]entities.Chunk) {
 	b.Helper()
 	ctx := context.Background()
@@ -235,9 +201,7 @@ func ingestBatch(b *testing.B, s *Store, docs []entities.Document, chunks [][]en
 	}
 }
 
-// seedBenchStore builds the search corpus in a fresh file. Both search
-// benchmarks pay for it once and outside the measurement: b.Loop resets the
-// timer when the loop starts, so setup before it is not counted.
+// b.Loop resets the timer when the loop starts, so this setup is not counted.
 func seedBenchStore(b *testing.B) *Store {
 	b.Helper()
 
@@ -249,8 +213,7 @@ func seedBenchStore(b *testing.B) *Store {
 	return s
 }
 
-// benchQueries are the queries the lexical leg rotates through. They are built
-// from the same vocabulary the corpus is, so every one of them hits.
+// Built from the same vocabulary as the corpus, so every query hits.
 func benchQueries() []string {
 	rng := rand.New(rand.NewPCG(benchSeed, benchSearchDocs))
 	queries := make([]string, benchQueryCount)
@@ -271,18 +234,14 @@ func benchQueryVectors() [][]float32 {
 	return vectors
 }
 
-// BenchmarkUpsertAndChunk measures a first sync: one batch of benchIngestBatch
-// documents with their chunks, embeddings and derived lexical and vector rows.
-// ns/op is per batch; the reported ns/doc and ns/chunk are what a connector's
-// throughput is read off.
+// ns/op is per batch; ns/doc and ns/chunk are what a connector's throughput is
+// read off.
 func BenchmarkUpsertAndChunk(b *testing.B) {
 	s := openBenchStore(b)
 
 	batches := 0
 	for b.Loop() {
-		// Each iteration ingests documents the store has never seen: reusing ids
-		// would measure in-place updates against a database that stops growing,
-		// which is not what a first sync does.
+		// Fresh ids each iteration: reusing them would measure in-place updates.
 		b.StopTimer()
 		docs, chunks := benchBatch(batches*benchIngestBatch, benchIngestBatch)
 		batches++
@@ -311,8 +270,6 @@ func BenchmarkSearchLexical(b *testing.B) {
 		if err != nil {
 			b.Fatalf("SearchLexical: %v", err)
 		}
-		// A short result would mean the corpus, not the query, is what the
-		// numbers describe.
 		if len(hits) != benchK {
 			b.Fatalf("SearchLexical(%q) = %d hits, want %d", query, len(hits), benchK)
 		}

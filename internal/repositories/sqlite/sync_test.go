@@ -14,8 +14,6 @@ func TestCursorRoundTrip(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	// A connector that has never checkpointed has no cursor, which is not an
-	// error: a nil Cursor is where a full sync starts.
 	got, err := s.Cursor(ctx, "github")
 	if err != nil {
 		t.Fatalf("Cursor (missing): %v", err)
@@ -39,7 +37,6 @@ func TestCursorRoundTrip(t *testing.T) {
 		t.Errorf("Cursor = %v, want %v", got, want)
 	}
 
-	// Cursors are per connector and overwritten in place.
 	if got, err = s.Cursor(ctx, "notion"); err != nil || got != nil {
 		t.Errorf("Cursor(notion) = %v, %v; want nil, nil", got, err)
 	}
@@ -62,8 +59,7 @@ func TestCursorRoundTrip(t *testing.T) {
 		t.Errorf("cursors rows = %d, want 1", rows)
 	}
 
-	// An empty cursor reads back empty, and overwrites the row rather than
-	// dropping it: emptiness is a position, not an absence of one.
+	// Emptiness is a position, not the absence of one: the row stays.
 	if err := s.SetCursor(ctx, "github", nil); err != nil {
 		t.Fatalf("SetCursor (nil): %v", err)
 	}
@@ -107,8 +103,6 @@ func TestMetaRoundTripAndReservedKeys(t *testing.T) {
 		t.Fatalf("Meta = %q, %v; want the updated model", got, err)
 	}
 
-	// The keys describing the file's own identity are not the caller's to write:
-	// Open validates them, so overwriting one would make the file unopenable.
 	for _, key := range []string{metaKeySchemaVersion, metaKeyVectorDims} {
 		if err := s.SetMeta(ctx, key, "999"); err == nil {
 			t.Errorf("SetMeta accepted the store-owned key %q", key)
@@ -127,7 +121,6 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	clock := start
 	s.now = func() time.Time { return clock }
 
-	// First caller takes the lease.
 	acquired, err := s.TryAcquireLease(ctx, "daemon")
 	if err != nil {
 		t.Fatalf("TryAcquireLease(daemon): %v", err)
@@ -137,8 +130,6 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	}
 	assertLeaseHolder(t, s, "daemon", start)
 
-	// A second caller loses while the lease is fresh, and cannot heartbeat or
-	// release someone else's lease.
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || acquired {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil while the lease is held", acquired, err)
 	}
@@ -150,7 +141,6 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	}
 	assertLeaseHolder(t, s, "daemon", start)
 
-	// The holder heartbeats halfway through the TTL, pushing the deadline out.
 	clock = start.Add(30 * time.Second)
 	if err = s.HeartbeatLease(ctx, "daemon"); err != nil {
 		t.Fatalf("HeartbeatLease(daemon): %v", err)
@@ -159,21 +149,17 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil 30s into the lease", acquired, err)
 	}
 
-	// A heartbeat exactly one TTL old is not yet dead.
 	clock = start.Add(30*time.Second + leaseTTL)
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || acquired {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil at exactly the TTL", acquired, err)
 	}
 
-	// One second later it is, and the lease is taken over.
 	clock = clock.Add(time.Second)
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || !acquired {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want true, nil past the TTL", acquired, err)
 	}
 	assertLeaseHolder(t, s, "cli", clock)
 
-	// The dead holder learns it lost the lease from its next heartbeat, and its
-	// deferred release leaves the new holder's lease alone.
 	if err = s.HeartbeatLease(ctx, "daemon"); err == nil {
 		t.Error("HeartbeatLease accepted the holder whose lease was taken over")
 	}
@@ -185,14 +171,12 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 		t.Fatalf("TryAcquireLease(other) = %v, %v; want false, nil against the fresh takeover", acquired, err)
 	}
 
-	// Re-acquiring a lease one already holds succeeds and restarts its clock.
 	clock = clock.Add(5 * time.Second)
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || !acquired {
 		t.Fatalf("TryAcquireLease(cli, held by cli) = %v, %v; want true, nil", acquired, err)
 	}
 	assertLeaseHolder(t, s, "cli", clock)
 
-	// Releasing frees the lease for the next caller.
 	if err = s.ReleaseLease(ctx, "cli"); err != nil {
 		t.Fatalf("ReleaseLease(cli): %v", err)
 	}
@@ -211,22 +195,18 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	}
 	assertLeaseHolder(t, s, "other", clock)
 
-	// An unnamed holder would make every ownership check meaningless.
 	if _, err = s.TryAcquireLease(ctx, ""); err == nil {
 		t.Error("TryAcquireLease accepted an empty holder")
 	}
 }
 
-// The lease is what keeps a manual sync and a scheduler tick out of each other's
-// way across processes, so acquiring it has to be one atomic statement: with a
-// read followed by a write, every racing caller reads "free" and every one of
-// them writes itself in.
+// The failure mode this guards: with a read followed by a write, every racing
+// caller reads "free" and every one of them writes itself in.
 func TestSyncLeaseAdmitsOneWinnerUnderRace(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	s.now = func() time.Time { return time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC) }
 
-	// Releasing a lease nobody holds is a no-op, not an error.
 	if err := s.ReleaseLease(ctx, "nobody"); err != nil {
 		t.Fatalf("ReleaseLease on a free lease: %v", err)
 	}

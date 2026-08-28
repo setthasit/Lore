@@ -7,44 +7,14 @@ import (
 	"strconv"
 )
 
-// schemaVersion is the generation of the on-disk schema. Because the index is
-// derived data, an incompatible bump is resolved by rebuilding the workspace
-// file, never by migrating it.
 const schemaVersion = "1"
 
-// Keys the store itself owns in the meta table. The embedder identity keys are
-// written by the service layer.
+// Keys the store itself owns in the meta table.
 const (
 	metaKeySchemaVersion = "schema_version"
 	metaKeyVectorDims    = "vector_dims"
 )
 
-// schemaDDL creates every table the workspace file needs. It is idempotent, so
-// every Open runs it.
-//
-// Conventions:
-//
-//   - Timestamps are TEXT in RFC 3339 UTC with second precision
-//     ("2006-01-02T15:04:05Z"). Fixed width means lexicographic order is
-//     chronological order, so time-range filters push straight into SQL as
-//     string comparisons. The columns are declared TEXT so the driver hands
-//     them back as strings rather than guessing a time format.
-//   - Real tables are STRICT: a column's declared type is enforced, so a typo
-//     in Go cannot quietly store an integer in a text column.
-//   - chunks.id is an explicit INTEGER PRIMARY KEY (a rowid alias) because
-//     chunks_fts and chunk_vectors are rowid-aligned with it, and VACUUM may
-//     renumber implicit rowids but never an INTEGER PRIMARY KEY.
-//   - chunks.doc_id deliberately does not cascade. A future document delete
-//     must go through ReplaceChunks(docID, nil) first; otherwise a cascade
-//     would drop chunk rows while leaving orphaned lexical and vector rows
-//     behind, since virtual tables see no foreign keys.
-//   - chunks_fts is a self-contained FTS5 table, not an external-content or
-//     contentless one. It costs a second copy of the chunk text in a file that
-//     is a rebuildable cache anyway, and buys ordinary INSERT/DELETE semantics
-//     with no index-sync invariant to violate. Tokenizer tuning is left to the
-//     retrieval wave.
-//   - edges is WITHOUT ROWID keyed by (src, dst, kind); that primary-key index
-//     already serves src-first walks, so only dst needs its own index.
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS documents (
 	doc_id       TEXT PRIMARY KEY,
@@ -67,7 +37,11 @@ CREATE INDEX IF NOT EXISTS documents_sha_prefix_idx ON documents(sha_prefix);
 CREATE INDEX IF NOT EXISTS documents_source_type_idx ON documents(source, type);
 
 CREATE TABLE IF NOT EXISTS chunks (
+	-- explicit rowid alias: chunks_fts and chunk_vectors are keyed by it, and
+	-- VACUUM may renumber an implicit rowid but never an INTEGER PRIMARY KEY
 	id         INTEGER PRIMARY KEY,
+	-- no cascade: virtual tables see no foreign keys, so a cascade would drop
+	-- chunks and orphan their lexical and vector rows
 	doc_id     TEXT NOT NULL REFERENCES documents(doc_id),
 	ordinal    INTEGER NOT NULL,
 	text       TEXT NOT NULL,
@@ -119,14 +93,12 @@ CREATE TABLE IF NOT EXISTS meta (
 ) WITHOUT ROWID, STRICT;
 `
 
-// vectorTableDDL is separate because a vec0 column's dimension count is baked
-// into the declaration and cannot be a bind parameter.
+// Separate because a vec0 column's dimension count is baked into the
+// declaration and cannot be a bind parameter.
 const vectorTableDDL = `CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors USING vec0(embedding float[%d]);`
 
-// bootstrap creates the schema if absent and refuses a file whose schema
-// generation or vector width does not match this build. CREATE TABLE IF NOT
-// EXISTS would silently keep an existing vec0 table at its original dimensions,
-// so the recorded width is what actually guards vector inserts.
+// CREATE TABLE IF NOT EXISTS would silently keep an existing vec0 table at its
+// original dimensions, so the width recorded in meta is what guards inserts.
 func (s *Store) bootstrap(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -153,8 +125,6 @@ func (s *Store) bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// ensureMeta records want under key on a fresh file and reports a mismatch on an
-// existing one.
 func ensureMeta(ctx context.Context, tx *sql.Tx, key, want string) error {
 	const insert = `INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`
 	if _, err := tx.ExecContext(ctx, insert, key, want); err != nil {

@@ -11,12 +11,8 @@ import (
 	"lore/internal/entities"
 )
 
-// leaseTTL is how long a lease survives without a heartbeat. Past it the holder
-// is presumed dead and any process may take the lease over, so a crashed sync
-// never wedges the scheduler.
 const leaseTTL = 60 * time.Second
 
-// syncLockID is the id of the one row sync_lock is allowed to hold.
 const syncLockID = 1
 
 const (
@@ -31,9 +27,6 @@ INSERT INTO meta (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value`
 )
 
-// Cursor returns the connector's stored sync position, or a nil Cursor when the
-// connector has never checkpointed (or checkpointed a nil cursor) — to a
-// connector both mean "start from the beginning".
 func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, error) {
 	var payload string
 	err := s.db.QueryRowContext(ctx, selectCursorSQL, connector).Scan(&payload)
@@ -51,8 +44,6 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 	return c, nil
 }
 
-// SetCursor stores the connector's sync position. The Cursor is opaque to the
-// store, so it is persisted as a JSON object and handed back unchanged.
 func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
@@ -64,7 +55,6 @@ func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Curs
 	return nil
 }
 
-// Meta returns the value stored under key, or "" when the key is unset.
 func (s *Store) Meta(ctx context.Context, key string) (string, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, selectMetaSQL, key).Scan(&value)
@@ -77,12 +67,8 @@ func (s *Store) Meta(ctx context.Context, key string) (string, error) {
 	return value, nil
 }
 
-// SetMeta stores value under key.
-//
-// The keys describing the file's own identity — schema generation and vector
-// width — are refused: Open compares them against this build and a file whose
-// recorded identity no longer matches its contents is unopenable, which is not
-// something a caller writing embedder identity should be able to do by accident.
+// The identity keys are refused: Open validates them against this build, so
+// overwriting one would make the file unopenable.
 func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 	switch key {
 	case metaKeySchemaVersion, metaKeyVectorDims:
@@ -94,14 +80,8 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 	return nil
 }
 
-// acquireLeaseSQL takes the lease in one statement, so two processes racing for
-// it cannot both win: exactly one of them inserts the row or passes the DO UPDATE
-// guard, and the loser sees no affected row. Reading the lease first and writing
-// it after would leave exactly that race open.
-//
-// The guard admits two cases: the caller already holds the lease (re-entering
-// with a fresh acquired_at is how a new round starts), or the current lease's
-// heartbeat has fallen behind the TTL cutoff and is presumed dead.
+// One statement, so two processes racing for the lease cannot both win: exactly
+// one inserts the row or passes the guard, and the loser sees no affected row.
 const acquireLeaseSQL = `
 INSERT INTO sync_lock (id, holder, acquired_at, heartbeat_at)
 VALUES (?, ?, ?, ?)
@@ -116,8 +96,6 @@ const (
 	releaseLeaseSQL   = `DELETE FROM sync_lock WHERE id = ? AND holder = ?`
 )
 
-// TryAcquireLease takes the sync lease for holder, reporting whether it now holds
-// it. A lease whose heartbeat is older than the TTL is taken over.
 func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error) {
 	if holder == "" {
 		return false, errors.New("sqlite: lease holder must be named")
@@ -137,9 +115,6 @@ func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error
 	return affected > 0, nil
 }
 
-// HeartbeatLease refreshes the lease's expiry. It fails when holder is not the
-// current holder — which is how a holder learns its lease was taken over and its
-// round must stop.
 func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 	res, err := s.db.ExecContext(ctx, heartbeatLeaseSQL, formatTime(s.now()), syncLockID, holder)
 	if err != nil {
@@ -155,10 +130,8 @@ func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 	return nil
 }
 
-// ReleaseLease drops the lease if holder still owns it, and does nothing
-// otherwise: the holder check is in the statement, so a deferred release after a
-// takeover cannot delete the new holder's lease, and a release that finds nothing
-// to drop is the expected outcome rather than an error the caller must handle.
+// The holder check is in the statement, so a deferred release after a takeover
+// cannot delete the new holder's lease.
 func (s *Store) ReleaseLease(ctx context.Context, holder string) error {
 	if _, err := s.db.ExecContext(ctx, releaseLeaseSQL, syncLockID, holder); err != nil {
 		return fmt.Errorf("sqlite: release sync lease of %q: %w", holder, err)

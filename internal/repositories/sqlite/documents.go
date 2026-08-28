@@ -12,9 +12,8 @@ import (
 	"lore/internal/entities"
 )
 
-// shaPrefixLen is how much of a commit SHA the sha_prefix index keeps: enough to
-// be unique in any real repository, short enough that abbreviated SHAs found in
-// prose still match.
+// Long enough to be unique in any real repository, short enough that
+// abbreviated SHAs quoted in prose still match.
 const shaPrefixLen = 12
 
 const upsertDocumentSQL = `
@@ -35,15 +34,6 @@ ON CONFLICT(doc_id) DO UPDATE SET
 	external_key = excluded.external_key,
 	sha_prefix   = excluded.sha_prefix`
 
-// UpsertDocuments writes docs in one transaction, keyed by Document.ID.
-//
-// The external_key and sha_prefix columns are derived here rather than stored by
-// the connectors: they are index columns that exist so ResolveRef and the link
-// resolver can look a document up by ticket key, URL or abbreviated commit SHA
-// without a table scan.
-//
-// Document.Refs are not persisted; pending refs belong to the link-resolver
-// wave.
 func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) error {
 	if len(docs) == 0 {
 		return nil
@@ -92,13 +82,8 @@ INSERT INTO chunks (
 	insertChunkVectorSQL = `INSERT INTO chunk_vectors (rowid, embedding) VALUES (?, ?)`
 )
 
-// ReplaceChunks makes chunks the complete chunk set of docID in one transaction:
-// the document's previous chunks, lexical rows and vectors go first, then the new
-// ones are written. Passing no chunks clears the document.
-//
 // chunks_fts and chunk_vectors are keyed by the chunk's rowid, so both derived
-// rows are written with the id SQLite assigned the chunk. A chunk with a nil
-// Embedding gets no vector row and is retrievable lexically only.
+// rows are written with the id SQLite assigned the chunk.
 func (s *Store) ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error {
 	for i := range chunks {
 		if n := len(chunks[i].Embedding); n != 0 && n != s.vectorDims {
@@ -129,10 +114,8 @@ func (s *Store) ReplaceChunks(ctx context.Context, docID entities.DocID, chunks 
 	return nil
 }
 
-// deleteDerivedChunkRows removes the document's lexical and vector rows. The ids
-// are read into memory and deleted one by one on purpose: rowid equality is the
-// one constraint every virtual-table implementation handles, whereas a subquery
-// would leave the plan up to each module's index selection.
+// The ids are deleted one by one on purpose: rowid equality is the one
+// constraint every virtual-table implementation handles.
 func deleteDerivedChunkRows(ctx context.Context, tx *sql.Tx, docID entities.DocID) error {
 	ids, err := chunkIDs(ctx, tx, docID)
 	if err != nil {
@@ -239,11 +222,9 @@ func insertChunks(ctx context.Context, tx *sql.Tx, docID entities.DocID, chunks 
 	return nil
 }
 
-// externalID returns the third segment of a "<source>:<type>:<external_id>"
-// DocID. The external id itself may contain colons (URLs, Notion paths), so only
-// the first two separators count. A DocID that does not have them yields "",
-// leaving the ref-lookup columns empty rather than indexing a wrong key;
-// validating identity shape is the service layer's job.
+// Returns the third segment of a "<source>:<type>:<external_id>" DocID. The
+// external id may itself contain colons (URLs, Notion paths), so only the first
+// two separators count; a DocID without them yields "".
 func externalID(id entities.DocID) string {
 	rest := string(id)
 	for range 2 {
@@ -256,9 +237,8 @@ func externalID(id entities.DocID) string {
 	return rest
 }
 
-// shaPrefix is the sha_prefix index value: commit documents are identified by
-// their SHA, and prose cites abbreviated ones. Lowercased so a prefix lookup does
-// not depend on how a source cased its hex. Empty for every other document type.
+// Lowercased so a prefix lookup does not depend on how a source cased its hex.
+// Empty for every document type but commits.
 func shaPrefix(t entities.DocType, externalKey string) string {
 	if t != entities.DocTypeCommit {
 		return ""
@@ -269,16 +249,12 @@ func shaPrefix(t entities.DocType, externalKey string) string {
 	return strings.ToLower(externalKey)
 }
 
-// formatTime renders a timestamp in the store's on-disk form. Sub-second
-// precision is dropped: the sources record event times to the second at best,
-// and fixed-width output is what keeps string comparison chronological.
 func formatTime(t time.Time) string {
 	return t.UTC().Format(timeLayout)
 }
 
-// parseTime reads a timestamp back from the store's on-disk form. Only rows this
-// store wrote reach it, so a parse failure means the file was tampered with and
-// is reported rather than papered over with a zero time.
+// Only rows this store wrote reach here, so a parse failure is reported rather
+// than papered over with a zero time.
 func parseTime(s string) (time.Time, error) {
 	t, err := time.Parse(timeLayout, s)
 	if err != nil {
