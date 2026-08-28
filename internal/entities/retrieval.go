@@ -2,9 +2,7 @@ package entities
 
 import "time"
 
-// Filters are the metadata filters pushed into the store's ranked searches.
-// Zero-valued fields do not constrain; CreatedFrom/CreatedTo is what event
-// anchoring compiles down to.
+// Zero-valued fields do not constrain.
 type Filters struct {
 	Source      string
 	RepoRef     string
@@ -13,11 +11,9 @@ type Filters struct {
 	CreatedTo   time.Time
 }
 
-// Chunk is an embedding-sized slice of a document body. Its copied document
-// metadata is what Filters match at query time.
 type Chunk struct {
 	DocID     DocID
-	Ordinal   int // position within the parent document body
+	Ordinal   int
 	Text      string
 	Source    string
 	RepoRef   string
@@ -25,11 +21,14 @@ type Chunk struct {
 	Author    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	ThreadID  string // comment chunks: the thread retrieval rehydrates
+	ThreadID  string
+
+	// Nil means not embedded: the chunk is indexed lexically only.
+	Embedding []float32
 }
 
-// ChunkHit is a ranked chunk from one retrieval strategy. Score is the
-// backend-native relevance; cross-strategy fusion happens in the service layer.
+// Score is higher-is-better; the store negates BM25 and vector distance. Scores
+// are comparable within one result list only, never across search strategies.
 type ChunkHit struct {
 	Chunk
 	Score float32
