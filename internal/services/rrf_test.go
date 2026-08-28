@@ -7,9 +7,6 @@ import (
 	"lore/internal/entities"
 )
 
-// The fusion constant and formula, restated independently of the
-// implementation so these tests fail if either drifts: rank is 1-based and
-// every list a chunk appears in contributes 1/(60+rank).
 const fusionK = 60
 
 func rrf(ranks ...int) float32 {
@@ -23,9 +20,6 @@ func rrf(ranks ...int) float32 {
 
 const scoreEpsilon = 1e-6
 
-// decoyScore is the backend-native score fusion must ignore. Every hit gets the
-// same one, so a fusion that read scores instead of ranks would flatten every
-// ordering these tests assert.
 const decoyScore = -7.5
 
 func hit(doc string, ordinal int) entities.ChunkHit {
@@ -39,7 +33,6 @@ func hit(doc string, ordinal int) entities.ChunkHit {
 	}
 }
 
-// fusedWant is one expected position in the fused order.
 type fusedWant struct {
 	doc     string
 	ordinal int

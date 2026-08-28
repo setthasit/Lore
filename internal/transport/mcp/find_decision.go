@@ -17,12 +17,9 @@ const findDecisionDescription = `Find the recorded evidence behind a decision: t
 
 Returns an evidence bundle, not an answer: cited documents ordered by relevance, each with an excerpt and the URL it came from. Nothing is synthesized here — you write the explanation from these citations, and every claim you make should point at one of their URLs. An empty bundle is a real answer: the index holds no evidence for that question, so widen the filters or rephrase it.`
 
-// dateLayout is the calendar-day form the since/until bounds accept next to
-// RFC 3339, so a caller can narrow to a day without inventing a clock time.
 const dateLayout = "2006-01-02"
 
-// internalErrorMessage answers failures the caller cannot act on. Their cause
-// chain names hosts, paths and queries, so it stays in the server log.
+// Causes name hosts, paths and queries, so they stay in the server log.
 const internalErrorMessage = "internal error: see the lore server log for details"
 
 type findDecisionInput struct {
@@ -63,9 +60,6 @@ func (t findDecisionTool) handle(ctx context.Context, _ *sdk.CallToolRequest, in
 	return nil, newEvidenceBundle(bundle), nil
 }
 
-// toolError renders a service failure for the host model. Classified errors
-// carry a caller-facing message — a precondition one carries its remediation,
-// so it is passed through untouched.
 func (t findDecisionTool) toolError(err error) error {
 	var classified *internalerror.Error
 	if errors.As(err, &classified) {
@@ -104,7 +98,6 @@ func (in findDecisionInput) serviceRequest() (services.FindDecisionRequest, erro
 	}, nil
 }
 
-// dayEdge picks which instant of a bare calendar day a window bound takes.
 type dayEdge int
 
 const (
@@ -112,15 +105,9 @@ const (
 	dayEnd
 )
 
-// lastInstantOfDay is one second before the next midnight: the store's bounds
-// are inclusive and its timestamps have second precision, so this is the last
-// instant the named day can hold.
+// The store's bounds are inclusive and its timestamps have second precision.
 const lastInstantOfDay = 24*time.Hour - time.Second
 
-// parseWindowBound reads a window bound. A bare calendar day names the whole
-// day in UTC, so it widens to the edge that day's bound needs: an until of
-// 2025-03-31 that stopped at midnight would drop everything recorded on the
-// day the caller asked for. An RFC 3339 value is the instant it states.
 func parseWindowBound(field, raw string, edge dayEdge) (time.Time, error) {
 	if raw == "" {
 		return time.Time{}, nil

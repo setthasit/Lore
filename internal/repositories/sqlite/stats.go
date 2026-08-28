@@ -13,20 +13,12 @@ const (
 	countDocumentsSQL = `SELECT count(*) FROM documents`
 	countChunksSQL    = `SELECT count(*) FROM chunks`
 
-	// Ordered by connector so a rendered status report is stable between runs
-	// rather than at the mercy of page layout.
+	// Ordered by connector so a rendered report is stable between runs.
 	selectCursorAgesSQL = `SELECT connector, updated_at FROM cursors ORDER BY connector`
 
 	selectLeaseSQL = `SELECT holder, acquired_at, heartbeat_at FROM sync_lock WHERE id = ?`
 )
 
-// Stats reports what the index holds, when each connector last checkpointed and
-// who holds the sync lease.
-//
-// The four reads are not wrapped in a transaction: a status report is a
-// diagnostic snapshot, and the only concurrent writer is a sync round, whose
-// counts are climbing anyway. Paying for a transaction would buy consistency
-// between numbers that are stale the moment they are printed.
 func (s *Store) Stats(ctx context.Context) (entities.IndexStats, error) {
 	var stats entities.IndexStats
 
@@ -80,10 +72,7 @@ func (s *Store) cursorAges(ctx context.Context) ([]entities.CursorAge, error) {
 	return ages, nil
 }
 
-// lease returns the stored lease row, or nil when the lease is free. A lapsed
-// heartbeat is reported rather than filtered: whether the holder is presumed
-// dead is the reader's judgement to make from the timestamps, and hiding a
-// stale row would hide exactly the crashed round an operator is looking for.
+// A lapsed heartbeat is reported, not filtered: it evidences a crashed round.
 func (s *Store) lease(ctx context.Context) (*entities.LeaseState, error) {
 	var (
 		holder      string

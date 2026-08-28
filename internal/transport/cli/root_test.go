@@ -14,22 +14,12 @@ import (
 	mock_services "lore/internal/mocks/services"
 )
 
-// errUnclassified is an error that never passed through internalerror: all the
-// CLI can say about it is that the operator cannot act on it.
 var errUnclassified = errors.New("the disk caught fire")
 
-// fxLikeWrap reproduces the shape fx reports a failed provider in: the
-// classified error with a construction narrative wrapped around it.
 func fxLikeWrap(err error) error {
 	return fmt.Errorf(`could not build arguments for function "lore/internal/di".newIndexStore: %w`, err)
 }
 
-// run executes an invocation against a runtime built from rt and reports what
-// the operator would see: stdout, the exit code, and stderr.
-//
-// The resolver is a closure over rt, which is the point of Resolver being a
-// function: the command tree under test is the real one, wired to doubles, with
-// no fx application and no workspace on disk.
 type result struct {
 	stdout   string
 	stderr   string
@@ -60,7 +50,6 @@ func run(t *testing.T, rt *Runtime, args ...string) result {
 	return res
 }
 
-// mockQuery builds a runtime whose only wired service is the query service.
 func mockQuery(t *testing.T) (*Runtime, *mock_services.MockQueryService) {
 	t.Helper()
 
@@ -101,8 +90,6 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 	}
 }
 
-// A classified error keeps its message and drops the wrapping it travelled
-// through: fx's construction narrative is noise for an operator.
 func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
 	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", nil))
 
@@ -115,15 +102,13 @@ func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
 	}
 }
 
-// A malformed invocation exits 2 like any other bad request, so a script can
-// tell "you asked wrongly" from "lore broke" without reading the message.
 func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 	cases := [][]string{
-		{"ask"},                        // the question is required
-		{"ask", "why sqlite?", "and?"}, // one question at a time
-		{"status", "--nonexistent"},    // unknown flag
-		{"status", "extra"},            // a command that takes no arguments
-		{"frobnicate"},                 // not a command at all
+		{"ask"},
+		{"ask", "why sqlite?", "and?"},
+		{"status", "--nonexistent"},
+		{"status", "extra"},
+		{"frobnicate"},
 	}
 
 	for _, args := range cases {
@@ -139,7 +124,6 @@ func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 	}
 }
 
-// --help is not a failure, and it works where no configuration exists.
 func TestHelpSucceeds(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"ask", "--help"}, {"init", "--help"}} {
 		res := run(t, nil, args...)

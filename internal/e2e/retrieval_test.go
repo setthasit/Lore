@@ -1,9 +1,3 @@
-// Package e2e drives the whole pipeline end to end: a fixture GitHub API, the
-// real connector, the real chunker, a real SQLite index in a temporary
-// directory, and the real retrieval path. Only two things are stood in for — the
-// network, by an httptest server replaying hand-written fixtures, and the
-// embedder, by a deterministic local one — so what the tests here prove is that
-// the seams between the layers line up, which no single package's tests can say.
 package e2e
 
 import (
@@ -29,43 +23,24 @@ import (
 )
 
 const (
-	// fixtureToken is not a credential. The fixture API asserts the connector
-	// sent it in the Authorization header, which is the only place it belongs.
+	// Not a credential; the fixture API only asserts it arrived in Authorization.
 	fixtureToken = "ghp_e2e_fixture_token"
 
 	fixtureRepo = "acme/lore"
 
-	// fixtureHost is the origin the fixtures are written against. Every fixture
-	// is rewritten to the test server's own origin as it is served, so the URLs
-	// a bundle cites point at the API the documents were read from — which is
-	// what makes "every node carries a real URL" checkable from outside.
 	fixtureHost = "https://github.example"
 
-	// question is the decision question the fixture pull request answers.
 	question = "why did we pick sqlite"
 
-	// fixtureDocuments is what the fixtures normalize to: one commit, the pull
-	// request, its review and review comment, the issue and its comment.
 	fixtureDocuments = 6
 
-	// topK is the retrieval width per strategy, mirroring config.DefaultTopK.
 	topK = 12
 )
 
-// prDocID is the pull request that argues for SQLite: the document the question
-// has to retrieve first.
 var prDocID = entities.NewDocID("github", entities.DocTypePR, fixtureRepo+"/pull/42")
 
-// --- fake embedder ---------------------------------------------------------
-
-// fakeDims is deliberately tiny: the tests read ranking, not embedding quality,
-// and a narrow vector keeps the fixture index cheap to build.
 const fakeDims = 8
 
-// fakeEmbedder stands in for a hosted embedder without leaving the process. It
-// hashes a text's tokens into a bag of words over fakeDims dimensions and
-// returns the L2-normalized result, so identical text always yields an identical
-// vector and texts sharing vocabulary land near each other.
 type fakeEmbedder struct{}
 
 var _ embedder.Embedder = fakeEmbedder{}
@@ -86,9 +61,6 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return vectors, nil
 }
 
-// bagOfWords projects text's tokens onto fakeDims dimensions by hashing each
-// one, then normalizes. Every vector is a unit vector, which is what makes the
-// store's L2 ranking order hits the way cosine similarity would.
 func bagOfWords(text string) []float32 {
 	vector := make([]float32, fakeDims)
 	for _, token := range strings.FieldsFunc(strings.ToLower(text), isTokenBreak) {
@@ -102,8 +74,7 @@ func bagOfWords(text string) []float32 {
 		sum += float64(v) * float64(v)
 	}
 	if sum == 0 {
-		// Text with no indexable token still has to be a unit vector, so it
-		// keeps a defined distance to everything else.
+		// Text with no token still needs a unit vector, or distance is undefined.
 		vector[0] = 1
 		return vector
 	}
@@ -117,16 +88,8 @@ func bagOfWords(text string) []float32 {
 
 func isTokenBreak(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) }
 
-// --- fixture API -----------------------------------------------------------
-
-// operationPattern lifts the operation name out of a GraphQL query, which is how
-// the fixture API decides what to answer.
 var operationPattern = regexp.MustCompile(`query\s+(\w+)`)
 
-// opFixtures maps a GraphQL operation to the response it gets. Every connection
-// in the fixtures is a single page, so the connector never asks for a follow-up
-// page: an operation missing here means a fixture's pageInfo promises a page
-// that does not exist, and the fixture API says so instead of guessing.
 var opFixtures = map[string]string{
 	"LoreCommits":      "commits_page1.json",
 	"LorePullRequests": "prs_page1.json",
@@ -136,13 +99,9 @@ var opFixtures = map[string]string{
 const (
 	restCommitPath = "/repos/" + fixtureRepo + "/commits/"
 
-	// restCommitOp is the call-counter key for the connector's one REST call,
-	// the touched-file list GraphQL does not expose.
 	restCommitOp = "REST commit"
 )
 
-// fixtureAPI replays the fixtures as a GitHub API would, and counts what it was
-// asked for so a test can assert the connector really went through it.
 type fixtureAPI struct {
 	t      *testing.T
 	server *httptest.Server
@@ -202,8 +161,6 @@ func (a *fixtureAPI) serveREST(w http.ResponseWriter, r *http.Request) {
 	a.write(w, "rest_commit_"+oid[:7]+".json")
 }
 
-// write serves a fixture with its placeholder origin rewritten to this server's,
-// so the documents cite the API they came from.
 func (a *fixtureAPI) write(w http.ResponseWriter, name string) {
 	body, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
@@ -218,8 +175,7 @@ func (a *fixtureAPI) write(w http.ResponseWriter, name string) {
 	}
 }
 
-// reject answers with a status the connector does not retry, so a fixture
-// mistake surfaces as one failing test instead of a minute of backoff.
+// Uses a status the connector does not retry, so a fixture mistake fails fast.
 func (a *fixtureAPI) reject(w http.ResponseWriter, format string, args ...any) {
 	a.t.Errorf(format, args...)
 	w.WriteHeader(http.StatusBadRequest)
@@ -237,10 +193,6 @@ func (a *fixtureAPI) callCount(op string) int {
 	return a.calls[op]
 }
 
-// --- workspace -------------------------------------------------------------
-
-// workspace is the pipeline wired the way the injector wires it, over a fixture
-// API and a fresh index file.
 type workspace struct {
 	api    *fixtureAPI
 	round  services.SyncOrchestrator
@@ -307,11 +259,6 @@ func (w *workspace) ask(ctx context.Context, t *testing.T) *entities.EvidenceBun
 	return bundle
 }
 
-// --- tests -----------------------------------------------------------------
-
-// The whole point of the stack, asserted once from the outside: documents pulled
-// from a fixture API through the connector, chunked, embedded and indexed, come
-// back as cited evidence for a question nobody told the index about.
 func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	ctx := context.Background()
 	w := newWorkspace(t)
@@ -346,8 +293,6 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if bundle.Anchor.Query != question {
 		t.Errorf("anchor query = %q, want %q", bundle.Anchor.Query, question)
 	}
-	// The graph walk lands with the edges wave; until then a bundle carries seed
-	// nodes only, and claiming otherwise here would hide its arrival.
 	if len(bundle.Chains) != 0 || len(bundle.Gaps) != 0 {
 		t.Errorf("bundle carries %d chains and %d gaps, want none of either",
 			len(bundle.Chains), len(bundle.Gaps))
@@ -378,9 +323,6 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	}
 }
 
-// A second round over unchanged sources is a no-op through every layer: the
-// connector replays nothing the cursor already covers, upserts and chunk
-// replacement are idempotent, and the answer is the same answer.
 func TestSecondSyncOverUnchangedFixturesChangesNothing(t *testing.T) {
 	ctx := context.Background()
 	w := newWorkspace(t)

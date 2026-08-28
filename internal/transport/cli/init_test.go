@@ -23,7 +23,6 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 	if !strings.Contains(res.stdout, path) || !strings.Contains(res.stdout, di.EmbedderKeyEnv) {
 		t.Errorf("stdout = %q, want the path written and the key variable to export", res.stdout)
 	}
-	// `lore init` describes a workspace; it never touches an index.
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
 		t.Errorf("directory holds %v (err %v), want lore.yaml alone", entries, err)
 	}
@@ -35,8 +34,8 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 	scaffold := string(raw)
 
 	for _, want := range []string{
-		"workspace: " + filepath.Base(dir), // the directory the operator is standing in
-		"token_env: LORE_GITHUB_TOKEN",     // a NAME, never a secret
+		"workspace: " + filepath.Base(dir),
+		"token_env: LORE_GITHUB_TOKEN",
 		"provider: openai",
 		"model: text-embedding-3-small",
 		"repos: []",
@@ -45,8 +44,6 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 			t.Errorf("scaffold is missing %q\n--- scaffold ---\n%s", want, scaffold)
 		}
 	}
-	// A secret may only ever appear as the NAME of an environment variable, so
-	// every key that could hold one has to end in _env.
 	for _, line := range strings.Split(scaffold, "\n") {
 		key, _, assigns := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), ":")
 		if !assigns {
@@ -59,9 +56,6 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 		}
 	}
 
-	// The file the loader will actually read: unknown keys are rejected and
-	// defaults applied, so a scaffold that does not round-trip is a broken
-	// scaffold. The token variable is what makes it valid, not the shape.
 	t.Setenv("LORE_GITHUB_TOKEN", "ghp_example")
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -77,8 +71,6 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 		t.Errorf("embedder.model = %q, want the default model", cfg.Embedder.Model)
 	}
 
-	// Every commented line is still YAML: a stray tab or a broken continuation
-	// would only show up when the operator uncomments it.
 	var tree map[string]any
 	if err := yaml.Unmarshal(raw, &tree); err != nil {
 		t.Fatalf("the scaffold is not valid YAML: %v", err)

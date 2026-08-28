@@ -50,8 +50,6 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 	}
 }
 
-// An unreadable index is an internal failure: nothing the caller can do differs
-// from what they already asked for. The store's error stays reachable for logs.
 func TestStatusClassifiesAStoreFailure(t *testing.T) {
 	store, svc := newStatusFixture(t)
 	store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errStatusStore)

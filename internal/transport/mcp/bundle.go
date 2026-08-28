@@ -7,19 +7,11 @@ import (
 	"lore/internal/entities"
 )
 
-// EncodeBundle renders an evidence bundle in its canonical wire form: the exact
-// JSON the find_decision tool returns as structured content. Every surface that
-// hands a bundle to a machine — the MCP tool result, `lore ask --raw` — encodes
-// it through here, so there is one bundle contract and not one per transport
-// (02 — D9, 06 — tool-surface policy).
 func EncodeBundle(bundle *entities.EvidenceBundle) ([]byte, error) {
 	return json.Marshal(newEvidenceBundle(bundle))
 }
 
-// evidenceBundle is the wire form of entities.EvidenceBundle. The domain types
-// carry no JSON tags, so the transport owns the names and the shapes a consumer
-// sees — notably the anchor kinds, a bit set the domain reads and nobody else
-// can.
+// The domain types carry no JSON tags, so the wire names live here.
 type evidenceBundle struct {
 	Question string         `json:"question"`
 	Anchor   anchor         `json:"anchor"`

@@ -84,8 +84,6 @@ func TestAskPrettyPrintsEvidenceInRankedOrder(t *testing.T) {
 		}
 	}
 
-	// Ranked order is part of the answer, so the second node never precedes the
-	// first, and the seed role is not printed as if it were a discovery path.
 	if strings.Index(out, "1. Index on SQLite") > strings.Index(out, "2. Storage design") {
 		t.Errorf("nodes are not in the order the service returned them:\n%s", out)
 	}
@@ -108,10 +106,6 @@ func TestAskEmptyBundleIsAnAnswerNotAnError(t *testing.T) {
 	}
 }
 
-// --raw is a machine surface, so it emits the canonical bundle wire form: the
-// same bytes the find_decision tool returns, snake_case keys and all. Pinning
-// the encoder's own output is the point — a second, CLI-private JSON shape is
-// exactly what this must not become.
 func TestAskRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	rt, query := mockQuery(t)
 	bundle := bundleFixture()
@@ -130,8 +124,6 @@ func TestAskRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 		t.Errorf("stdout is not the canonical encoding\n got: %s\nwant: %s\n", res.stdout, want)
 	}
 
-	// And it is JSON a script can actually read: keys are the wire names, not
-	// the domain field names.
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(res.stdout), &decoded); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
@@ -174,9 +166,6 @@ func TestAskPassesFiltersThrough(t *testing.T) {
 	}
 }
 
-// A bare --until names a day, and a day includes its own events. Ending the
-// window at that day's midnight would silently drop everything the caller asked
-// for on the last day of their range.
 func TestAskBareDatesCoverWholeDays(t *testing.T) {
 	rt, query := mockQuery(t)
 	query.EXPECT().FindDecision(gomock.Any(), services.FindDecisionRequest{
@@ -191,8 +180,6 @@ func TestAskBareDatesCoverWholeDays(t *testing.T) {
 	}
 }
 
-// A malformed date is refused before the workspace is even built: it is the
-// invocation that is wrong, and opening an index to find that out is waste.
 func TestAskRejectsAnUnparseableDate(t *testing.T) {
 	rt, _ := mockQuery(t)
 

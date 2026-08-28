@@ -14,8 +14,6 @@ import (
 	"lore/internal/services"
 )
 
-// serveTimeout bounds every blocking step of the stdio exchange so a protocol
-// slip fails the test instead of hanging it.
 const serveTimeout = 10 * time.Second
 
 type stdioResponse struct {
@@ -24,8 +22,6 @@ type stdioResponse struct {
 	Error  json.RawMessage `json:"error"`
 }
 
-// TestServeAnswersToolCallsOverStdio drives Serve through real pipes on
-// os.Stdin/os.Stdout, the wiring `lore mcp` runs.
 func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	query := mock_services.NewMockQueryService(gomock.NewController(t))
 	query.EXPECT().
@@ -90,7 +86,6 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	}
 }
 
-// replaceStdin points os.Stdin at a pipe and returns its write end.
 func replaceStdin(t *testing.T) *os.File {
 	t.Helper()
 
@@ -109,8 +104,6 @@ func replaceStdin(t *testing.T) *os.File {
 	return writer
 }
 
-// replaceStdout points os.Stdout at a pipe and returns a scanner over the
-// newline-delimited messages the server writes to it.
 func replaceStdout(t *testing.T) *bufio.Scanner {
 	t.Helper()
 
@@ -144,9 +137,7 @@ func send(t *testing.T, requests *os.File, message map[string]any) {
 	}
 }
 
-// readResponse skips notifications until the answer to id arrives. The scanner
-// is shared across calls: responses can land in one read, and a fresh scanner
-// would drop whatever it buffered.
+// The scanner is shared across calls: a fresh one would drop whatever it buffered.
 func readResponse(t *testing.T, responses *bufio.Scanner, id int) stdioResponse {
 	t.Helper()
 

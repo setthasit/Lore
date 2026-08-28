@@ -27,8 +27,6 @@ func newStatusCommand(resolve Resolver, configPath *string) *cobra.Command {
 	}
 }
 
-// renderStatus prints the index's state. now is passed in rather than read here
-// so the ages a run prints all refer to the same instant.
 func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 	printfln(w, "documents: %d", stats.Documents)
 	printfln(w, "chunks:    %d", stats.Chunks)
@@ -45,10 +43,6 @@ func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 	}
 
 	printfln(w, "")
-	// A held lease is reported with the age of its heartbeat and nothing more:
-	// whether the holder is still alive is a judgement the store's lease TTL
-	// makes when the next round tries to take over, not one a status line should
-	// duplicate.
 	if stats.Lease == nil {
 		printfln(w, "sync lock: free")
 		return

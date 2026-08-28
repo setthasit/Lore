@@ -162,8 +162,6 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	}
 	assertLeaseHolder(t, s, "cli", clock)
 
-	// The dead holder learns it lost the lease from its next heartbeat, and its
-	// deferred release leaves the new holder's lease alone.
 	if err = s.HeartbeatLease(ctx, "daemon"); !errors.Is(err, repositories.ErrLeaseLost) {
 		t.Errorf("HeartbeatLease after takeover = %v, want it to wrap ErrLeaseLost", err)
 	}

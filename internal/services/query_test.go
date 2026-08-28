@@ -16,11 +16,8 @@ import (
 	"lore/internal/services"
 )
 
-// queryTopK is the retrieval width the fixture wires, small enough that every
-// expectation can name it literally.
 const queryTopK = 5
 
-// queryScoreEpsilon bounds float32 comparison of fused scores.
 const queryScoreEpsilon = 1e-6
 
 var (
@@ -46,7 +43,6 @@ func newQueryFixture(t *testing.T) queryFixture {
 	return queryFixture{store: store, emb: emb, svc: services.NewQueryService(store, emb, queryTopK)}
 }
 
-// expectEmbed accepts the question and answers with queryVector.
 func (f queryFixture) expectEmbed(question string) {
 	f.emb.EXPECT().Embed(gomock.Any(), []string{question}).Return([][]float32{queryVector}, nil)
 }
@@ -60,8 +56,6 @@ func queryHit(doc entities.DocID, ordinal int) entities.ChunkHit {
 			Source:  "github",
 			DocType: entities.DocTypePage,
 		},
-		// Backend-native and deliberately identical everywhere: fusion ranks,
-		// it does not read these.
 		Score: -3.25,
 	}
 }
@@ -87,11 +81,6 @@ func assertScore(t *testing.T, what string, got, want float32) {
 	}
 }
 
-// TestFindDecisionFusesAndLiftsToDocuments is the happy path: two overlapping
-// ranked lists fuse by rank, several chunks of one document collapse into one
-// node keeping the best-scoring excerpt, and the bundle describes its own
-// anchoring. The question is passed with surrounding whitespace to pin that
-// retrieval and the bundle both use the normalized form.
 func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	t.Parallel()
 
@@ -100,9 +89,6 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	f := newQueryFixture(t)
 	f.expectEmbed(question)
 
-	// docA leads lexically and semantically; docB is second in one list and
-	// third in the other; docC is semantic-only; docA's second chunk is
-	// lexical-only and folds into docA's node.
 	lexical := []entities.ChunkHit{queryHit("docA", 0), queryHit("docB", 0), queryHit("docA", 3)}
 	semantic := []entities.ChunkHit{queryHit("docA", 0), queryHit("docC", 0), queryHit("docB", 0)}
 	f.store.EXPECT().SearchLexical(gomock.Any(), question, gomock.Any(), queryTopK).Return(lexical, nil)
@@ -171,9 +157,6 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	}
 }
 
-// TestFindDecisionPushesFiltersIntoBothSearches pins that every narrowing field
-// reaches both retrieval strategies identically: a filter honoured by one list
-// only would silently leak out-of-scope evidence through fusion.
 func TestFindDecisionPushesFiltersIntoBothSearches(t *testing.T) {
 	t.Parallel()
 
@@ -210,9 +193,6 @@ func TestFindDecisionPushesFiltersIntoBothSearches(t *testing.T) {
 	}
 }
 
-// TestFindDecisionZeroHits: an index with no matching evidence answers, it does
-// not fail. No DocumentsByID expectation is registered, so hydrating anything
-// would fail the test.
 func TestFindDecisionZeroHits(t *testing.T) {
 	t.Parallel()
 
@@ -236,9 +216,6 @@ func TestFindDecisionZeroHits(t *testing.T) {
 	}
 }
 
-// TestFindDecisionDropsNodesWithoutURL: DocumentsByID omits ids the index does
-// not hold, and a node without a URL is not evidence. Both cases drop the node
-// instead of citing something the caller cannot open.
 func TestFindDecisionDropsNodesWithoutURL(t *testing.T) {
 	t.Parallel()
 
@@ -254,7 +231,6 @@ func TestFindDecisionDropsNodesWithoutURL(t *testing.T) {
 	f.store.EXPECT().SearchVector(gomock.Any(), queryVector, gomock.Any(), queryTopK).Return(nil, nil)
 	f.store.EXPECT().
 		DocumentsByID(gomock.Any(), []entities.DocID{"docA", "docB", "docC"}).
-		// docB is missing entirely, docC has no URL.
 		Return([]entities.DocumentMeta{queryMeta("docA"), urlless}, nil)
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
@@ -294,9 +270,6 @@ func TestFindDecisionRejectsEmptyQuestion(t *testing.T) {
 	}
 }
 
-// TestFindDecisionRefusesAround: the parameter is accepted by the request shape
-// but event resolution is not implemented, so it fails loudly rather than
-// answering an unanchored question that looks anchored.
 func TestFindDecisionRefusesAround(t *testing.T) {
 	t.Parallel()
 
@@ -339,9 +312,6 @@ func TestFindDecisionClassifiesEmbedderFailure(t *testing.T) {
 	}
 }
 
-// TestFindDecisionRejectsMisalignedEmbeddings: Embed's contract is one vector
-// per text. A provider that breaks it cannot be zipped onto the question, so the
-// round fails instead of searching with a wrong or missing vector.
 func TestFindDecisionRejectsMisalignedEmbeddings(t *testing.T) {
 	t.Parallel()
 
@@ -368,8 +338,6 @@ func TestFindDecisionRejectsMisalignedEmbeddings(t *testing.T) {
 	}
 }
 
-// TestFindDecisionClassifiesStoreFailures: raw store errors are classified here
-// and keep their cause, whichever of the three reads fails.
 func TestFindDecisionClassifiesStoreFailures(t *testing.T) {
 	t.Parallel()
 
@@ -416,8 +384,6 @@ func TestFindDecisionClassifiesStoreFailures(t *testing.T) {
 	}
 }
 
-// TestNewQueryServiceDefaultsTopK: a non-positive width is a wiring slip, and
-// asking the store for zero hits would answer nothing for every question.
 func TestNewQueryServiceDefaultsTopK(t *testing.T) {
 	t.Parallel()
 

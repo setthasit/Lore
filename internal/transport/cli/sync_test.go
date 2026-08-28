@@ -34,9 +34,6 @@ func TestSyncRunsARound(t *testing.T) {
 	}
 }
 
-// --reembed reaches the orchestrator: it is the whole remedy for an embedder
-// identity mismatch, and a flag that quietly did nothing would leave the
-// mismatch error standing forever.
 func TestSyncPassesReembedThrough(t *testing.T) {
 	rt, orchestrator := mockSync(t)
 	orchestrator.EXPECT().Sync(gomock.Any(), services.SyncOptions{Reembed: true}).Return(nil)

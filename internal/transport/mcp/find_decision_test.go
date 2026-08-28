@@ -67,7 +67,6 @@ func (f toolFixture) call(t *testing.T, args map[string]any) *sdk.CallToolResult
 	return res
 }
 
-// errorText returns the message a failed call reports to the host model.
 func errorText(t *testing.T, res *sdk.CallToolResult) string {
 	t.Helper()
 
@@ -119,8 +118,6 @@ func TestFindDecisionReturnsBundleAsJSON(t *testing.T) {
 	assertSameJSON(t, []byte(text.Text), []byte(testBundleJSON))
 }
 
-// An index that holds nothing is an answer, so the empty bundle must survive
-// the round trip as empty lists rather than nulls or a tool error.
 func TestFindDecisionReturnsEmptyBundle(t *testing.T) {
 	f := newToolFixture(t)
 	f.query.EXPECT().
@@ -165,9 +162,6 @@ func TestFindDecisionParsesArguments(t *testing.T) {
 			},
 		},
 		{
-			// A bare day is the whole day: since opens it, until closes it. An
-			// until pinned to midnight would drop the day it names, because the
-			// store's bounds are inclusive.
 			name: "dates cover the whole day",
 			args: map[string]any{"question": testQuestion, "since": "2025-03-12", "until": "2025-04-01"},
 			want: services.FindDecisionRequest{
@@ -205,8 +199,6 @@ func TestFindDecisionParsesArguments(t *testing.T) {
 	}
 }
 
-// matchRequest compares requests by wall clock, so a bound parsed into a named
-// or fixed zone matches the instant it denotes.
 func matchRequest(want services.FindDecisionRequest) gomock.Matcher {
 	return gomock.Cond(func(got services.FindDecisionRequest) bool {
 		return got.Question == want.Question &&
@@ -309,8 +301,6 @@ func TestFindDecisionLogsInternalCauseInsteadOfLeakingIt(t *testing.T) {
 	}
 }
 
-// around reaches the service instead of being dropped, and the refusal it
-// answers with reaches the caller unchanged.
 func TestFindDecisionPassesEventAnchorThrough(t *testing.T) {
 	const refusal = "event anchoring not yet supported"
 

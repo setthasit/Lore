@@ -34,10 +34,8 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 	stamp := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
 	s.now = func() time.Time { return stamp }
 
-	seedSearchCorpus(t, s) // five documents, one chunk each
+	seedSearchCorpus(t, s)
 
-	// Cursors are reported per connector, ordered by name, stamped by the
-	// store's clock rather than by anything inside the opaque position.
 	if err := s.SetCursor(ctx, "notion", entities.Cursor{"page": "3"}); err != nil {
 		t.Fatalf("SetCursor(notion): %v", err)
 	}
@@ -85,8 +83,6 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 			got.Lease.AcquiredAt, got.Lease.HeartbeatAt, stamp)
 	}
 
-	// A released lease reads back as free, while the cursor rows outlive the
-	// round that wrote them.
 	if err := s.ReleaseLease(ctx, "host-1/4242"); err != nil {
 		t.Fatalf("ReleaseLease: %v", err)
 	}

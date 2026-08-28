@@ -7,9 +7,8 @@ import (
 	"lore/internal/entities"
 )
 
-// ErrLeaseLost reports that the caller is no longer the sync lease's holder:
-// another process took the lease over. Implementations wrap it so a caller can
-// tell "your round must stop" apart from "the store could not be reached".
+// Another process took the lease over; implementations wrap it so a caller can
+// tell it apart from a store that could not be reached.
 var ErrLeaseLost = errors.New("sync lease lost to another holder")
 
 // Errors are returned raw with context; classifying them is the service layer's
@@ -19,19 +18,15 @@ type IndexStore interface {
 	// persisted.
 	UpsertDocuments(ctx context.Context, docs []entities.Document) error
 
-	// DocumentsByID returns metadata for the named documents. Ids the index
-	// does not hold are silently omitted (an unsynced document is an ordinary
-	// gap, not a failure); result order is unspecified. Empty ids yields no
-	// metadata and no error.
+	// Ids the index does not hold are silently omitted; result order is
+	// unspecified.
 	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
 
 	// Replaces the document's whole chunk set; nil clears it. The parent
 	// document must already exist.
 	ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error
 
-	// WipeChunks removes every chunk and its derived lexical and vector rows in
-	// one transaction: re-embedding rebuilds the chunk layer from the stored
-	// documents. Documents, edges, pending refs, cursors and meta are untouched.
+	// Documents, edges, pending refs, cursors and meta survive the wipe.
 	WipeChunks(ctx context.Context) error
 
 	// query is arbitrary user text, never an expression: text with no searchable
@@ -57,16 +52,13 @@ type IndexStore interface {
 	// any caller may take it over; re-acquiring one already held restarts it.
 	TryAcquireLease(ctx context.Context, holder string) (bool, error)
 
-	// Fails with an error wrapping ErrLeaseLost when holder is no longer the
-	// holder — how a round learns to stop. Any other error is the store failing.
+	// A non-holder fails with an error wrapping ErrLeaseLost.
 	HeartbeatLease(ctx context.Context, holder string) error
 
 	// No-op when the lease was already taken over or released.
 	ReleaseLease(ctx context.Context, holder string) error
 
-	// Stats reports the index's operational state: contents, checkpoint
-	// freshness per connector, and lease state. An empty index reports zeros
-	// and no rows, not an error.
+	// An empty index reports zeros and no rows, not an error.
 	Stats(ctx context.Context) (entities.IndexStats, error)
 
 	Close() error

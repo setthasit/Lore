@@ -105,8 +105,6 @@ func assertSameJSON(t *testing.T, got, want []byte) {
 	}
 }
 
-// TestEncodeBundleIsTheToolWireShape pins the one contract every surface
-// quotes: what `lore ask --raw` writes is what find_decision returns.
 func TestEncodeBundleIsTheToolWireShape(t *testing.T) {
 	encoded, err := EncodeBundle(testBundle())
 	if err != nil {

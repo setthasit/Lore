@@ -47,9 +47,7 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 	return c, nil
 }
 
-// SetCursor stamps the row with the store clock, not a timestamp parsed from
-// the opaque Cursor: checkpoint freshness must be answerable for every
-// connector alike.
+// The stored timestamp is the store clock, not one read out of the Cursor.
 func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
@@ -121,8 +119,7 @@ func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error
 	return affected > 0, nil
 }
 
-// A heartbeat that updates no row means holder lost the lease; that case wraps
-// repositories.ErrLeaseLost so callers can tell it from an unreachable store.
+// No row updated means the lease was lost, wrapping repositories.ErrLeaseLost.
 func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 	res, err := s.db.ExecContext(ctx, heartbeatLeaseSQL, formatTime(s.now()), syncLockID, holder)
 	if err != nil {

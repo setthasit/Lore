@@ -7,10 +7,7 @@ import (
 	"strconv"
 )
 
-// schemaVersion is the on-disk schema generation; an incompatible bump is
-// resolved by rebuilding the workspace file, never migrating it. Generation 2
-// added cursors.updated_at — without the bump a generation-1 file would pass
-// the identity check and fail raw on the first SetCursor.
+// An incompatible generation means the workspace file is rebuilt, not migrated.
 const schemaVersion = "2"
 
 // Keys the store itself owns in the meta table.

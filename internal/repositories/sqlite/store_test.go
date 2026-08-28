@@ -96,10 +96,6 @@ func TestOpenIsIdempotentAndGuardsVectorWidth(t *testing.T) {
 	}
 }
 
-// A file written by an older generation of the schema is refused rather than
-// used: the index is derived data, so the answer is deleting it and re-syncing,
-// and the alternative is a file whose tables are one generation behind the SQL
-// this build runs against them.
 func TestOpenRefusesAnOlderSchemaGeneration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workspace.db")
 
@@ -308,7 +304,6 @@ func TestDocumentsByID(t *testing.T) {
 		t.Fatalf("DocumentsByID returned %d metas, want %d", len(metas), len(docs))
 	}
 
-	// The order is unspecified, so index by id before comparing.
 	byID := make(map[entities.DocID]entities.DocumentMeta, len(metas))
 	for _, m := range metas {
 		byID[m.ID] = m
@@ -329,7 +324,6 @@ func TestDocumentsByID(t *testing.T) {
 		}
 	}
 
-	// Unknown ids are omitted, not reported.
 	metas, err = s.DocumentsByID(ctx, []entities.DocID{docs[1].ID, "github:issue:does-not-exist"})
 	if err != nil {
 		t.Fatalf("DocumentsByID (subset): %v", err)
@@ -384,7 +378,6 @@ func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
 	}
 	assertCounts(t, s, 0, 0, 0)
 
-	// Documents survive: a wipe is the prelude to a re-embed, not a re-sync.
 	var documents int
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM documents`).Scan(&documents); err != nil {
 		t.Fatalf("count documents: %v", err)
@@ -393,7 +386,6 @@ func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
 		t.Errorf("documents rows after wipe = %d, want 2", documents)
 	}
 
-	// The emptied virtual tables still accept fresh, rowid-aligned rows.
 	rebuilt := entities.Chunk{
 		DocID: first, Ordinal: 0, Text: "rebuilt after re-embed",
 		Source: "github", DocType: entities.DocTypeIssue, Author: "a",
@@ -413,7 +405,6 @@ func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
 		t.Errorf("SearchVector after wipe = %+v, want the rebuilt chunk", hits)
 	}
 
-	// Wiping an already empty chunk layer is not an error.
 	if err := s.WipeChunks(ctx); err != nil {
 		t.Fatalf("WipeChunks (idempotent): %v", err)
 	}

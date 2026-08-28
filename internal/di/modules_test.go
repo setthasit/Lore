@@ -14,9 +14,6 @@ import (
 	"lore/internal/services"
 )
 
-// writeConfig lays down a workspace configuration whose index lives in the
-// test's own temporary directory, so building the graph really opens a store
-// without leaving anything behind.
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 
@@ -30,8 +27,6 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-// resolveWorkspace builds the whole graph for the configuration at path and
-// returns what the transports consume.
 func resolveWorkspace(t *testing.T, path string) ([]entities.Connector, error) {
 	t.Helper()
 
@@ -56,8 +51,7 @@ func resolveWorkspace(t *testing.T, path string) ([]entities.Connector, error) {
 	if query == nil || orch == nil {
 		t.Fatalf("graph resolved to query=%v orchestrator=%v; want both", query, orch)
 	}
-	// Shutting down runs the lifecycle hook that closes the index; a Close
-	// failure surfaces as this Stop failing.
+	// Stop runs the lifecycle hook that closes the index; a Close failure surfaces here.
 	if err := app.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
@@ -89,8 +83,6 @@ embedder:
 	}
 }
 
-// A workspace with only local clones registers no connector at all. That is the
-// ask-only shape of 02 — D7 and must resolve, not fail.
 func TestWorkspaceGraphWithoutSources(t *testing.T) {
 	t.Setenv(EmbedderKeyEnv, "sk-example")
 
@@ -150,8 +142,6 @@ func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
 	}
 }
 
-// A configured source this build has no connector for is refused rather than
-// silently never synced.
 func TestWorkspaceGraphRejectsUnbuiltSource(t *testing.T) {
 	t.Setenv("LORE_TEST_NOTION_TOKEN", "secret_example")
 	t.Setenv(EmbedderKeyEnv, "sk-example")
@@ -186,7 +176,6 @@ func TestResolvePathExpandsHome(t *testing.T) {
 		t.Errorf("resolvePath = %q, want %q", got, want)
 	}
 
-	// Only a leading "~" is special; a path that merely contains one is a path.
 	for _, path := range []string{"./index.db", "/var/lib/lore/index.db", "index~backup.db"} {
 		if got, err := resolvePath(path); err != nil || got != path {
 			t.Errorf("resolvePath(%q) = %q, %v; want it unchanged", path, got, err)

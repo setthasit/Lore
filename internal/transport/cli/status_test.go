@@ -12,7 +12,6 @@ import (
 	mock_services "lore/internal/mocks/services"
 )
 
-// mockStatus builds a runtime whose status service answers with stats, err.
 func mockStatus(t *testing.T, stats entities.IndexStats, err error) *Runtime {
 	t.Helper()
 
@@ -22,8 +21,7 @@ func mockStatus(t *testing.T, stats entities.IndexStats, err error) *Runtime {
 }
 
 func TestStatusRendersCountsCursorAgesAndLock(t *testing.T) {
-	// Timestamps are relative to now, so the humanized ages are deterministic
-	// without the command having to take a clock.
+	// Timestamps are relative to now, so the humanized ages are deterministic.
 	now := time.Now()
 	rt := mockStatus(t, entities.IndexStats{
 		Documents: 1284,
@@ -91,7 +89,7 @@ func TestHumanizeAge(t *testing.T) {
 		d    time.Duration
 		want string
 	}{
-		{-time.Hour, "just now"}, // a workspace file whose writer's clock ran ahead
+		{-time.Hour, "just now"},
 		{2 * time.Second, "just now"},
 		{45 * time.Second, "45s ago"},
 		{90 * time.Second, "1m ago"},

@@ -22,8 +22,6 @@ import (
 	"lore/internal/services"
 )
 
-// The identity contract restated: a round compares the configured embedder's
-// identity against this meta key and refuses to mix vector spaces.
 const (
 	metaKeyEmbedderIdentity = "embedder_identity"
 	currentIdentity         = "openai/text-embedding-3-small/1536"
@@ -32,9 +30,6 @@ const (
 
 var errSyncStore = errors.New("store is on fire")
 
-// syncMocks is one round's collaborators, all on a single strict controller: a
-// call the test did not declare fails it, which is how "never checkpoints a
-// batch it could not commit" is asserted — by declaring no SetCursor.
 type syncMocks struct {
 	ctrl    *gomock.Controller
 	store   *mock_repositories.MockIndexStore
@@ -55,15 +50,11 @@ func newSyncMocks(t *testing.T) syncMocks {
 	}
 }
 
-// heldLease is the lease lifecycle of a round that gets to run: taken once,
-// released exactly once however the round ends.
 func (m syncMocks) heldLease() {
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 }
 
-// matchingIdentity is an index already built with the configured embedder, so
-// the round proceeds without touching the chunk layer.
 func (m syncMocks) matchingIdentity() {
 	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
@@ -80,7 +71,6 @@ func (m syncMocks) orchestrator(connectors ...entities.Connector) services.SyncO
 	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb)
 }
 
-// syncStreamItem is one (Batch, error) pair a connector yields.
 type syncStreamItem struct {
 	batch entities.Batch
 	err   error
@@ -92,9 +82,6 @@ func syncBatch(cursor entities.Cursor, docs ...entities.Document) syncStreamItem
 
 func syncFailure(err error) syncStreamItem { return syncStreamItem{err: err} }
 
-// syncStream is a connector's change stream that counts how many items it got
-// to yield, so a test can prove the orchestrator abandoned the iterator instead
-// of draining it after a syncFailure.
 type syncStream struct {
 	items  []syncStreamItem
 	yields int
@@ -133,9 +120,7 @@ func syncChunks(id entities.DocID, texts ...string) []entities.Chunk {
 	return chunks
 }
 
-// withSyncVectors copies chunks with embeddings attached — the shape ReplaceChunks
-// must receive. It copies because the orchestrator fills the very slice the
-// chunker handed it, which would otherwise mutate the expectation too.
+// Copies: the orchestrator fills the very slice the chunker returned, which would otherwise mutate the expectation.
 func withSyncVectors(chunks []entities.Chunk, vectors [][]float32) []entities.Chunk {
 	out := make([]entities.Chunk, len(chunks))
 	copy(out, chunks)
@@ -157,8 +142,6 @@ func assertSyncKind(t *testing.T, err error, want internalerror.Kind) {
 	}
 }
 
-// A batch is the checkpoint unit: documents, chunks and vectors are all durable
-// before the cursor that skips past them ever is.
 func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	t.Parallel()
 
@@ -192,9 +175,6 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	}
 }
 
-// Every way a batch can fail leaves the previous checkpoint standing: the cursor
-// is never written for a batch that did not fully commit, and the lease is
-// always handed back.
 func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 	t.Parallel()
 
@@ -257,8 +237,6 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 				m.emb.EXPECT().Embed(gomock.Any(), []string{"a", "b"}).
 					Return([][]float32{{0.1}}, nil)
 			},
-			// The embedder's own answer is the fault, so there is no
-			// underlying error to carry.
 			want: internalerror.KindInternal,
 		},
 		{
@@ -285,8 +263,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 			m.matchingIdentity()
 
 			conn := m.connector("github")
-			// No SetCursor is declared: the strict controller turns any
-			// checkpoint of an uncommitted batch into a test failure.
+			// No SetCursor is declared: the strict controller fails any checkpoint of an uncommitted batch.
 			tt.setup(m, conn)
 
 			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
@@ -298,9 +275,6 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 	}
 }
 
-// A connector that dies mid-stream keeps everything it already delivered: the
-// first batch stays checkpointed, and the stream is abandoned rather than
-// drained.
 func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	t.Parallel()
 
@@ -320,7 +294,6 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
-	// Exactly one checkpoint, for the batch that committed.
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
 	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
 
@@ -332,10 +305,6 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	}
 }
 
-// Losing the lease mid-round stops the round: the heartbeat is how a holder
-// learns it was taken over, and continuing to write would race the new holder.
-// A heartbeat that fails for any other reason is the store failing, not the
-// lease moving, and saying otherwise would send the user chasing a phantom.
 func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
 	t.Parallel()
 
@@ -385,8 +354,6 @@ func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
 	}
 }
 
-// A round that loses the lease race writes nothing at all — not even a release,
-// which would disturb the holder that won.
 func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
 	t.Parallel()
 
@@ -403,8 +370,6 @@ func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
 	}
 }
 
-// The mismatch is refused with the remedy spelled out, and nothing is written:
-// re-embedding costs real money and is the caller's call.
 func TestSyncRefusesAnEmbedderIdentityMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -425,8 +390,6 @@ func TestSyncRefusesAnEmbedderIdentityMismatch(t *testing.T) {
 	}
 }
 
-// An index with no recorded identity is one with no vectors: the configured
-// embedder defines the space instead of conflicting with it.
 func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 	t.Parallel()
 
@@ -448,10 +411,6 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 	}
 }
 
-// --reembed rebuilds the chunk layer: rewind every connector, wipe, and only
-// then record the new identity. Rewinding first means an interrupted rebuild
-// re-streams everything and replaces whatever chunks survived; recording the
-// identity last keeps the mismatch error standing until the rebuild is set up.
 func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -482,7 +441,6 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 				m.store.EXPECT().SetCursor(gomock.Any(), "notion", nil).Return(nil),
 				m.store.EXPECT().WipeChunks(gomock.Any()).Return(nil),
 				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
-				// The full backfill that follows starts from the rewound cursors.
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil),
 			)
@@ -495,8 +453,6 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 	}
 }
 
-// A re-embed that cannot finish leaves the identity untouched, so the next round
-// still knows the chunk layer needs rebuilding.
 func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 	t.Parallel()
 
@@ -527,8 +483,7 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 			m.heldLease()
 			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
-			// No SetMeta is declared: the strict controller fails the test if a
-			// half-finished rebuild claims the new identity.
+			// No SetMeta is declared: a half-finished rebuild must not claim the new identity.
 			tt.setup(m)
 
 			conn := m.connector("github")
@@ -539,8 +494,6 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 	}
 }
 
-// Each connector carries its own cursor and its own checkpoints; one source's
-// position never leaks into another's.
 func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	t.Parallel()
 
@@ -578,8 +531,6 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	}
 }
 
-// A document whose body chunks to nothing still replaces its chunk set, or the
-// previous edit's chunks stay retrievable and cite text that no longer exists.
 func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	t.Parallel()
 
@@ -607,8 +558,6 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	}
 }
 
-// The holder names the process, so a blocked round can say who is holding the
-// lease, and every lease call in one round speaks for the same holder.
 func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	t.Parallel()
 
@@ -636,8 +585,6 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	}
 }
 
-// A workspace may declare no sources at all; a round over none of them is a
-// round that takes the lease, finds nothing to do, and hands it back.
 func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -650,8 +597,6 @@ func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 	}
 }
 
-// The lease comes back even when the caller's context is already cancelled:
-// otherwise an interrupted round wedges the next one until the TTL lapses.
 func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
 	t.Parallel()
 

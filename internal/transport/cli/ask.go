@@ -14,8 +14,6 @@ import (
 	"lore/internal/transport/mcp"
 )
 
-// askFlags is the invocation of `lore ask`, kept in one struct so parsing it is
-// one testable step rather than a handful of flag reads scattered through RunE.
 type askFlags struct {
 	around  string
 	source  string
@@ -87,32 +85,17 @@ func (f askFlags) request(question string) (services.FindDecisionRequest, error)
 	}, nil
 }
 
-// dateLayout is the form a person types a day in. RFC 3339 is accepted too, for
-// the case where a moment rather than a day is meant — pasting a timestamp
-// straight out of a previous answer has to work.
 const dateLayout = "2006-01-02"
 
-// dayBound turns a bare date into the instant that bound means. A day is a
-// range, and which end of it a flag denotes depends on the flag: the store's
-// created_at filters are inclusive on both sides, so --since 2025-03-12 starts
-// at that day's first second and --until 2025-03-12 has to reach its last one.
-// Ending a bare --until at midnight would silently drop everything that
-// happened on the day the caller named.
-//
-// The last second, not the next midnight: timestamps are stored at second
-// precision, so 23:59:59 covers the whole day, while next-midnight would also
-// admit whatever happened exactly at 00:00:00 the following day.
 type dayBound func(time.Time) time.Time
 
 func startOfDay(day time.Time) time.Time { return day }
 
+// Timestamps are stored at second precision, so a bare --until ends at 23:59:59.
 func endOfDay(day time.Time) time.Time {
 	return day.Add(24*time.Hour - time.Second)
 }
 
-// parseTimeFlag reads a --since/--until value. An RFC 3339 timestamp is an
-// explicit instant and passes through exactly as given; only a bare date is
-// resolved to a bound, because only a bare date is ambiguous.
 func parseTimeFlag(flag, value string, bound dayBound) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, nil
@@ -127,11 +110,6 @@ func parseTimeFlag(flag, value string, bound dayBound) (time.Time, error) {
 		"--"+flag+" "+value+" is not a date: use YYYY-MM-DD or an RFC 3339 timestamp", nil)
 }
 
-// writeJSON emits the bundle in its canonical wire form. The encoder is the MCP
-// transport's because the bundle is one contract, not one per surface
-// (02 — D9): a script parsing `lore ask --raw` and an agent reading a
-// find_decision result see byte-identical JSON. The newline is the terminal's,
-// not the format's.
 func writeJSON(w io.Writer, bundle *entities.EvidenceBundle) error {
 	encoded, err := mcp.EncodeBundle(bundle)
 	if err != nil {
@@ -143,8 +121,6 @@ func writeJSON(w io.Writer, bundle *entities.EvidenceBundle) error {
 	return nil
 }
 
-// renderBundle prints the evidence in the order the service ranked it: relevance
-// order is part of the answer, so nothing here re-sorts.
 func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 	printfln(w, "%s", bundle.Question)
 	if window := bundle.Anchor.Window; window != nil {
@@ -173,9 +149,6 @@ func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 	renderGaps(w, bundle.Gaps)
 }
 
-// metaLine is the one-line provenance of a node: what it is, who wrote it, when
-// it happened, and — only when it was reached by something other than plain
-// retrieval — the role it plays.
 func metaLine(node entities.EvidenceNode) string {
 	parts := []string{node.Doc.Source + " " + string(node.Doc.Type)}
 	if node.Doc.Author != "" {

@@ -28,9 +28,7 @@ func newInitCommand(configPath *string) *cobra.Command {
 }
 
 func runInit(cmd *cobra.Command, configPath string) error {
-	// O_EXCL is the refusal: checking for the file first and writing after
-	// would overwrite a configuration written in between — and this one holds
-	// hand-edited workspace state, not derived data.
+	// Check-then-write would overwrite a configuration written in between.
 	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
@@ -53,10 +51,6 @@ func runInit(cmd *cobra.Command, configPath string) error {
 	return nil
 }
 
-// workspaceName guesses the workspace's name from where its configuration is
-// being written: the containing directory is the project the operator is
-// standing in, which is right often enough to save an edit and obvious enough to
-// fix when it is not.
 func workspaceName(configPath string) string {
 	dir, err := filepath.Abs(filepath.Dir(configPath))
 	if err != nil {
@@ -69,10 +63,6 @@ func workspaceName(configPath string) string {
 	return name
 }
 
-// scaffold is the starter configuration, shaped after the example in
-// 06-interfaces-and-config.md. Everything optional is commented out, so the file
-// loads as written once its token variables exist, and every secret appears as
-// the NAME of an environment variable — never a value.
 func scaffold(workspace string) string {
 	return strings.ReplaceAll(`workspace: {{WORKSPACE}}
 

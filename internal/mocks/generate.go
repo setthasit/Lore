@@ -1,5 +1,3 @@
-// Package mocks holds the go:generate directives for every gomock double the
-// test suites consume; `make gen.mock` regenerates them all.
 package mocks
 
 //go:generate go tool mockgen -destination repositories/indexstore.go -package mock_repositories lore/internal/repositories IndexStore

@@ -67,19 +67,12 @@ func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) e
 	return nil
 }
 
-// selectDocumentMetaSQL reads every DocumentMeta column; %s carries the IN
-// clause's bind markers, which are the only variable part of the statement.
 const selectDocumentMetaSQL = `
 SELECT doc_id, source, type, title, author, url, created_at, updated_at
 FROM documents
 WHERE doc_id IN (%s)`
 
-// DocumentsByID reads the metadata of the named documents in one query. Ids the
-// index does not hold contribute no row, so the result may be shorter than ids
-// and is in whatever order SQLite returns.
-//
-// The body column is deliberately not read: callers hydrate citations and edge
-// targets, and a document body per id is pure copying.
+// The body column is deliberately not read.
 func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -128,9 +121,7 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 	return metas, nil
 }
 
-// placeholders renders n comma-separated bind markers for an IN clause. Only the
-// number of markers is interpolated into the SQL text; every value stays bound.
-// n must be positive.
+// Only the marker count reaches the SQL text; every value stays bound.
 func placeholders(n int) string {
 	return strings.Repeat(",?", n)[1:]
 }
@@ -290,17 +281,12 @@ func insertChunks(ctx context.Context, tx *sql.Tx, docID entities.DocID, chunks 
 	return nil
 }
 
-// wipeChunkTableSQL lists the chunk tables in the order a wipe empties them:
-// derived rows first. Unlike the per-document path, an unqualified DELETE needs
-// no rowid constraint for the virtual tables to take it.
 var wipeChunkTableSQL = [...]string{
 	`DELETE FROM chunk_vectors`,
 	`DELETE FROM chunks_fts`,
 	`DELETE FROM chunks`,
 }
 
-// WipeChunks empties the chunk layer in one transaction; documents, edges,
-// cursors and meta survive, but nothing is retrievable until re-chunked.
 func (s *Store) WipeChunks(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
