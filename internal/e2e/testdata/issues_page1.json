@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 41,
+            "title": "Decide where the local index lives",
+            "body": "The derived index needs a home before search can ship. Trade offs belong in the linked pull request acme/lore#42.",
+            "url": "https://github.example/acme/lore/issues/41",
+            "createdAt": "2024-04-20T07:00:00Z",
+            "updatedAt": "2024-05-05T10:00:00Z",
+            "author": {
+              "login": "reporter"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "databaseId": 7701,
+                  "body": "Agreed, let us settle the storage question in the pull request.",
+                  "url": "https://github.example/acme/lore/issues/41#issuecomment-7701",
+                  "createdAt": "2024-05-05T09:00:00Z",
+                  "updatedAt": "2024-05-05T09:00:00Z",
+                  "author": {
+                    "login": "ada"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

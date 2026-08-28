@@ -1,0 +1,14 @@
+{
+  "sha": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+  "commit": {
+    "message": "Create the workspace index file on first run"
+  },
+  "files": [
+    {
+      "filename": "internal/repositories/sqlite/store.go",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 2
+    }
+  ]
+}
