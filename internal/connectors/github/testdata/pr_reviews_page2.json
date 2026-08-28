@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviews": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "id": "PRR_kwDOAbCdEf2",
+              "databaseId": 8802,
+              "state": "CHANGES_REQUESTED",
+              "body": "",
+              "url": "https://github.com/acme/widgets/pull/42#pullrequestreview-8802",
+              "createdAt": "2024-05-03T10:00:00Z",
+              "updatedAt": "2024-05-03T10:00:00Z",
+              "author": {
+                "login": "ada"
+              },
+              "comments": {
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                },
+                "nodes": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

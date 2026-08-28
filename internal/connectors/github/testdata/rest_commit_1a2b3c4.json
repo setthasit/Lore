@@ -1,0 +1,14 @@
+{
+  "sha": "1a2b3c4d5e6f708192a3b4c5d6e7f80910111213",
+  "commit": {
+    "message": "Add widget cache"
+  },
+  "files": [
+    {
+      "filename": "internal/cache/cache.go",
+      "status": "added",
+      "additions": 88,
+      "deletions": 0
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 41,
+            "title": "Auth times out after deploy",
+            "body": "Started after the Tuesday deploy. Related: acme/widgets#42 and https://acme.atlassian.net/browse/PROJ-123",
+            "url": "https://github.com/acme/widgets/issues/41",
+            "createdAt": "2024-04-20T07:00:00Z",
+            "updatedAt": "2024-05-05T10:00:00Z",
+            "author": {
+              "login": "reporter"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": true,
+                "endCursor": "aXNzdWVjb21tZW50Y3Vyc29yOjE="
+              },
+              "nodes": [
+                {
+                  "databaseId": 7701,
+                  "body": "Also affects staging.",
+                  "url": "https://github.com/acme/widgets/issues/41#issuecomment-7701",
+                  "createdAt": "2024-05-05T09:00:00Z",
+                  "updatedAt": "2024-05-05T09:00:00Z",
+                  "author": {
+                    "login": "ada"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

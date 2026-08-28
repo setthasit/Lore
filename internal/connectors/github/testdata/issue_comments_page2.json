@@ -1,0 +1,26 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "comments": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          },
+          "nodes": [
+            {
+              "databaseId": 7702,
+              "body": "Fixed by 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+              "url": "https://github.com/acme/widgets/issues/41#issuecomment-7702",
+              "createdAt": "2024-05-05T09:55:00Z",
+              "updatedAt": "2024-05-05T09:55:00Z",
+              "author": {
+                "login": "grace"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

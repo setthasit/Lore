@@ -1,0 +1,25 @@
+{
+  "data": {
+    "node": {
+      "comments": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "databaseId": 9902,
+            "body": "Also update the test.",
+            "path": "internal/auth/auth_test.go",
+            "url": "https://github.com/acme/widgets/pull/42#discussion_r9902",
+            "createdAt": "2024-05-02T09:02:00Z",
+            "updatedAt": "2024-05-02T09:02:00Z",
+            "author": {
+              "login": "grace"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
