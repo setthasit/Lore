@@ -275,3 +275,14 @@ func shaPrefix(t entities.DocType, externalKey string) string {
 func formatTime(t time.Time) string {
 	return t.UTC().Format(timeLayout)
 }
+
+// parseTime reads a timestamp back from the store's on-disk form. Only rows this
+// store wrote reach it, so a parse failure means the file was tampered with and
+// is reported rather than papered over with a zero time.
+func parseTime(s string) (time.Time, error) {
+	t, err := time.Parse(timeLayout, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("timestamp %q is not %s: %w", s, timeLayout, err)
+	}
+	return t.UTC(), nil
+}
