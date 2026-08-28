@@ -13,9 +13,20 @@ type IndexStore interface {
 	// persisted.
 	UpsertDocuments(ctx context.Context, docs []entities.Document) error
 
+	// DocumentsByID returns metadata for the named documents. Ids the index
+	// does not hold are silently omitted (an unsynced document is an ordinary
+	// gap, not a failure); result order is unspecified. Empty ids yields no
+	// metadata and no error.
+	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
+
 	// Replaces the document's whole chunk set; nil clears it. The parent
 	// document must already exist.
 	ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error
+
+	// WipeChunks removes every chunk and its derived lexical and vector rows in
+	// one transaction: re-embedding rebuilds the chunk layer from the stored
+	// documents. Documents, edges, pending refs, cursors and meta are untouched.
+	WipeChunks(ctx context.Context) error
 
 	// query is arbitrary user text, never an expression: text with no searchable
 	// word returns no hits rather than an error.

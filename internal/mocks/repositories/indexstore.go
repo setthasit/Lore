@@ -70,6 +70,21 @@ func (mr *MockIndexStoreMockRecorder) Cursor(ctx, connector any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cursor", reflect.TypeOf((*MockIndexStore)(nil).Cursor), ctx, connector)
 }
 
+// DocumentsByID mocks base method.
+func (m *MockIndexStore) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DocumentsByID", ctx, ids)
+	ret0, _ := ret[0].([]entities.DocumentMeta)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DocumentsByID indicates an expected call of DocumentsByID.
+func (mr *MockIndexStoreMockRecorder) DocumentsByID(ctx, ids any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DocumentsByID", reflect.TypeOf((*MockIndexStore)(nil).DocumentsByID), ctx, ids)
+}
+
 // HeartbeatLease mocks base method.
 func (m *MockIndexStore) HeartbeatLease(ctx context.Context, holder string) error {
 	m.ctrl.T.Helper()
@@ -212,4 +227,18 @@ func (m *MockIndexStore) UpsertDocuments(ctx context.Context, docs []entities.Do
 func (mr *MockIndexStoreMockRecorder) UpsertDocuments(ctx, docs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertDocuments", reflect.TypeOf((*MockIndexStore)(nil).UpsertDocuments), ctx, docs)
+}
+
+// WipeChunks mocks base method.
+func (m *MockIndexStore) WipeChunks(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WipeChunks", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WipeChunks indicates an expected call of WipeChunks.
+func (mr *MockIndexStoreMockRecorder) WipeChunks(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WipeChunks", reflect.TypeOf((*MockIndexStore)(nil).WipeChunks), ctx)
 }
