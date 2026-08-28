@@ -26,6 +26,11 @@ type Chunk struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ThreadID  string // comment chunks: the thread retrieval rehydrates
+
+	// Embedding is the chunk's vector, sized by the embedder's dimensions. It is
+	// the only way vectors enter the store; nil means "not embedded" and the
+	// chunk is indexed lexically only.
+	Embedding []float32
 }
 
 // ChunkHit is a ranked chunk from one retrieval strategy. Score is the
