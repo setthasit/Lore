@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,8 @@ type stdioResponse struct {
 }
 
 func TestServeAnswersToolCallsOverStdio(t *testing.T) {
-	query := mock_services.NewMockQueryService(gomock.NewController(t))
+	ctrl := gomock.NewController(t)
+	query := mock_services.NewMockQueryService(ctrl)
 	query.EXPECT().
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).
 		Return(testBundle(), nil)
@@ -33,7 +35,13 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, query) }()
+	go func() {
+		served <- Serve(ctx, Services{
+			Query:  query,
+			Trace:  mock_services.NewMockTraceService(ctrl),
+			Impact: mock_services.NewMockImpactService(ctrl),
+		})
+	}()
 
 	send(t, requests, map[string]any{
 		"jsonrpc": "2.0",
@@ -83,6 +91,53 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	case <-served:
 	case <-time.After(serveTimeout):
 		t.Fatal("Serve did not return after the context was cancelled")
+	}
+}
+
+func TestToolDeclarations(t *testing.T) {
+	tests := []struct {
+		name   string
+		routes []string
+	}{
+		{
+			name:   "find_decision",
+			routes: []string{"breadth", "depth", "consequences", "trace", "impact_of"},
+		},
+		{
+			name:   "trace",
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "impact_of"},
+		},
+		{
+			name:   "impact_of",
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace"},
+		},
+	}
+
+	f := newToolFixture(t)
+	advertised, err := f.session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(advertised.Tools) != len(tests) {
+		t.Fatalf("tools = %d, want %d", len(advertised.Tools), len(tests))
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := f.declaration(t, tt.name)
+
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Errorf("annotations = %+v, want readOnlyHint", tool.Annotations)
+			}
+			if !strings.Contains(tool.Description, "evidence") {
+				t.Errorf("description of %s = %q, want it to explain that the result is evidence", tt.name, tool.Description)
+			}
+			for _, word := range tt.routes {
+				if !strings.Contains(tool.Description, word) {
+					t.Errorf("description of %s = %q, want it to route on %q", tt.name, tool.Description, word)
+				}
+			}
+		})
 	}
 }
 

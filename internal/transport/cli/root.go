@@ -38,6 +38,8 @@ func newRootCommand(resolve Resolver) *cobra.Command {
 		newSyncCommand(resolve, configPath),
 		newStatusCommand(resolve, configPath),
 		newAskCommand(resolve, configPath),
+		newTraceCommand(resolve, configPath),
+		newImpactCommand(resolve, configPath),
 		newMCPCommand(resolve, configPath),
 	)
 	return root
