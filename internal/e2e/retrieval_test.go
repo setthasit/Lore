@@ -223,7 +223,7 @@ func newWorkspace(t *testing.T) *workspace {
 	return &workspace{
 		api:    api,
 		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store)),
-		query:  services.NewQueryService(store, emb, topK),
+		query:  services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
 	}
 }
@@ -293,14 +293,15 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if bundle.Anchor.Query != question {
 		t.Errorf("anchor query = %q, want %q", bundle.Anchor.Query, question)
 	}
-	if len(bundle.Chains) != 0 || len(bundle.Gaps) != 0 {
-		t.Errorf("bundle carries %d chains and %d gaps, want none of either",
-			len(bundle.Chains), len(bundle.Gaps))
-	}
 
 	if len(bundle.Nodes) == 0 {
 		t.Fatalf("bundle cites nothing for %q", question)
 	}
+	if len(bundle.Chains) != 0 || len(bundle.Gaps) != len(bundle.Nodes) {
+		t.Errorf("bundle carries %d chains and %d gaps for %d cited documents, want no chain and one standalone gap each",
+			len(bundle.Chains), len(bundle.Gaps), len(bundle.Nodes))
+	}
+
 	for _, node := range bundle.Nodes {
 		if !strings.HasPrefix(node.Doc.URL, w.api.server.URL) {
 			t.Errorf("node %s cites %q, want a URL on the fixture host %s",

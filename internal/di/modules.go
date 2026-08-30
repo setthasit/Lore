@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"go.uber.org/fx"
 
@@ -178,5 +179,9 @@ func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
 }
 
 func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {
-	return services.NewQueryService(store, emb, cfg.Query.TopK)
+	return services.NewQueryService(store, emb, services.QueryConfig{
+		TopK:        cfg.Query.TopK,
+		WalkDepth:   cfg.Query.WalkDepth,
+		EventWindow: time.Duration(cfg.Query.EventWindow),
+	})
 }

@@ -162,6 +162,11 @@ func TestFindDecisionParsesArguments(t *testing.T) {
 			},
 		},
 		{
+			name: "event anchor",
+			args: map[string]any{"question": testQuestion, "around": "incident X"},
+			want: services.FindDecisionRequest{Question: testQuestion, Around: "incident X"},
+		},
+		{
 			name: "dates cover the whole day",
 			args: map[string]any{"question": testQuestion, "since": "2025-03-12", "until": "2025-04-01"},
 			want: services.FindDecisionRequest{
@@ -298,21 +303,6 @@ func TestFindDecisionLogsInternalCauseInsteadOfLeakingIt(t *testing.T) {
 	}
 	if logged := f.logs.String(); !strings.Contains(logged, cause) {
 		t.Errorf("log %q does not record the cause", logged)
-	}
-}
-
-func TestFindDecisionPassesEventAnchorThrough(t *testing.T) {
-	const refusal = "event anchoring not yet supported"
-
-	f := newToolFixture(t)
-	f.query.EXPECT().
-		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion, Around: "incident X"}).
-		Return(nil, internalerror.NewPreconditionError(refusal, nil))
-
-	res := f.call(t, map[string]any{"question": testQuestion, "around": "incident X"})
-
-	if got := errorText(t, res); got != refusal {
-		t.Errorf("error = %q, want %q", got, refusal)
 	}
 }
 
