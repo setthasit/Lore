@@ -128,15 +128,36 @@ func (f *walkFake) DocumentsByID(_ context.Context, ids []entities.DocID) ([]ent
 	return out, nil
 }
 
-func walkFrom(t *testing.T, f *walkFake, seed string, opts walkOptions) walkResult {
+func walkFromSeeds(t *testing.T, f *walkFake, opts walkOptions, seeds ...string) walkResult {
 	t.Helper()
 
-	res, err := walkGraph(context.Background(), f, []entities.DocID{entities.DocID(seed)}, opts)
+	res, err := walkGraph(context.Background(), f, walkIDs(seeds...), opts)
 	if err != nil {
 		t.Fatalf("walkGraph: %v", err)
 	}
 
 	return res
+}
+
+func walkFrom(t *testing.T, f *walkFake, seed string, opts walkOptions) walkResult {
+	t.Helper()
+
+	return walkFromSeeds(t, f, opts, seed)
+}
+
+func assertSeedLinks(t *testing.T, res walkResult, want ...entities.Edge) {
+	t.Helper()
+
+	if !slices.Equal(res.SeedLinks, want) {
+		t.Errorf("seed links = %+v, want exactly %+v", res.SeedLinks, want)
+	}
+	for _, path := range res.Paths {
+		for _, link := range want {
+			if slices.Contains(path.Edges, link) {
+				t.Errorf("path %v walks the edge between two seeds %+v", path.Nodes, link)
+			}
+		}
+	}
 }
 
 func assertReached(t *testing.T, res walkResult, want ...string) {
@@ -239,7 +260,7 @@ func TestWalkGraphWithoutSeedsTouchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walkGraph: %v", err)
 	}
-	if res.Paths != nil || res.Metas != nil {
+	if res.Paths != nil || res.SeedLinks != nil || res.Metas != nil {
 		t.Errorf("walkGraph without seeds = %+v, want the zero result", res)
 	}
 	if f.asked != nil || f.loaded != nil {
@@ -442,17 +463,91 @@ func TestWalkGraphSkipsEdgesIntoUnindexedDocuments(t *testing.T) {
 	assertAskedLayers(t, f, [][]entities.DocID{walkIDs("a")})
 }
 
+func walkLinkedSeedsFake() *walkFake {
+	return newWalkFake(
+		walkEdge("a", "a", 1),
+		walkEdge("a", "b", 0.9),
+		walkEdge("b", "c", 0.8),
+		walkEdge("c", "d", 0.7),
+		walkEdge("x", "y", 1),
+	)
+}
+
+func TestWalkGraphReportsTheEdgeBetweenTwoSeeds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		dir  entities.Direction
+		want []string
+	}{
+		{name: "outward reports it and reaches past it", dir: entities.DirOut, want: []string{"c", "d"}},
+		{name: "inward reports it as stored", dir: entities.DirIn},
+		{name: "both reports it once", dir: entities.DirBoth, want: []string{"c", "d"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			res := walkFromSeeds(t, walkLinkedSeedsFake(), walkOptions{Direction: tc.dir}, "a", "b")
+
+			assertSeedLinks(t, res, walkEdge("a", "b", 0.9))
+			assertReached(t, res, tc.want...)
+		})
+	}
+}
+
+func TestWalkGraphReportsNoSeedLinkWithoutOne(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		seeds []string
+	}{
+		{name: "a seed's self-edge does not link it to itself", seeds: []string{"a"}},
+		{name: "an edge into a reached document is no seed link", seeds: []string{"b"}},
+		{name: "two seeds with no edge between them", seeds: []string{"a", "c"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			res := walkFromSeeds(t, walkLinkedSeedsFake(), walkOptions{}, tc.seeds...)
+
+			if res.SeedLinks != nil {
+				t.Errorf("seed links = %+v, want none", res.SeedLinks)
+			}
+		})
+	}
+}
+
 func TestWalkGraphIsDeterministic(t *testing.T) {
 	t.Parallel()
 
-	first := walkFrom(t, walkDiamondFake(), "a", walkOptions{})
-	second := walkFrom(t, walkDiamondFake(), "a", walkOptions{})
-
-	if !reflect.DeepEqual(first.Paths, second.Paths) {
-		t.Errorf("repeated walk returned %+v then %+v", first.Paths, second.Paths)
+	tests := map[string][]string{
+		"one seed converging on a shared node": {"a"},
+		"two seeds linked to each other":       {"a", "d"},
 	}
-	if !reflect.DeepEqual(first.Metas, second.Metas) {
-		t.Errorf("repeated walk loaded %+v then %+v", first.Metas, second.Metas)
+
+	for name, seeds := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			first := walkFromSeeds(t, walkDiamondFake(), walkOptions{}, seeds...)
+			second := walkFromSeeds(t, walkDiamondFake(), walkOptions{}, seeds...)
+
+			if !reflect.DeepEqual(first.Paths, second.Paths) {
+				t.Errorf("repeated walk returned %+v then %+v", first.Paths, second.Paths)
+			}
+			if !reflect.DeepEqual(first.SeedLinks, second.SeedLinks) {
+				t.Errorf("repeated walk linked %+v then %+v", first.SeedLinks, second.SeedLinks)
+			}
+			if !reflect.DeepEqual(first.Metas, second.Metas) {
+				t.Errorf("repeated walk loaded %+v then %+v", first.Metas, second.Metas)
+			}
+		})
 	}
 }
 
@@ -532,7 +627,7 @@ func TestWalkGraphSurfacesStoreFailures(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("walkGraph error = %v, want %v", err, tc.want)
 			}
-			if res.Paths != nil || res.Metas != nil {
+			if res.Paths != nil || res.SeedLinks != nil || res.Metas != nil {
 				t.Errorf("failed walk returned %+v, want the zero result", res)
 			}
 		})

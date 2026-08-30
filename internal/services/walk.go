@@ -32,8 +32,9 @@ type walkPath struct {
 }
 
 type walkResult struct {
-	Paths []walkPath
-	Metas map[entities.DocID]entities.DocumentMeta
+	Paths     []walkPath
+	SeedLinks []entities.Edge
+	Metas     map[entities.DocID]entities.DocumentMeta
 }
 
 // Seeds are never reached nodes: they open the paths, and no path ends on one.
@@ -46,6 +47,7 @@ func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts 
 		graph:   g,
 		opts:    opts,
 		floor:   opts.confidenceFloor(),
+		seeds:   make(map[entities.DocID]bool, len(seeds)),
 		visited: make(map[entities.DocID]bool, len(seeds)),
 		metas:   make(map[entities.DocID]entities.DocumentMeta, len(seeds)),
 	}
@@ -55,7 +57,7 @@ func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts 
 		if w.visited[seed] {
 			continue
 		}
-		w.visited[seed] = true
+		w.seeds[seed], w.visited[seed] = true, true
 		frontier = append(frontier, walkPath{Nodes: []entities.DocID{seed}, Confidence: 1})
 	}
 	if err := w.loadMetas(ctx, frontierIDs(frontier)); err != nil {
@@ -72,14 +74,16 @@ func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts 
 		frontier = reached
 	}
 
-	return walkResult{Paths: paths, Metas: w.metas}, nil
+	return walkResult{Paths: paths, SeedLinks: w.links, Metas: w.metas}, nil
 }
 
 type walker struct {
 	graph   graphSource
 	opts    walkOptions
 	floor   float32
+	seeds   map[entities.DocID]bool
 	visited map[entities.DocID]bool
+	links   []entities.Edge
 	metas   map[entities.DocID]entities.DocumentMeta
 }
 
@@ -88,6 +92,7 @@ func (w *walker) step(ctx context.Context, frontier []walkPath) ([]walkPath, err
 	if err != nil {
 		return nil, err
 	}
+	w.collectSeedLinks(edges)
 
 	candidates := w.candidates(frontier, edges)
 	if len(candidates) == 0 {
@@ -107,6 +112,15 @@ func (w *walker) step(ctx context.Context, frontier []walkPath) ([]walkPath, err
 	}
 
 	return reached, nil
+}
+
+// Only the seed layer is asked about a seed, so a seed-to-seed edge arrives once.
+func (w *walker) collectSeedLinks(edges []entities.Edge) {
+	for _, e := range edges {
+		if e.Src != e.Dst && w.seeds[e.Src] && w.seeds[e.Dst] {
+			w.links = append(w.links, e)
+		}
+	}
 }
 
 type candidate struct {

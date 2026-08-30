@@ -77,7 +77,7 @@ func rank(req rankRequest) ranked {
 	}
 	slices.SortFunc(collected.nodes, byRank)
 
-	chains := assembleChains(req.Walk.Paths, collected.nodes)
+	chains := assembleChains(req.Walk.Paths, req.Walk.SeedLinks, collected.nodes)
 
 	return ranked{
 		Nodes:  collected.nodes,
@@ -207,8 +207,8 @@ func graphRole(t entities.DocType) string {
 	return entities.RoleLinkedChange
 }
 
-func assembleChains(paths []walkPath, nodes []entities.EvidenceNode) [][]entities.DocID {
-	if len(paths) == 0 {
+func assembleChains(paths []walkPath, links []entities.Edge, nodes []entities.EvidenceNode) [][]entities.DocID {
+	if len(paths) == 0 && len(links) == 0 {
 		return nil
 	}
 
@@ -217,12 +217,14 @@ func assembleChains(paths []walkPath, nodes []entities.EvidenceNode) [][]entitie
 		scores[node.Doc.ID] = node.Score
 	}
 
-	cited := make([][]entities.DocID, 0, len(paths))
+	cited := make([][]entities.DocID, 0, len(paths)+len(links))
 	for _, path := range paths {
 		if chain := citedChain(path.Nodes, scores); len(chain) > 1 {
 			cited = append(cited, chain)
 		}
 	}
+	joins := citedLinks(links, scores)
+	cited = joinedChains(append(cited, joins...), joins)
 
 	chains := make([][]entities.DocID, 0, len(cited))
 	for _, chain := range cited {
@@ -251,15 +253,77 @@ func citedChain(nodes []entities.DocID, scores map[entities.DocID]float32) []ent
 	return slices.Clone(nodes)
 }
 
+func citedLinks(links []entities.Edge, scores map[entities.DocID]float32) [][]entities.DocID {
+	cited := make([][]entities.DocID, 0, len(links))
+	for _, link := range links {
+		if chain := citedChain([]entities.DocID{link.Src, link.Dst}, scores); len(chain) > 1 {
+			cited = append(cited, chain)
+		}
+	}
+
+	return cited
+}
+
+// A cluster of seeds that all cite each other joins into more chains than any
+// consumer reads, so the chain set is capped the way walk depth caps traversal.
+const maxChains = 64
+
+// A link between two seeds and the path leaving its far end are one chain: the
+// ticket, the decision page it debates and the pull request implementing it.
+func joinedChains(chains, links [][]entities.DocID) [][]entities.DocID {
+	for grew := true; grew && len(chains) < maxChains; {
+		grew = false
+		for _, chain := range chains {
+			for _, link := range links {
+				if link[1] != chain[0] {
+					continue
+				}
+				joined := prepended(link[0], chain)
+				if joined == nil || chainKept(chains, joined) {
+					continue
+				}
+				chains = append(chains, joined)
+				grew = true
+				if len(chains) >= maxChains {
+					return chains
+				}
+			}
+		}
+	}
+
+	return chains
+}
+
+// Refusing a repeat both keeps chains readable and terminates the joining.
+func prepended(head entities.DocID, chain []entities.DocID) []entities.DocID {
+	if slices.Contains(chain, head) {
+		return nil
+	}
+	joined := make([]entities.DocID, 0, len(chain)+1)
+
+	return append(append(joined, head), chain...)
+}
+
 func chainKept(chains [][]entities.DocID, nodes []entities.DocID) bool {
 	return slices.ContainsFunc(chains, func(kept []entities.DocID) bool { return slices.Equal(kept, nodes) })
 }
 
-// The walk ends a path on every reached node, so [a b] arrives beside [a b c].
+// The walk ends a path on every reached node and joining prepends to a chain, so
+// [b c] arrives beside [a b c].
 func chainExtended(chains [][]entities.DocID, nodes []entities.DocID) bool {
 	return slices.ContainsFunc(chains, func(other []entities.DocID) bool {
-		return len(nodes) < len(other) && slices.Equal(nodes, other[:len(nodes)])
+		return len(nodes) < len(other) && chainContains(other, nodes)
 	})
+}
+
+func chainContains(chain, part []entities.DocID) bool {
+	for i := range len(chain) - len(part) + 1 {
+		if slices.Equal(chain[i:i+len(part)], part) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func chainOrder(scores map[entities.DocID]float32) func(a, b []entities.DocID) int {
@@ -282,14 +346,16 @@ func chainScore(chain []entities.DocID, scores map[entities.DocID]float32) float
 }
 
 func standaloneSeedGaps(nodes []entities.EvidenceNode, chains [][]entities.DocID) []string {
-	opened := make(map[entities.DocID]bool, len(chains))
+	linked := make(map[entities.DocID]bool, len(nodes))
 	for _, chain := range chains {
-		opened[chain[0]] = true
+		for _, id := range chain {
+			linked[id] = true
+		}
 	}
 
 	var gaps []string
 	for _, node := range nodes {
-		if node.Role != entities.RoleSeed || opened[node.Doc.ID] {
+		if node.Role != entities.RoleSeed || linked[node.Doc.ID] {
 			continue
 		}
 		gaps = append(gaps, fmt.Sprintf("%s (%s) stands alone; no linked discussion", node.Doc.Title, node.Doc.ID))

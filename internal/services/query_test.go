@@ -629,6 +629,32 @@ func TestFindDecisionReportsSeedsTheWalkNeverLeaves(t *testing.T) {
 	assertGaps(t, bundle.Gaps, []string{"decision: docB (docB) stands alone; no linked discussion"})
 }
 
+func TestFindDecisionChainsTwoLinkedSeeds(t *testing.T) {
+	t.Parallel()
+
+	const question = "why did we choose option B?"
+
+	f := newQueryFixture(t)
+	hits := []entities.ChunkHit{queryHit("docA", 0), queryHit("docB", 0)}
+	f.expectRetrieval(question, gomock.Any(), hits, nil)
+	f.expectSeedLoad([]entities.DocID{"docA", "docB"}, queryMeta("docA"), queryMeta("docB"))
+	f.expectNeighbors([]entities.DocID{"docA", "docB"}, queryEdge("docA", "docB"), queryEdge("docB", "docPR"))
+	f.expectLoad([]entities.DocID{"docPR"}, queryMeta("docPR"))
+	f.expectNeighbors([]entities.DocID{"docPR"})
+
+	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
+	if err != nil {
+		t.Fatalf("FindDecision: %v", err)
+	}
+
+	want := []entities.DocID{"docA", "docB", "docPR"}
+	if !slices.Equal(nodeIDs(bundle.Nodes), want) {
+		t.Errorf("Nodes = %v, want %v", nodeIDs(bundle.Nodes), want)
+	}
+	assertChain(t, bundle.Chains, want)
+	assertGaps(t, bundle.Gaps, nil)
+}
+
 func TestFindDecisionClassifiesEmbedderFailure(t *testing.T) {
 	t.Parallel()
 

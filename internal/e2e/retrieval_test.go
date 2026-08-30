@@ -297,9 +297,32 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if len(bundle.Nodes) == 0 {
 		t.Fatalf("bundle cites nothing for %q", question)
 	}
-	if len(bundle.Chains) != 0 || len(bundle.Gaps) != len(bundle.Nodes) {
-		t.Errorf("bundle carries %d chains and %d gaps for %d cited documents, want no chain and one standalone gap each",
-			len(bundle.Chains), len(bundle.Gaps), len(bundle.Nodes))
+	if len(bundle.Chains) == 0 {
+		t.Errorf("bundle carries no chain for %q, though the fixture documents reference each other", question)
+	}
+
+	cited := make(map[entities.DocID]bool, len(bundle.Nodes))
+	for _, node := range bundle.Nodes {
+		cited[node.Doc.ID] = true
+	}
+	chained := make(map[entities.DocID]bool, len(bundle.Nodes))
+	for _, chain := range bundle.Chains {
+		for _, id := range chain {
+			if !cited[id] {
+				t.Errorf("chain %v names %s, which the bundle does not cite", chain, id)
+			}
+			chained[id] = true
+		}
+	}
+	if !chained[prDocID] {
+		t.Errorf("chains %v leave out the pull request that argues for SQLite (%s)", bundle.Chains, prDocID)
+	}
+	for _, gap := range bundle.Gaps {
+		for id := range chained {
+			if strings.Contains(gap, string(id)) {
+				t.Errorf("gap %q calls %s standalone, though a chain links it", gap, id)
+			}
+		}
 	}
 
 	for _, node := range bundle.Nodes {

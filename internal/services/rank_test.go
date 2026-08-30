@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -345,13 +346,20 @@ func TestAssembleChains(t *testing.T) {
 	tests := []struct {
 		name  string
 		paths []walkPath
+		links []entities.Edge
 		cited map[entities.DocID]float32
 		want  [][]entities.DocID
 	}{
-		{name: "no paths assemble no chains"},
+		{name: "nothing walked assembles no chains"},
 		{
 			name:  "a chain that only prefixes another is dropped",
 			paths: []walkPath{rankPath(1, "a", "b"), rankPath(1, "a", "b", "c")},
+			cited: map[entities.DocID]float32{"a": 0.3, "b": 0.2, "c": 0.1},
+			want:  [][]entities.DocID{walkIDs("a", "b", "c")},
+		},
+		{
+			name:  "a chain that only suffixes another is dropped",
+			paths: []walkPath{rankPath(1, "b", "c"), rankPath(1, "a", "b", "c")},
 			cited: map[entities.DocID]float32{"a": 0.3, "b": 0.2, "c": 0.1},
 			want:  [][]entities.DocID{walkIDs("a", "b", "c")},
 		},
@@ -390,13 +398,43 @@ func TestAssembleChains(t *testing.T) {
 			paths: []walkPath{rankPath(1, "a", "b")},
 			cited: map[entities.DocID]float32{"a": 0.5},
 		},
+		{
+			name:  "a link between two seeds chains them",
+			links: []entities.Edge{walkEdge("s", "d", 1)},
+			cited: map[entities.DocID]float32{"s": 0.5, "d": 0.4},
+			want:  [][]entities.DocID{walkIDs("s", "d")},
+		},
+		{
+			name:  "a seed link joins the path leaving its far end",
+			paths: []walkPath{rankPath(1, "d", "pr")},
+			links: []entities.Edge{walkEdge("s", "d", 1)},
+			cited: map[entities.DocID]float32{"s": 0.5, "d": 0.4, "pr": 0.3},
+			want:  [][]entities.DocID{walkIDs("s", "d", "pr")},
+		},
+		{
+			name:  "a run of seed links joins into one chain",
+			links: []entities.Edge{walkEdge("r", "s", 1), walkEdge("s", "d", 1), walkEdge("d", "e", 1)},
+			cited: map[entities.DocID]float32{"r": 0.5, "s": 0.4, "d": 0.3, "e": 0.2},
+			want:  [][]entities.DocID{walkIDs("r", "s", "d", "e")},
+		},
+		{
+			name:  "a cyclic pair of seed links repeats no node",
+			links: []entities.Edge{walkEdge("s", "d", 1), walkEdge("d", "s", 1)},
+			cited: map[entities.DocID]float32{"s": 0.5, "d": 0.4},
+			want:  [][]entities.DocID{walkIDs("d", "s"), walkIDs("s", "d")},
+		},
+		{
+			name:  "a seed link into a document the bundle does not carry chains nothing",
+			links: []entities.Edge{walkEdge("s", "d", 1)},
+			cited: map[entities.DocID]float32{"s": 0.5},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := assembleChains(tt.paths, citedNodes(tt.cited))
+			got := assembleChains(tt.paths, tt.links, citedNodes(tt.cited))
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("chains = %v, want %v", got, tt.want)
 			}
@@ -418,11 +456,42 @@ func TestAssembleChainsCopiesPathNodes(t *testing.T) {
 	t.Parallel()
 
 	path := rankPath(1, "a", "b")
-	chains := assembleChains([]walkPath{path}, citedNodes(map[entities.DocID]float32{"a": 1, "b": 0.5}))
+	chains := assembleChains([]walkPath{path}, nil, citedNodes(map[entities.DocID]float32{"a": 1, "b": 0.5}))
 	path.Nodes[0] = "mutated"
 
 	if chains[0][0] != "a" {
 		t.Errorf("chain %v aliases the walk path", chains[0])
+	}
+}
+
+func TestAssembleChainsCapsDenselyLinkedSeeds(t *testing.T) {
+	t.Parallel()
+
+	const seeds = 8
+
+	scores := make(map[entities.DocID]float32, seeds)
+	ids := make([]entities.DocID, seeds)
+	for i := range seeds {
+		ids[i] = entities.DocID(fmt.Sprintf("seed-%d", i))
+		scores[ids[i]] = float32(seeds - i)
+	}
+
+	var links []entities.Edge
+	for _, src := range ids {
+		for _, dst := range ids {
+			if src != dst {
+				links = append(links, entities.Edge{Src: src, Dst: dst, Confidence: 1})
+			}
+		}
+	}
+
+	chains := assembleChains(nil, links, citedNodes(scores))
+
+	if len(chains) > maxChains {
+		t.Errorf("chains = %d, want at most %d", len(chains), maxChains)
+	}
+	if len(chains) == 0 {
+		t.Error("chains = 0, want the seed links reported")
 	}
 }
 
@@ -442,6 +511,28 @@ func TestRankReportsStandaloneSeeds(t *testing.T) {
 	})
 
 	want := []string{"Rate limit the export endpoint (jira:ticket:PROJ-4521) stands alone; no linked discussion"}
+	if !slices.Equal(got.Gaps, want) {
+		t.Errorf("gaps = %v, want %v", got.Gaps, want)
+	}
+}
+
+func TestRankReportsNoStandaloneGapForASeedInsideAChain(t *testing.T) {
+	t.Parallel()
+
+	got := rank(rankRequest{
+		Seeds: []seedHit{
+			rankSeed(rankMeta("ticket", walkEpoch), rrf(1)),
+			rankSeed(rankMeta("page", walkEpoch), rrf(2)),
+			rankSeed(rankMeta("orphan", walkEpoch), rrf(3)),
+		},
+		Walk: walkResult{SeedLinks: []entities.Edge{walkEdge("ticket", "page", 1)}},
+		Now:  walkEpoch,
+	})
+
+	if want := [][]entities.DocID{walkIDs("ticket", "page")}; !reflect.DeepEqual(got.Chains, want) {
+		t.Errorf("chains = %v, want %v", got.Chains, want)
+	}
+	want := []string{"orphan (orphan) stands alone; no linked discussion"}
 	if !slices.Equal(got.Gaps, want) {
 		t.Errorf("gaps = %v, want %v", got.Gaps, want)
 	}
