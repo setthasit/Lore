@@ -2,9 +2,14 @@ package repositories
 
 import (
 	"context"
+	"errors"
 
 	"lore/internal/entities"
 )
+
+// Another process took the lease over; implementations wrap it so a caller can
+// tell it apart from a store that could not be reached.
+var ErrLeaseLost = errors.New("sync lease lost to another holder")
 
 // Errors are returned raw with context; classifying them is the service layer's
 // job.
@@ -13,9 +18,16 @@ type IndexStore interface {
 	// persisted.
 	UpsertDocuments(ctx context.Context, docs []entities.Document) error
 
+	// Ids the index does not hold are silently omitted; result order is
+	// unspecified.
+	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
+
 	// Replaces the document's whole chunk set; nil clears it. The parent
 	// document must already exist.
 	ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error
+
+	// Documents, edges, pending refs, cursors and meta survive the wipe.
+	WipeChunks(ctx context.Context) error
 
 	// query is arbitrary user text, never an expression: text with no searchable
 	// word returns no hits rather than an error.
@@ -40,11 +52,14 @@ type IndexStore interface {
 	// any caller may take it over; re-acquiring one already held restarts it.
 	TryAcquireLease(ctx context.Context, holder string) (bool, error)
 
-	// Fails when holder is no longer the holder — how a round learns to stop.
+	// A non-holder fails with an error wrapping ErrLeaseLost.
 	HeartbeatLease(ctx context.Context, holder string) error
 
 	// No-op when the lease was already taken over or released.
 	ReleaseLease(ctx context.Context, holder string) error
+
+	// An empty index reports zeros and no rows, not an error.
+	Stats(ctx context.Context) (entities.IndexStats, error)
 
 	Close() error
 }

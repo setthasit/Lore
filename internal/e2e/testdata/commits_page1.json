@@ -1,0 +1,40 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": {
+        "target": {
+          "history": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "oid": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+                "url": "https://github.example/acme/lore/commit/9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+                "messageHeadline": "Create the workspace index file on first run",
+                "message": "Create the workspace index file on first run\n\nOpens the workspace file at startup and bootstraps its schema.\nRefs #41.\n",
+                "committedDate": "2024-05-03T12:00:00Z",
+                "authoredDate": "2024-05-03T11:45:00Z",
+                "changedFilesIfAvailable": 1,
+                "author": {
+                  "name": "Ada Lovelace",
+                  "user": {
+                    "login": "ada"
+                  }
+                },
+                "associatedPullRequests": {
+                  "nodes": [
+                    {
+                      "number": 42
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

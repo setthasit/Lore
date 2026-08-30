@@ -2,12 +2,14 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"testing"
 	"time"
 
 	"lore/internal/entities"
+	"lore/internal/repositories"
 )
 
 func TestCursorRoundTrip(t *testing.T) {
@@ -133,8 +135,8 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || acquired {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil while the lease is held", acquired, err)
 	}
-	if err = s.HeartbeatLease(ctx, "cli"); err == nil {
-		t.Error("HeartbeatLease accepted a non-holder")
+	if err = s.HeartbeatLease(ctx, "cli"); !errors.Is(err, repositories.ErrLeaseLost) {
+		t.Errorf("HeartbeatLease(non-holder) = %v, want it to wrap ErrLeaseLost", err)
 	}
 	if err = s.ReleaseLease(ctx, "cli"); err != nil {
 		t.Errorf("ReleaseLease by a non-holder = %v, want a no-op", err)
@@ -160,8 +162,8 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	}
 	assertLeaseHolder(t, s, "cli", clock)
 
-	if err = s.HeartbeatLease(ctx, "daemon"); err == nil {
-		t.Error("HeartbeatLease accepted the holder whose lease was taken over")
+	if err = s.HeartbeatLease(ctx, "daemon"); !errors.Is(err, repositories.ErrLeaseLost) {
+		t.Errorf("HeartbeatLease after takeover = %v, want it to wrap ErrLeaseLost", err)
 	}
 	if err = s.ReleaseLease(ctx, "daemon"); err != nil {
 		t.Errorf("ReleaseLease after takeover = %v, want a no-op", err)
@@ -187,8 +189,8 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 	if rows != 0 {
 		t.Errorf("sync_lock rows = %d after release, want 0", rows)
 	}
-	if err = s.HeartbeatLease(ctx, "cli"); err == nil {
-		t.Error("HeartbeatLease accepted a released lease")
+	if err = s.HeartbeatLease(ctx, "cli"); !errors.Is(err, repositories.ErrLeaseLost) {
+		t.Errorf("HeartbeatLease on a released lease = %v, want it to wrap ErrLeaseLost", err)
 	}
 	if acquired, err = s.TryAcquireLease(ctx, "other"); err != nil || !acquired {
 		t.Fatalf("TryAcquireLease(other) = %v, %v; want true, nil on a free lease", acquired, err)

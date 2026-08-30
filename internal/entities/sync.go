@@ -3,6 +3,7 @@ package entities
 import (
 	"context"
 	"iter"
+	"time"
 )
 
 // Cursor is an opaque per-connector sync position; only the connector that
@@ -24,4 +25,27 @@ type Connector interface {
 	// Changes streams batches of documents modified since cursor, oldest-first.
 	// Must be resumable and idempotent.
 	Changes(ctx context.Context, cursor Cursor) iter.Seq2[Batch, error]
+}
+
+type IndexStats struct {
+	Documents int64
+	Chunks    int64
+
+	// One entry per connector that has ever checkpointed, ordered by connector name.
+	Cursors []CursorAge
+
+	// Nil means no holder; a lease lapsed past its TTL is still reported.
+	Lease *LeaseState
+}
+
+// UpdatedAt is when the position was recorded, not a time the connector chose.
+type CursorAge struct {
+	Connector string
+	UpdatedAt time.Time
+}
+
+type LeaseState struct {
+	Holder      string
+	AcquiredAt  time.Time
+	HeartbeatAt time.Time
 }

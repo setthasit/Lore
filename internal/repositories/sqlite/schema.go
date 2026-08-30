@@ -7,7 +7,8 @@ import (
 	"strconv"
 )
 
-const schemaVersion = "1"
+// An incompatible generation means the workspace file is rebuilt, not migrated.
+const schemaVersion = "2"
 
 // Keys the store itself owns in the meta table.
 const (
@@ -76,8 +77,9 @@ CREATE TABLE IF NOT EXISTS pending_refs (
 ) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS cursors (
-	connector TEXT PRIMARY KEY,
-	payload   TEXT NOT NULL
+	connector  TEXT PRIMARY KEY,
+	payload    TEXT NOT NULL,
+	updated_at TEXT NOT NULL
 ) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS sync_lock (

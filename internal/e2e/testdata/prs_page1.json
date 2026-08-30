@@ -1,0 +1,85 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 42,
+            "title": "Adopt SQLite as the workspace index",
+            "body": "## Why we pick SQLite\n\nWe picked SQLite because the workspace index has to live in one file that the CLI and the daemon can both open, with no server for anyone to install or operate.\n\nWe weighed SQLite against Postgres and DuckDB. Postgres would need a daemon per workspace, and DuckDB has no full text search we can rely on. SQLite ships FTS5 and loads sqlite-vec, so lexical and vector retrieval share a single SQLite file.\n\nCloses #41",
+            "url": "https://github.example/acme/lore/pull/42",
+            "createdAt": "2024-04-28T08:00:00Z",
+            "updatedAt": "2024-05-04T15:00:00Z",
+            "headRefName": "feature/adopt-sqlite",
+            "author": {
+              "login": "ada"
+            },
+            "closingIssuesReferences": {
+              "nodes": [
+                {
+                  "number": 41
+                }
+              ]
+            },
+            "commits": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "commit": {
+                    "oid": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432"
+                  }
+                }
+              ]
+            },
+            "reviews": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "PRR_kwDOAbCdEf1",
+                  "databaseId": 8801,
+                  "state": "APPROVED",
+                  "body": "Approved. The single file story is what the daemon needed.",
+                  "url": "https://github.example/acme/lore/pull/42#pullrequestreview-8801",
+                  "createdAt": "2024-05-02T09:00:00Z",
+                  "updatedAt": "2024-05-02T09:05:00Z",
+                  "author": {
+                    "login": "grace"
+                  },
+                  "comments": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": null
+                    },
+                    "nodes": [
+                      {
+                        "databaseId": 9901,
+                        "body": "nit: pass the context into the open call.",
+                        "path": "internal/repositories/sqlite/store.go",
+                        "url": "https://github.example/acme/lore/pull/42#discussion_r9901",
+                        "createdAt": "2024-05-02T09:01:00Z",
+                        "updatedAt": "2024-05-02T09:01:00Z",
+                        "author": {
+                          "login": "grace"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

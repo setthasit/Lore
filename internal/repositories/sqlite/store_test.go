@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,32 @@ func TestOpenIsIdempotentAndGuardsVectorWidth(t *testing.T) {
 
 	if _, err := Open(path, testDims+1); err == nil {
 		t.Error("reopening with a different vector width succeeded, want an error")
+	}
+}
+
+func TestOpenRefusesAnOlderSchemaGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workspace.db")
+
+	s, err := Open(path, testDims)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	_, err = s.db.ExecContext(context.Background(),
+		`UPDATE meta SET value = '1' WHERE key = ?`, metaKeySchemaVersion)
+	if err != nil {
+		t.Fatalf("age the recorded generation: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stale, err := Open(path, testDims)
+	if err == nil {
+		_ = stale.Close()
+		t.Fatal("reopening a generation-1 file succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), metaKeySchemaVersion) || !strings.Contains(err.Error(), schemaVersion) {
+		t.Errorf("error %q does not name the recorded and expected generations", err)
 	}
 }
 
@@ -230,6 +257,156 @@ func TestReplaceChunksRejectsWrongVectorWidthAndUnknownDocument(t *testing.T) {
 	err = s.ReplaceChunks(ctx, docID, []entities.Chunk{{DocID: docID, Text: "orphan"}})
 	if err == nil {
 		t.Error("ReplaceChunks accepted a chunk whose document does not exist")
+	}
+	assertCounts(t, s, 0, 0, 0)
+}
+
+func TestDocumentsByID(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	created := time.Date(2025, 6, 1, 8, 0, 0, 0, time.UTC)
+	docs := []entities.Document{
+		{
+			ID:        entities.NewDocID("github", entities.DocTypeIssue, "7"),
+			Source:    "github",
+			Type:      entities.DocTypeIssue,
+			RepoRef:   "github:acme/lore",
+			Title:     "Hybrid retrieval returns duplicates",
+			Body:      "Body text the metadata read must not carry.",
+			Author:    "reporter@example.test",
+			URL:       "https://github.com/acme/lore/issues/7",
+			CreatedAt: created,
+			UpdatedAt: created.Add(90 * time.Minute),
+		},
+		{
+			ID:        entities.NewDocID("notion", entities.DocTypePage, "design/retrieval"),
+			Source:    "notion",
+			Type:      entities.DocTypePage,
+			Title:     "Retrieval design",
+			Body:      "RRF over two ranked lists.",
+			Author:    "architect@example.test",
+			URL:       "https://notion.so/design/retrieval",
+			CreatedAt: created.Add(-24 * time.Hour),
+			UpdatedAt: created,
+		},
+	}
+	if err := s.UpsertDocuments(ctx, docs); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+
+	ids := []entities.DocID{docs[0].ID, docs[1].ID}
+	metas, err := s.DocumentsByID(ctx, ids)
+	if err != nil {
+		t.Fatalf("DocumentsByID: %v", err)
+	}
+	if len(metas) != len(docs) {
+		t.Fatalf("DocumentsByID returned %d metas, want %d", len(metas), len(docs))
+	}
+
+	byID := make(map[entities.DocID]entities.DocumentMeta, len(metas))
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	for _, d := range docs {
+		want := entities.DocumentMeta{
+			ID:        d.ID,
+			Source:    d.Source,
+			Type:      d.Type,
+			Title:     d.Title,
+			Author:    d.Author,
+			URL:       d.URL,
+			CreatedAt: d.CreatedAt,
+			UpdatedAt: d.UpdatedAt,
+		}
+		if got := byID[d.ID]; got != want {
+			t.Errorf("meta of %q = %+v, want %+v", d.ID, got, want)
+		}
+	}
+
+	metas, err = s.DocumentsByID(ctx, []entities.DocID{docs[1].ID, "github:issue:does-not-exist"})
+	if err != nil {
+		t.Fatalf("DocumentsByID (subset): %v", err)
+	}
+	if len(metas) != 1 || metas[0].ID != docs[1].ID {
+		t.Errorf("DocumentsByID (subset) = %+v, want only %q", metas, docs[1].ID)
+	}
+
+	metas, err = s.DocumentsByID(ctx, nil)
+	if err != nil {
+		t.Fatalf("DocumentsByID (empty): %v", err)
+	}
+	if metas != nil {
+		t.Errorf("DocumentsByID(nil) = %+v, want nil", metas)
+	}
+}
+
+func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	created := time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC)
+	first := entities.NewDocID("github", entities.DocTypeIssue, "11")
+	second := entities.NewDocID("github", entities.DocTypeIssue, "12")
+	for _, id := range []entities.DocID{first, second} {
+		doc := entities.Document{
+			ID: id, Source: "github", Type: entities.DocTypeIssue,
+			Title: "t", Body: "b", Author: "a", URL: "https://example.test/" + string(id),
+			CreatedAt: created, UpdatedAt: created,
+		}
+		if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+			t.Fatalf("UpsertDocuments: %v", err)
+		}
+		chunk := entities.Chunk{
+			DocID: id, Ordinal: 0, Text: "flaky retrieval on " + string(id),
+			Source: doc.Source, DocType: doc.Type, Author: doc.Author,
+			CreatedAt: created, UpdatedAt: created,
+			Embedding: []float32{0.1, 0.2, 0.3},
+		}
+		unembedded := chunk
+		unembedded.Ordinal = 1
+		unembedded.Text = "lexical only for " + string(id)
+		unembedded.Embedding = nil
+		if err := s.ReplaceChunks(ctx, id, []entities.Chunk{chunk, unembedded}); err != nil {
+			t.Fatalf("ReplaceChunks: %v", err)
+		}
+	}
+	assertCounts(t, s, 4, 4, 2)
+
+	if err := s.WipeChunks(ctx); err != nil {
+		t.Fatalf("WipeChunks: %v", err)
+	}
+	assertCounts(t, s, 0, 0, 0)
+
+	var documents int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM documents`).Scan(&documents); err != nil {
+		t.Fatalf("count documents: %v", err)
+	}
+	if documents != 2 {
+		t.Errorf("documents rows after wipe = %d, want 2", documents)
+	}
+
+	rebuilt := entities.Chunk{
+		DocID: first, Ordinal: 0, Text: "rebuilt after re-embed",
+		Source: "github", DocType: entities.DocTypeIssue, Author: "a",
+		CreatedAt: created, UpdatedAt: created,
+		Embedding: []float32{0.4, 0.5, 0.6},
+	}
+	if err := s.ReplaceChunks(ctx, first, []entities.Chunk{rebuilt}); err != nil {
+		t.Fatalf("ReplaceChunks after wipe: %v", err)
+	}
+	assertCounts(t, s, 1, 1, 1)
+
+	hits, err := s.SearchVector(ctx, rebuilt.Embedding, entities.Filters{}, 1)
+	if err != nil {
+		t.Fatalf("SearchVector after wipe: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Text != rebuilt.Text {
+		t.Errorf("SearchVector after wipe = %+v, want the rebuilt chunk", hits)
+	}
+
+	if err := s.WipeChunks(ctx); err != nil {
+		t.Fatalf("WipeChunks (idempotent): %v", err)
 	}
 	assertCounts(t, s, 0, 0, 0)
 }

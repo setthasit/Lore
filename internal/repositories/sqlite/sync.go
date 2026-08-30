@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lore/internal/entities"
+	"lore/internal/repositories"
 )
 
 const leaseTTL = 60 * time.Second
@@ -18,8 +19,10 @@ const syncLockID = 1
 const (
 	selectCursorSQL = `SELECT payload FROM cursors WHERE connector = ?`
 	upsertCursorSQL = `
-INSERT INTO cursors (connector, payload) VALUES (?, ?)
-ON CONFLICT(connector) DO UPDATE SET payload = excluded.payload`
+INSERT INTO cursors (connector, payload, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(connector) DO UPDATE SET
+	payload    = excluded.payload,
+	updated_at = excluded.updated_at`
 
 	selectMetaSQL = `SELECT value FROM meta WHERE key = ?`
 	upsertMetaSQL = `
@@ -44,12 +47,13 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 	return c, nil
 }
 
+// The stored timestamp is the store clock, not one read out of the Cursor.
 func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("sqlite: encode cursor of %q: %w", connector, err)
 	}
-	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, connector, string(payload)); err != nil {
+	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, connector, string(payload), formatTime(s.now())); err != nil {
 		return fmt.Errorf("sqlite: write cursor of %q: %w", connector, err)
 	}
 	return nil
@@ -115,6 +119,7 @@ func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error
 	return affected > 0, nil
 }
 
+// No row updated means the lease was lost, wrapping repositories.ErrLeaseLost.
 func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 	res, err := s.db.ExecContext(ctx, heartbeatLeaseSQL, formatTime(s.now()), syncLockID, holder)
 	if err != nil {
@@ -125,7 +130,7 @@ func (s *Store) HeartbeatLease(ctx context.Context, holder string) error {
 		return fmt.Errorf("sqlite: heartbeat sync lease for %q: %w", holder, err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("sqlite: sync lease is not held by %q", holder)
+		return fmt.Errorf("sqlite: sync lease is not held by %q: %w", holder, repositories.ErrLeaseLost)
 	}
 	return nil
 }

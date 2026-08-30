@@ -67,6 +67,65 @@ func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) e
 	return nil
 }
 
+const selectDocumentMetaSQL = `
+SELECT doc_id, source, type, title, author, url, created_at, updated_at
+FROM documents
+WHERE doc_id IN (%s)`
+
+// The body column is deliberately not read.
+func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = string(id)
+	}
+
+	stmt := fmt.Sprintf(selectDocumentMetaSQL, placeholders(len(ids)))
+	rows, err := s.db.QueryContext(ctx, stmt, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	metas := make([]entities.DocumentMeta, 0, len(ids))
+	for rows.Next() {
+		var (
+			m         entities.DocumentMeta
+			docID     string
+			docType   string
+			createdAt string
+			updatedAt string
+		)
+		err := rows.Scan(&docID, &m.Source, &docType, &m.Title,
+			&m.Author, &m.URL, &createdAt, &updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: scan document meta: %w", err)
+		}
+
+		m.ID = entities.DocID(docID)
+		m.Type = entities.DocType(docType)
+		if m.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
+		}
+		if m.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
+		}
+		metas = append(metas, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
+	}
+	return metas, nil
+}
+
+// Only the marker count reaches the SQL text; every value stays bound.
+func placeholders(n int) string {
+	return strings.Repeat(",?", n)[1:]
+}
+
 const (
 	selectChunkIDsSQL    = `SELECT id FROM chunks WHERE doc_id = ?`
 	deleteChunkVectorSQL = `DELETE FROM chunk_vectors WHERE rowid = ?`
@@ -218,6 +277,31 @@ func insertChunks(ctx context.Context, tx *sql.Tx, docID entities.DocID, chunks 
 		if _, err := insVector.ExecContext(ctx, id, vector); err != nil {
 			return fmt.Errorf("sqlite: insert vector of chunk %d of %q: %w", c.Ordinal, docID, err)
 		}
+	}
+	return nil
+}
+
+var wipeChunkTableSQL = [...]string{
+	`DELETE FROM chunk_vectors`,
+	`DELETE FROM chunks_fts`,
+	`DELETE FROM chunks`,
+}
+
+func (s *Store) WipeChunks(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite: begin chunk wipe: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, stmt := range wipeChunkTableSQL {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("sqlite: %s: %w", stmt, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite: commit chunk wipe: %w", err)
 	}
 	return nil
 }
