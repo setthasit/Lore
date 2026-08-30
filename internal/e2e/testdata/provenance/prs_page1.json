@@ -1,0 +1,114 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 67,
+            "title": "Revert the single writer goroutine for ingest",
+            "body": "The single writer owner from acme/lore#64 is coming out. It held up under the load that broke us, but it caps ingest at one core for writes, and the backfill of our largest workspace now takes eleven hours instead of two.\n\nWe are going back to a writer connection per worker with the busy timeout raised and a bounded retry, and we will revisit ownership once ingest is sharded per repository.",
+            "url": "https://github.example/acme/lore/pull/67",
+            "createdAt": "2024-04-30T07:00:00Z",
+            "updatedAt": "2024-04-30T07:30:00Z",
+            "headRefName": "revert/single-writer-owner",
+            "author": {
+              "login": "grace"
+            },
+            "closingIssuesReferences": {
+              "nodes": []
+            },
+            "commits": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            },
+            "reviews": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          },
+          {
+            "number": 64,
+            "title": "Serialize ingest writes through a single writer goroutine",
+            "body": "## Decision\n\nIngest writes now go through a single writer goroutine. Workers keep parsing and embedding in parallel, but every write to the workspace file is handed to one owner over a bounded channel, and that owner holds the only writer connection.\n\n## Why\n\nThe failure we are fixing is acme/lore#61. Every worker opened its own writer connection, so the workers queued behind one another until the slowest holder blew the busy timeout. Once one worker timed out, its retries made the next timeout more likely, and ingest degraded instead of shedding load.\n\nHanding writes to one owner removes the contention rather than tuning around it. The queue in front of the writer is bounded, so backpressure reaches a worker as a slow channel send instead of as a timeout, and a slow send is something a worker can report.\n\nThe alternative we weighed is the fair shared pool argued in acme/lore#62. A pool still asks every worker to hold a connection, so it moves the contention into the pool instead of removing it, and it keeps the busy timeout as the failure mode. We are not confident enough in that fairness under the load that broke us.\n\n## Cost\n\nPeak write throughput drops, because one goroutine cannot use more than one core for writes. We measured the ceiling at roughly nine thousand chunks a minute, which is well above what any workspace we run today produces.\n\n## Rollout\n\nThere is no flag: the writer owner ships as the only write path, and the per-worker connections are deleted in the same change so there is nothing to fall back to.",
+            "url": "https://github.example/acme/lore/pull/64",
+            "createdAt": "2024-03-20T08:00:00Z",
+            "updatedAt": "2024-03-21T09:05:00Z",
+            "headRefName": "feature/single-writer-owner",
+            "author": {
+              "login": "ada"
+            },
+            "closingIssuesReferences": {
+              "nodes": [
+                {
+                  "number": 61
+                }
+              ]
+            },
+            "commits": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "commit": {
+                    "oid": "4b7c1d2e3f5a6980aabbccddeeff001122334455"
+                  }
+                }
+              ]
+            },
+            "reviews": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "PRR_kwDOAbCdEf2",
+                  "databaseId": 8811,
+                  "state": "APPROVED",
+                  "body": "Approved. Owning the write side beats tuning the busy timeout again.",
+                  "url": "https://github.example/acme/lore/pull/64#pullrequestreview-8811",
+                  "createdAt": "2024-03-21T09:00:00Z",
+                  "updatedAt": "2024-03-21T09:00:00Z",
+                  "author": {
+                    "login": "grace"
+                  },
+                  "comments": {
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": null
+                    },
+                    "nodes": [
+                      {
+                        "databaseId": 9911,
+                        "body": "nit: name the owner goroutine so a stuck stack is readable.",
+                        "path": "internal/ingest/writer.go",
+                        "url": "https://github.example/acme/lore/pull/64#discussion_r9911",
+                        "createdAt": "2024-03-21T09:05:00Z",
+                        "updatedAt": "2024-03-21T09:05:00Z",
+                        "author": {
+                          "login": "grace"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

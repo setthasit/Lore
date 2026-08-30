@@ -1,0 +1,40 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": {
+        "target": {
+          "history": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "oid": "4b7c1d2e3f5a6980aabbccddeeff001122334455",
+                "url": "https://github.example/acme/lore/commit/4b7c1d2e3f5a6980aabbccddeeff001122334455",
+                "messageHeadline": "Hand ingest writes to a single owner goroutine",
+                "message": "Hand ingest writes to a single owner goroutine\n\nWorkers now send their batches to the writer owner instead of opening a\nwriter connection each.\nRefs acme/lore#64.\n",
+                "committedDate": "2024-03-22T11:30:00Z",
+                "authoredDate": "2024-03-22T11:00:00Z",
+                "changedFilesIfAvailable": 1,
+                "author": {
+                  "name": "Ada Lovelace",
+                  "user": {
+                    "login": "ada"
+                  }
+                },
+                "associatedPullRequests": {
+                  "nodes": [
+                    {
+                      "number": 64
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

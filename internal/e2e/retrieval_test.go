@@ -37,7 +37,7 @@ const (
 	topK = 12
 )
 
-var prDocID = entities.NewDocID("github", entities.DocTypePR, fixtureRepo+"/pull/42")
+var prDocID = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/42")
 
 const fakeDims = 8
 
@@ -104,16 +104,18 @@ const (
 
 type fixtureAPI struct {
 	t      *testing.T
+	dir    string
 	server *httptest.Server
 
 	mu    sync.Mutex
 	calls map[string]int
 }
 
-func newFixtureAPI(t *testing.T) *fixtureAPI {
+// An empty dir reads testdata itself, so corpora nest without moving the first one.
+func newFixtureAPI(t *testing.T, dir string) *fixtureAPI {
 	t.Helper()
 
-	api := &fixtureAPI{t: t, calls: make(map[string]int)}
+	api := &fixtureAPI{t: t, dir: dir, calls: make(map[string]int)}
 	api.server = httptest.NewServer(http.HandlerFunc(api.serve))
 	t.Cleanup(api.server.Close)
 	return api
@@ -162,7 +164,7 @@ func (a *fixtureAPI) serveREST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *fixtureAPI) write(w http.ResponseWriter, name string) {
-	body, err := os.ReadFile(filepath.Join("testdata", name))
+	body, err := os.ReadFile(filepath.Join("testdata", a.dir, name))
 	if err != nil {
 		a.reject(w, "read fixture %s: %v", name, err)
 		return
@@ -197,13 +199,15 @@ type workspace struct {
 	api    *fixtureAPI
 	round  services.SyncOrchestrator
 	query  services.QueryService
+	trace  services.TraceService
+	impact services.ImpactService
 	status services.StatusService
 }
 
-func newWorkspace(t *testing.T) *workspace {
+func newWorkspace(t *testing.T, fixtures string) *workspace {
 	t.Helper()
 
-	api := newFixtureAPI(t)
+	api := newFixtureAPI(t, fixtures)
 
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "workspace.db"), fakeDims)
 	if err != nil {
@@ -224,6 +228,8 @@ func newWorkspace(t *testing.T) *workspace {
 		api:    api,
 		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store)),
 		query:  services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
+		trace:  services.NewTraceService(store),
+		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
 	}
 }
@@ -261,7 +267,7 @@ func (w *workspace) ask(ctx context.Context, t *testing.T) *entities.EvidenceBun
 
 func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	ctx := context.Background()
-	w := newWorkspace(t)
+	w := newWorkspace(t, "")
 
 	w.sync(ctx, t, "first")
 
@@ -278,7 +284,7 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if stats.Chunks < stats.Documents {
 		t.Errorf("indexed chunks = %d, want at least one per document (%d)", stats.Chunks, stats.Documents)
 	}
-	if len(stats.Cursors) != 1 || stats.Cursors[0].Connector != "github" {
+	if len(stats.Cursors) != 1 || stats.Cursors[0].Connector != githubSource {
 		t.Errorf("checkpointed connectors = %+v, want one entry for github", stats.Cursors)
 	}
 
@@ -349,7 +355,7 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 
 func TestSecondSyncOverUnchangedFixturesChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	w := newWorkspace(t)
+	w := newWorkspace(t, "")
 
 	w.sync(ctx, t, "first")
 	before, beforeBundle := w.stats(ctx, t), w.ask(ctx, t)

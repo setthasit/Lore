@@ -1,0 +1,14 @@
+{
+  "sha": "4b7c1d2e3f5a6980aabbccddeeff001122334455",
+  "commit": {
+    "message": "Hand ingest writes to a single owner goroutine"
+  },
+  "files": [
+    {
+      "filename": "internal/ingest/writer.go",
+      "status": "modified",
+      "additions": 68,
+      "deletions": 31
+    }
+  ]
+}
