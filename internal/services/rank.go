@@ -94,6 +94,13 @@ func byRank(a, b entities.EvidenceNode) int {
 	)
 }
 
+func byChronology(a, b entities.EvidenceNode) int {
+	return cmp.Or(
+		a.Doc.CreatedAt.Compare(b.Doc.CreatedAt),
+		cmp.Compare(a.Doc.ID, b.Doc.ID),
+	)
+}
+
 type nodeSet struct {
 	nodes []entities.EvidenceNode
 	seen  map[entities.DocID]struct{}

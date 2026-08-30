@@ -47,6 +47,8 @@ var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedd
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
 	newQueryService,
+	services.NewTraceService,
+	newImpactService,
 	services.NewLinkResolver,
 	services.NewSyncOrchestrator,
 	services.NewStatusService,
@@ -180,6 +182,14 @@ func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
 
 func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {
 	return services.NewQueryService(store, emb, services.QueryConfig{
+		TopK:        cfg.Query.TopK,
+		WalkDepth:   cfg.Query.WalkDepth,
+		EventWindow: time.Duration(cfg.Query.EventWindow),
+	})
+}
+
+func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.ImpactService {
+	return services.NewImpactService(store, emb, services.QueryConfig{
 		TopK:        cfg.Query.TopK,
 		WalkDepth:   cfg.Query.WalkDepth,
 		EventWindow: time.Duration(cfg.Query.EventWindow),

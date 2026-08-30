@@ -1,0 +1,245 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"lore/internal/connectors/embedder"
+	"lore/internal/entities"
+	"lore/internal/errors/internalerror"
+	"lore/internal/repositories"
+)
+
+type ImpactService interface {
+	ImpactOf(ctx context.Context, req ImpactRequest) (*entities.EvidenceBundle, error)
+}
+
+type ImpactRequest struct {
+	Ref      string // a resolvable ref, or free text interpreted by retrieval
+	Question string
+}
+
+const anchorExcerptChars = 500
+
+type impactService struct {
+	store repositories.IndexStore
+	emb   embedder.Embedder
+	cfg   QueryConfig
+}
+
+var _ ImpactService = (*impactService)(nil)
+
+func NewImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg QueryConfig) ImpactService {
+	if cfg.TopK <= 0 {
+		cfg.TopK = defaultTopK
+	}
+	if cfg.WalkDepth <= 0 {
+		cfg.WalkDepth = defaultWalkDepth
+	}
+
+	return &impactService{store: store, emb: emb, cfg: cfg}
+}
+
+func (s *impactService) ImpactOf(ctx context.Context, req ImpactRequest) (*entities.EvidenceBundle, error) {
+	input := strings.TrimSpace(req.Ref)
+	if input == "" {
+		return nil, internalerror.NewBadRequestError("ref or query must not be empty", nil)
+	}
+
+	anchor, err := s.impactAnchorOf(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	at := anchor.meta.CreatedAt
+	walked, err := walkGraph(ctx, s.store, []entities.DocID{anchor.meta.ID},
+		walkOptions{Depth: s.cfg.WalkDepth, Direction: entities.DirBoth, TimeAfter: &at})
+	if err != nil {
+		return nil, internalerror.NewInternalError("walking the provenance graph failed", err)
+	}
+
+	question := impactQuestionOf(req.Question, anchor.meta.Title)
+	excerpt := impactAnchorExcerpt(anchor.body)
+	matches, err := s.impactMatches(ctx, impactRetrievalText(question, excerpt), at)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := impactNodes(anchor.meta, excerpt, walked, matches)
+	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
+
+	return &entities.EvidenceBundle{
+		Question: question,
+		Anchor:   anchor.evidenceAnchor(),
+		Nodes:    nodes,
+		Chains:   chains,
+		Gaps:     impactGaps(nodes, chains, at),
+	}, nil
+}
+
+type impactAnchor struct {
+	meta      entities.DocumentMeta
+	body      string
+	fromQuery string
+}
+
+func (a impactAnchor) evidenceAnchor() entities.Anchor {
+	kind := entities.AnchorDocument
+	if a.fromQuery != "" {
+		kind |= entities.AnchorQuery
+	}
+
+	return entities.Anchor{
+		Kind:  kind,
+		Query: a.fromQuery,
+		Doc: &entities.DocRef{
+			ID:        a.meta.ID,
+			Title:     a.meta.Title,
+			URL:       a.meta.URL,
+			CreatedAt: a.meta.CreatedAt,
+		},
+	}
+}
+
+func (s *impactService) impactAnchorOf(ctx context.Context, input string) (impactAnchor, error) {
+	anchor, err := s.impactResolved(ctx, input)
+	if err != nil {
+		return impactAnchor{}, err
+	}
+
+	body, err := documentBody(ctx, s.store, anchor.meta.ID)
+	if err != nil {
+		return impactAnchor{}, err
+	}
+	anchor.body = body
+
+	return anchor, nil
+}
+
+func (s *impactService) impactResolved(ctx context.Context, input string) (impactAnchor, error) {
+	anchor, found, err := resolveOneRef(ctx, s.store, input)
+	if err != nil {
+		return impactAnchor{}, err
+	}
+	if !found {
+		return s.impactInterpreted(ctx, input)
+	}
+
+	return impactAnchor{meta: anchor}, nil
+}
+
+func (s *impactService) impactInterpreted(ctx context.Context, input string) (impactAnchor, error) {
+	fused, err := hybridSearch(ctx, s.store, s.emb, input, entities.Filters{}, s.cfg.TopK)
+	if err != nil {
+		return impactAnchor{}, err
+	}
+	seeds, err := liftDocuments(ctx, s.store, fused)
+	if err != nil {
+		return impactAnchor{}, err
+	}
+	if len(seeds) == 0 {
+		return impactAnchor{}, internalerror.NewNotFoundError(fmt.Sprintf(
+			"nothing in the index matches %q", input), nil)
+	}
+
+	return impactAnchor{meta: seeds[0].Meta, fromQuery: input}, nil
+}
+
+func (s *impactService) impactMatches(ctx context.Context, text string, at time.Time) ([]seedHit, error) {
+	fused, err := hybridSearch(ctx, s.store, s.emb, text, entities.Filters{CreatedFrom: at}, s.cfg.TopK)
+	if err != nil {
+		return nil, err
+	}
+	seeds, err := liftDocuments(ctx, s.store, fused)
+	if err != nil {
+		return nil, err
+	}
+
+	// Timestamps persist at second precision, so CreatedFrom can admit the anchor's own second.
+	after := make([]seedHit, 0, len(seeds))
+	for _, seed := range seeds {
+		if seed.Meta.CreatedAt.After(at) {
+			after = append(after, seed)
+		}
+	}
+
+	return after, nil
+}
+
+func impactQuestionOf(question, anchorTitle string) string {
+	if asked := strings.TrimSpace(question); asked != "" {
+		return asked
+	}
+
+	return "consequences, follow-ups, incidents related to " + anchorTitle
+}
+
+func impactRetrievalText(question, excerpt string) string {
+	if excerpt == "" {
+		return question
+	}
+
+	return question + "\n\n" + excerpt
+}
+
+func impactAnchorExcerpt(body string) string {
+	if len(body) <= anchorExcerptChars {
+		return body
+	}
+
+	cut := anchorExcerptChars
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+
+	return body[:cut]
+}
+
+func impactNodes(
+	anchor entities.DocumentMeta,
+	excerpt string,
+	walked walkResult,
+	matches []seedHit,
+) []entities.EvidenceNode {
+	collected := newNodeSet(1 + len(walked.Paths) + len(matches))
+	collected.add(entities.EvidenceNode{Doc: anchor, Excerpt: excerpt, Role: entities.RoleSeed, Score: 1})
+
+	for _, path := range walked.Paths {
+		meta, indexed := walked.Metas[lastNode(path)]
+		if !indexed {
+			continue
+		}
+		collected.add(entities.EvidenceNode{
+			Doc:   meta,
+			Role:  entities.RoleFollowUp,
+			Score: defaultRankWeights.proximity(len(path.Edges)) * path.Confidence,
+			Via:   path.Edges,
+		})
+	}
+
+	relevance := scaledRelevance(matches)
+	for _, match := range matches {
+		collected.add(entities.EvidenceNode{
+			Doc:     match.Meta,
+			Excerpt: match.Excerpt,
+			Role:    entities.RoleSemanticMatch,
+			Score:   relevance.of(match.Meta.ID),
+		})
+	}
+	slices.SortFunc(collected.nodes, byChronology)
+
+	return collected.nodes
+}
+
+func impactGaps(nodes []entities.EvidenceNode, chains [][]entities.DocID, at time.Time) []string {
+	standalone := standaloneSeedGaps(nodes, chains)
+	if len(nodes) > 1 {
+		return standalone
+	}
+
+	return append([]string{"no follow-up evidence after " + at.Format(time.DateOnly)}, standalone...)
+}
