@@ -70,6 +70,20 @@ func (mr *MockIndexStoreMockRecorder) Cursor(ctx, connector any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cursor", reflect.TypeOf((*MockIndexStore)(nil).Cursor), ctx, connector)
 }
 
+// DeletePendingRefs mocks base method.
+func (m *MockIndexStore) DeletePendingRefs(ctx context.Context, refs []entities.PendingRef) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeletePendingRefs", ctx, refs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeletePendingRefs indicates an expected call of DeletePendingRefs.
+func (mr *MockIndexStoreMockRecorder) DeletePendingRefs(ctx, refs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePendingRefs", reflect.TypeOf((*MockIndexStore)(nil).DeletePendingRefs), ctx, refs)
+}
+
 // DocumentsByID mocks base method.
 func (m *MockIndexStore) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
 	m.ctrl.T.Helper()
@@ -114,6 +128,36 @@ func (mr *MockIndexStoreMockRecorder) Meta(ctx, key any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Meta", reflect.TypeOf((*MockIndexStore)(nil).Meta), ctx, key)
 }
 
+// Neighbors mocks base method.
+func (m *MockIndexStore) Neighbors(ctx context.Context, ids []entities.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Neighbors", ctx, ids, kinds, dir)
+	ret0, _ := ret[0].([]entities.Edge)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Neighbors indicates an expected call of Neighbors.
+func (mr *MockIndexStoreMockRecorder) Neighbors(ctx, ids, kinds, dir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Neighbors", reflect.TypeOf((*MockIndexStore)(nil).Neighbors), ctx, ids, kinds, dir)
+}
+
+// PendingRefs mocks base method.
+func (m *MockIndexStore) PendingRefs(ctx context.Context) ([]entities.PendingRef, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PendingRefs", ctx)
+	ret0, _ := ret[0].([]entities.PendingRef)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PendingRefs indicates an expected call of PendingRefs.
+func (mr *MockIndexStoreMockRecorder) PendingRefs(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PendingRefs", reflect.TypeOf((*MockIndexStore)(nil).PendingRefs), ctx)
+}
+
 // ReleaseLease mocks base method.
 func (m *MockIndexStore) ReleaseLease(ctx context.Context, holder string) error {
 	m.ctrl.T.Helper()
@@ -140,6 +184,21 @@ func (m *MockIndexStore) ReplaceChunks(ctx context.Context, docID entities.DocID
 func (mr *MockIndexStoreMockRecorder) ReplaceChunks(ctx, docID, chunks any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplaceChunks", reflect.TypeOf((*MockIndexStore)(nil).ReplaceChunks), ctx, docID, chunks)
+}
+
+// ResolveRef mocks base method.
+func (m *MockIndexStore) ResolveRef(ctx context.Context, ref string) ([]entities.DocumentMeta, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveRef", ctx, ref)
+	ret0, _ := ret[0].([]entities.DocumentMeta)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveRef indicates an expected call of ResolveRef.
+func (mr *MockIndexStoreMockRecorder) ResolveRef(ctx, ref any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveRef", reflect.TypeOf((*MockIndexStore)(nil).ResolveRef), ctx, ref)
 }
 
 // SearchLexical mocks base method.
@@ -242,6 +301,34 @@ func (m *MockIndexStore) UpsertDocuments(ctx context.Context, docs []entities.Do
 func (mr *MockIndexStoreMockRecorder) UpsertDocuments(ctx, docs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertDocuments", reflect.TypeOf((*MockIndexStore)(nil).UpsertDocuments), ctx, docs)
+}
+
+// UpsertEdges mocks base method.
+func (m *MockIndexStore) UpsertEdges(ctx context.Context, edges []entities.Edge) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertEdges", ctx, edges)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertEdges indicates an expected call of UpsertEdges.
+func (mr *MockIndexStoreMockRecorder) UpsertEdges(ctx, edges any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertEdges", reflect.TypeOf((*MockIndexStore)(nil).UpsertEdges), ctx, edges)
+}
+
+// UpsertPendingRefs mocks base method.
+func (m *MockIndexStore) UpsertPendingRefs(ctx context.Context, refs []entities.PendingRef) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertPendingRefs", ctx, refs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertPendingRefs indicates an expected call of UpsertPendingRefs.
+func (mr *MockIndexStoreMockRecorder) UpsertPendingRefs(ctx, refs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertPendingRefs", reflect.TypeOf((*MockIndexStore)(nil).UpsertPendingRefs), ctx, refs)
 }
 
 // WipeChunks mocks base method.

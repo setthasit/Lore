@@ -67,8 +67,10 @@ func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) e
 	return nil
 }
 
+const documentMetaColumns = `doc_id, source, type, title, author, url, created_at, updated_at`
+
 const selectDocumentMetaSQL = `
-SELECT doc_id, source, type, title, author, url, created_at, updated_at
+SELECT ` + documentMetaColumns + `
 FROM documents
 WHERE doc_id IN (%s)`
 
@@ -90,7 +92,11 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 	}
 	defer func() { _ = rows.Close() }()
 
-	metas := make([]entities.DocumentMeta, 0, len(ids))
+	return scanDocumentMetas(rows, len(ids))
+}
+
+func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, error) {
+	metas := make([]entities.DocumentMeta, 0, sizeHint)
 	for rows.Next() {
 		var (
 			m         entities.DocumentMeta
@@ -116,7 +122,7 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 		metas = append(metas, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
+		return nil, fmt.Errorf("sqlite: read document metas: %w", err)
 	}
 	return metas, nil
 }
@@ -321,16 +327,20 @@ func externalID(id entities.DocID) string {
 	return rest
 }
 
-// Lowercased so a prefix lookup does not depend on how a source cased its hex.
-// Empty for every document type but commits.
+// Connectors build a commit external key as "<owner>/<repo>/commit/<oid>", so the
+// SHA is its trailing segment; lowercased so a lookup does not depend on casing.
 func shaPrefix(t entities.DocType, externalKey string) string {
 	if t != entities.DocTypeCommit {
 		return ""
 	}
-	if len(externalKey) > shaPrefixLen {
-		externalKey = externalKey[:shaPrefixLen]
+	sha := externalKey[strings.LastIndexByte(externalKey, '/')+1:]
+	if len(sha) < minSHARefLen || !isHexString(sha) {
+		return ""
 	}
-	return strings.ToLower(externalKey)
+	if len(sha) > shaPrefixLen {
+		sha = sha[:shaPrefixLen]
+	}
+	return strings.ToLower(sha)
 }
 
 func formatTime(t time.Time) string {

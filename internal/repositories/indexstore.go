@@ -22,6 +22,10 @@ type IndexStore interface {
 	// unspecified.
 	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
 
+	// Every candidate is returned; picking one is the caller's policy. A ref
+	// shape the store does not recognise yields no candidates, not an error.
+	ResolveRef(ctx context.Context, ref string) ([]entities.DocumentMeta, error)
+
 	// Replaces the document's whole chunk set; nil clears it. The parent
 	// document must already exist.
 	ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error
@@ -36,6 +40,19 @@ type IndexStore interface {
 	// embedding must have the store's vector width. Chunks stored without an
 	// embedding are unreachable here.
 	SearchVector(ctx context.Context, embedding []float32, f entities.Filters, k int) ([]entities.ChunkHit, error)
+
+	// An edge that already exists (src, dst, kind) is ignored, so an earlier
+	// confidence is never overwritten.
+	UpsertEdges(ctx context.Context, edges []entities.Edge) error
+
+	// Empty kinds means every kind.
+	Neighbors(ctx context.Context, ids []entities.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error)
+
+	PendingRefs(ctx context.Context) ([]entities.PendingRef, error)
+
+	UpsertPendingRefs(ctx context.Context, refs []entities.PendingRef) error
+
+	DeletePendingRefs(ctx context.Context, refs []entities.PendingRef) error
 
 	// Nil Cursor means never checkpointed — start a full sync.
 	Cursor(ctx context.Context, connector string) (entities.Cursor, error)
