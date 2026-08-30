@@ -99,6 +99,21 @@ func (mr *MockIndexStoreMockRecorder) DocumentsByID(ctx, ids any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DocumentsByID", reflect.TypeOf((*MockIndexStore)(nil).DocumentsByID), ctx, ids)
 }
 
+// DocumentsWithBody mocks base method.
+func (m *MockIndexStore) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DocumentsWithBody", ctx, ids)
+	ret0, _ := ret[0].([]entities.Document)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DocumentsWithBody indicates an expected call of DocumentsWithBody.
+func (mr *MockIndexStoreMockRecorder) DocumentsWithBody(ctx, ids any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DocumentsWithBody", reflect.TypeOf((*MockIndexStore)(nil).DocumentsWithBody), ctx, ids)
+}
+
 // HeartbeatLease mocks base method.
 func (m *MockIndexStore) HeartbeatLease(ctx context.Context, holder string) error {
 	m.ctrl.T.Helper()

@@ -22,6 +22,10 @@ type IndexStore interface {
 	// unspecified.
 	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
 
+	// Full documents including Body. Ids the index does not hold are silently
+	// omitted; Refs are never populated.
+	DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error)
+
 	// Every candidate is returned; picking one is the caller's policy. A ref
 	// shape the store does not recognise yields no candidates, not an error.
 	ResolveRef(ctx context.Context, ref string) ([]entities.DocumentMeta, error)

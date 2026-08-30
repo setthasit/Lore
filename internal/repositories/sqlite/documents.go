@@ -69,8 +69,10 @@ func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) e
 
 const documentMetaColumns = `doc_id, source, type, title, author, url, created_at, updated_at`
 
-const selectDocumentMetaSQL = `
-SELECT ` + documentMetaColumns + `
+const documentColumns = documentMetaColumns + `, body, repo_ref`
+
+const selectDocumentsSQL = `
+SELECT %s
 FROM documents
 WHERE doc_id IN (%s)`
 
@@ -80,19 +82,41 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 		return nil, nil
 	}
 
+	rows, err := s.queryDocuments(ctx, documentMetaColumns, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanDocumentMetas(rows, len(ids))
+}
+
+func (s *Store) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows, err := s.queryDocuments(ctx, documentColumns, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanDocuments(rows, len(ids))
+}
+
+func (s *Store) queryDocuments(ctx context.Context, columns string, ids []entities.DocID) (*sql.Rows, error) {
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = string(id)
 	}
 
-	stmt := fmt.Sprintf(selectDocumentMetaSQL, placeholders(len(ids)))
-	rows, err := s.db.QueryContext(ctx, stmt, args...)
+	query := fmt.Sprintf(selectDocumentsSQL, columns, placeholders(len(ids)))
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	return scanDocumentMetas(rows, len(ids))
+	return rows, nil
 }
 
 func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, error) {
@@ -113,11 +137,8 @@ func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, e
 
 		m.ID = entities.DocID(docID)
 		m.Type = entities.DocType(docType)
-		if m.CreatedAt, err = parseTime(createdAt); err != nil {
-			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
-		}
-		if m.UpdatedAt, err = parseTime(updatedAt); err != nil {
-			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
+		if m.CreatedAt, m.UpdatedAt, err = documentTimes(m.ID, createdAt, updatedAt); err != nil {
+			return nil, err
 		}
 		metas = append(metas, m)
 	}
@@ -125,6 +146,48 @@ func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, e
 		return nil, fmt.Errorf("sqlite: read document metas: %w", err)
 	}
 	return metas, nil
+}
+
+func scanDocuments(rows *sql.Rows, sizeHint int) ([]entities.Document, error) {
+	docs := make([]entities.Document, 0, sizeHint)
+	for rows.Next() {
+		var (
+			d         entities.Document
+			docID     string
+			docType   string
+			createdAt string
+			updatedAt string
+		)
+		err := rows.Scan(&docID, &d.Source, &docType, &d.Title,
+			&d.Author, &d.URL, &createdAt, &updatedAt, &d.Body, &d.RepoRef)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: scan document: %w", err)
+		}
+
+		d.ID = entities.DocID(docID)
+		d.Type = entities.DocType(docType)
+		if d.CreatedAt, d.UpdatedAt, err = documentTimes(d.ID, createdAt, updatedAt); err != nil {
+			return nil, err
+		}
+		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: read documents: %w", err)
+	}
+	return docs, nil
+}
+
+func documentTimes(id entities.DocID, createdAt, updatedAt string) (time.Time, time.Time, error) {
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sqlite: document %q: %w", id, err)
+	}
+
+	updated, err := parseTime(updatedAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sqlite: document %q: %w", id, err)
+	}
+	return created, updated, nil
 }
 
 // Only the marker count reaches the SQL text; every value stays bound.

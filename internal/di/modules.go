@@ -46,6 +46,7 @@ var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedd
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
 	newQueryService,
+	services.NewLinkResolver,
 	services.NewSyncOrchestrator,
 	services.NewStatusService,
 ))

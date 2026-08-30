@@ -222,7 +222,7 @@ func newWorkspace(t *testing.T) *workspace {
 
 	return &workspace{
 		api:    api,
-		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb),
+		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store)),
 		query:  services.NewQueryService(store, emb, topK),
 		status: services.NewStatusService(store),
 	}
