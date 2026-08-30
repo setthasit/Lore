@@ -68,6 +68,7 @@ const (
 	RoleDesignDoc     = "design_doc"
 	RoleFollowUp      = "follow_up"
 	RoleSemanticMatch = "semantic_match"
+	RoleLinkedChange  = "linked_change"
 )
 
 // EvidenceNode is one cited document in a bundle. Every node carries a real

@@ -54,7 +54,7 @@ type EvidenceNode struct {
     Doc      DocumentMeta // id, source, type, title, author, url, created_at, updated_at
     Excerpt  string       // the relevant span, not the whole body
     Role     string       // "seed" | "blamed_commit" | "review_thread" | "linked_ticket" |
-                          // "design_doc" | "follow_up" | "semantic_match"
+                          // "linked_change" | "design_doc" | "follow_up" | "semantic_match"
     Score    float32
     Via      []Edge       // how this node was reached (graph) — empty for pure retrieval hits
 }
