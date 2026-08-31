@@ -9,7 +9,10 @@ import (
 	"lore/internal/entities"
 )
 
-const upsertEdgeSQL = `INSERT OR IGNORE INTO edges (src, dst, kind, confidence) VALUES (?, ?, ?, ?)`
+// A URL match and a ticket-key match produce the same edge at different confidences,
+// so the stored value must not depend on which ref the resolver happened to reach first.
+const upsertEdgeSQL = `INSERT INTO edges (src, dst, kind, confidence) VALUES (?, ?, ?, ?)
+ON CONFLICT(src, dst, kind) DO UPDATE SET confidence = max(confidence, excluded.confidence)`
 
 const selectEdgesSQL = `SELECT src, dst, kind, confidence FROM edges WHERE `
 

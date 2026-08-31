@@ -45,8 +45,8 @@ type IndexStore interface {
 	// embedding are unreachable here.
 	SearchVector(ctx context.Context, embedding []float32, f entities.Filters, k int) ([]entities.ChunkHit, error)
 
-	// An edge that already exists (src, dst, kind) is ignored, so an earlier
-	// confidence is never overwritten.
+	// A re-upserted edge (src, dst, kind) keeps the highest confidence seen, so the
+	// result never depends on the order refs were resolved in.
 	UpsertEdges(ctx context.Context, edges []entities.Edge) error
 
 	// Empty kinds means every kind.

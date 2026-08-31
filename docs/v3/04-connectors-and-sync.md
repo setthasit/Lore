@@ -186,7 +186,9 @@ Second pass converting `RawRef`s into typed `edges`:
 
 Unresolved refs stay in `pending_refs` and are retried each round — a Notion
 page linked from a PR may be ingested *after* the PR; the edge appears once
-both sides exist. Resolution is idempotent (`INSERT OR IGNORE` semantics).
+both sides exist. Resolution is idempotent, and an edge reached by two refs of
+different confidence keeps the highest, so the stored graph does not depend on
+which ref the resolver happened to reach first.
 
 Edge direction convention: `Src` = the document whose body contains the
 reference; `Dst` = the referenced document. The resolver never guesses
