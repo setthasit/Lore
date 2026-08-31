@@ -104,6 +104,10 @@ func TestToolDeclarations(t *testing.T) {
 			routes: []string{"breadth", "depth", "consequences", "trace", "impact_of"},
 		},
 		{
+			name:   "why",
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace", "impact_of"},
+		},
+		{
 			name:   "trace",
 			routes: []string{"breadth", "depth", "consequences", "find_decision", "impact_of"},
 		},

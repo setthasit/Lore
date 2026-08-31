@@ -22,6 +22,7 @@ import (
 
 type toolFixture struct {
 	query   *mock_services.MockQueryService
+	why     *mock_services.MockWhyService
 	trace   *mock_services.MockTraceService
 	impact  *mock_services.MockImpactService
 	session *sdk.ClientSession
@@ -34,11 +35,12 @@ func newToolFixture(t *testing.T) toolFixture {
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
 	query := mock_services.NewMockQueryService(ctrl)
+	why := mock_services.NewMockWhyService(ctrl)
 	trace := mock_services.NewMockTraceService(ctrl)
 	impact := mock_services.NewMockImpactService(ctrl)
 	logs := &bytes.Buffer{}
 
-	svc := Services{Query: query, Trace: trace, Impact: impact}
+	svc := Services{Query: query, Why: why, Trace: trace, Impact: impact}
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
 	serverSession, err := newServer(svc, slog.New(slog.NewTextHandler(logs, nil))).Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -59,7 +61,7 @@ func newToolFixture(t *testing.T) toolFixture {
 		}
 	})
 
-	return toolFixture{query: query, trace: trace, impact: impact, session: clientSession, logs: logs}
+	return toolFixture{query: query, why: why, trace: trace, impact: impact, session: clientSession, logs: logs}
 }
 
 func (f toolFixture) call(t *testing.T, args map[string]any) *sdk.CallToolResult {

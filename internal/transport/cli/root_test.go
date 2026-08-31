@@ -66,6 +66,13 @@ func mockQuery(t *testing.T) (*Runtime, *mock_services.MockQueryService) {
 	return &Runtime{Query: query}, query
 }
 
+func mockWhy(t *testing.T) (*Runtime, *mock_services.MockWhyService) {
+	t.Helper()
+
+	why := mock_services.NewMockWhyService(gomock.NewController(t))
+	return &Runtime{Why: why}, why
+}
+
 func mockTrace(t *testing.T) (*Runtime, *mock_services.MockTraceService) {
 	t.Helper()
 
@@ -202,7 +209,7 @@ func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 
 func TestHelpSucceeds(t *testing.T) {
 	for _, args := range [][]string{
-		{"--help"}, {"ask", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
+		{"--help"}, {"ask", "--help"}, {"why", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
 	} {
 		res := run(t, nil, args...)
 		if res.exitCode != exitOK {
@@ -220,7 +227,7 @@ func TestRootHelpListsTheQueryCommands(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	for _, want := range []string{"ask", "trace", "impact"} {
+	for _, want := range []string{"ask", "why", "trace", "impact"} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("help does not list %q\n--- help ---\n%s", want, res.stdout)
 		}

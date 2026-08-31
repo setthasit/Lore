@@ -49,6 +49,7 @@ var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedd
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
 	newQueryService,
+	newWhyService,
 	services.NewTraceService,
 	newImpactService,
 	services.NewLinkResolver,
@@ -204,4 +205,13 @@ func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg 
 		WalkDepth:   cfg.Query.WalkDepth,
 		EventWindow: time.Duration(cfg.Query.EventWindow),
 	})
+}
+
+func newWhyService(cfg *config.Config) services.WhyService {
+	repos := make([]services.CodeRepo, 0, len(cfg.Repos))
+	for _, repo := range cfg.Repos {
+		repos = append(repos, services.CodeRepo{Path: repo.Path, Remote: repo.Remote})
+	}
+
+	return services.NewWhyService(repos)
 }

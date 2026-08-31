@@ -198,6 +198,42 @@ func TestWorkspaceGraphRejectsMissingJiraEmail(t *testing.T) {
 	}
 }
 
+func TestWorkspaceGraphResolvesWhyForAnAskOnlyWorkspace(t *testing.T) {
+	t.Setenv("LORE_TEST_NOTION_TOKEN", "secret_example")
+	t.Setenv(EmbedderKeyEnv, "sk-example")
+
+	path := writeConfig(t, `sources:
+  notion:
+    token_env: LORE_TEST_NOTION_TOKEN
+    root_pages: ["Engineering Wiki"]
+repos: []
+`)
+
+	var why services.WhyService
+	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&why))
+	if err := app.Err(); err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := app.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		if err := app.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}()
+
+	_, err := why.Why(ctx, services.WhyRequest{File: "internal/auth/auth.go", LineStart: 10, LineEnd: 20})
+	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
+		t.Fatalf("kind = %s, want %s (error %v)", got, internalerror.KindPrecondition, err)
+	}
+	if want := "no repositories registered"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to name %q", err, want)
+	}
+}
+
 func TestResolvePathExpandsHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
