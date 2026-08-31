@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -142,25 +143,58 @@ func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
 	}
 }
 
-func TestWorkspaceGraphRejectsUnbuiltSource(t *testing.T) {
+func TestWorkspaceGraphWithAskOnlySources(t *testing.T) {
 	t.Setenv("LORE_TEST_NOTION_TOKEN", "secret_example")
+	t.Setenv("LORE_TEST_JIRA_EMAIL", "bot@example.invalid")
+	t.Setenv("LORE_TEST_JIRA_TOKEN", "jira_example")
 	t.Setenv(EmbedderKeyEnv, "sk-example")
 
 	path := writeConfig(t, `sources:
   notion:
     token_env: LORE_TEST_NOTION_TOKEN
     root_pages: ["Engineering Wiki"]
+  jira:
+    base_url: https://acme.atlassian.net
+    email_env: LORE_TEST_JIRA_EMAIL
+    token_env: LORE_TEST_JIRA_TOKEN
+    projects: [PROJ]
+repos: []
+`)
+
+	connectors, err := resolveWorkspace(t, path)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	var names []string
+	for _, c := range connectors {
+		names = append(names, c.Name())
+	}
+	if want := []string{"notion", "jira"}; !slices.Equal(names, want) {
+		t.Errorf("connector names = %v, want %v", names, want)
+	}
+}
+
+func TestWorkspaceGraphRejectsMissingJiraEmail(t *testing.T) {
+	t.Setenv("LORE_TEST_JIRA_EMAIL", "")
+	t.Setenv("LORE_TEST_JIRA_TOKEN", "jira_example")
+	t.Setenv(EmbedderKeyEnv, "sk-example")
+
+	path := writeConfig(t, `sources:
+  jira:
+    base_url: https://acme.atlassian.net
+    email_env: LORE_TEST_JIRA_EMAIL
+    token_env: LORE_TEST_JIRA_TOKEN
 `)
 
 	_, err := resolveWorkspace(t, path)
 	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the unbuilt source")
+		t.Fatal("resolve workspace: want an error naming the email variable")
 	}
-	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindPrecondition)
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
 	}
-	if !strings.Contains(err.Error(), "sources.notion") {
-		t.Errorf("error %q does not name the source", err)
+	if !strings.Contains(err.Error(), "LORE_TEST_JIRA_EMAIL") {
+		t.Errorf("error %q does not name the variable", err)
 	}
 }
 
