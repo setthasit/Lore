@@ -32,6 +32,12 @@ type result struct {
 func run(t *testing.T, rt *Runtime, args ...string) result {
 	t.Helper()
 
+	return runWithInput(t, rt, "", args...)
+}
+
+func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) result {
+	t.Helper()
+
 	var out, errOut bytes.Buffer
 	res := result{}
 
@@ -40,6 +46,7 @@ func run(t *testing.T, rt *Runtime, args ...string) result {
 	}
 
 	root := newRootCommand(resolve)
+	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs(args)
