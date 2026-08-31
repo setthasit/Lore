@@ -1,0 +1,26 @@
+{
+  "object": "list",
+  "results": [
+    {
+      "object": "block",
+      "id": "b0000003-0000-4000-8000-00000000000c",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Edited after the tie.",
+            "href": null,
+            "text": {
+              "content": "Edited after the tie.",
+              "link": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}
