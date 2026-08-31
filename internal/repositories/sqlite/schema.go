@@ -8,7 +8,7 @@ import (
 )
 
 // An incompatible generation means the workspace file is rebuilt, not migrated.
-const schemaVersion = "2"
+const schemaVersion = "3"
 
 // Keys the store itself owns in the meta table.
 const (
@@ -138,7 +138,11 @@ func ensureMeta(ctx context.Context, tx *sql.Tx, key, want string) error {
 		return fmt.Errorf("read meta %q: %w", key, err)
 	}
 	if got != want {
-		return fmt.Errorf("database %s is %q, this store expects %q", key, got, want)
+		mismatch := fmt.Errorf("database %s is %q, this store expects %q", key, got, want)
+		if key == metaKeySchemaVersion {
+			return fmt.Errorf("%w: this workspace index was built by a different generation and has to be rebuilt — delete the index file and re-sync", mismatch)
+		}
+		return mismatch
 	}
 	return nil
 }

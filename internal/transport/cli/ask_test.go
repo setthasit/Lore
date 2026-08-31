@@ -101,8 +101,8 @@ func TestAskEmptyBundleIsAnAnswerNotAnError(t *testing.T) {
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, want %d (an empty index is an answer)", res.exitCode, exitOK)
 	}
-	if !strings.Contains(res.stdout, "no evidence found") {
-		t.Errorf("stdout = %q, want it to say the index holds nothing", res.stdout)
+	if !strings.Contains(res.stdout, "no evidence found") || !strings.Contains(res.stdout, "widen the filters") {
+		t.Errorf("stdout = %q, want it to say the index holds nothing and how to broaden the search", res.stdout)
 	}
 }
 

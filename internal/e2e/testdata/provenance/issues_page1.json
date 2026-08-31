@@ -1,0 +1,68 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 69,
+            "title": "Write down how ingest serializes its writes",
+            "body": "New contributors keep asking why ingest has one writer. The reasoning is spread across review threads and nobody has put it into the repository docs.\n\nSomeone should write a short page on how ingest serializes its writes, what the bounded queue does when it fills, and what a worker sees while the writer is busy.",
+            "url": "https://github.example/acme/lore/issues/69",
+            "createdAt": "2024-03-25T14:00:00Z",
+            "updatedAt": "2024-03-25T14:00:00Z",
+            "author": {
+              "login": "reporter"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          },
+          {
+            "number": 62,
+            "title": "One writer connection per ingest worker, or a shared pool?",
+            "body": "Two shapes are on the table for ingest writes. Either every worker keeps opening its own writer connection, or the workers hand their batches to something that owns the write side.\n\nNobody has argued the tradeoff in writing yet. Whoever writes it up should compare throughput against the failure mode we hit, not against the happy path.",
+            "url": "https://github.example/acme/lore/issues/62",
+            "createdAt": "2024-03-15T10:00:00Z",
+            "updatedAt": "2024-03-15T10:00:00Z",
+            "author": {
+              "login": "grace"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          },
+          {
+            "number": 61,
+            "title": "Postmortem: the quorum drift brownout stalled ingest for six hours",
+            "body": "Ingest went dark for six hours on the twelfth. Every ingest worker held its own writer connection to the workspace file, and under load they starved each other until the whole pool timed out.\n\nWe are calling this the quorum drift brownout: the writers drifted out of agreement about who held the write lock, and throughput browned out instead of failing loudly.\n\nNothing was lost. Ingest resumed once the pool was drained by hand.",
+            "url": "https://github.example/acme/lore/issues/61",
+            "createdAt": "2024-03-12T09:15:00Z",
+            "updatedAt": "2024-03-12T09:15:00Z",
+            "author": {
+              "login": "ada"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}

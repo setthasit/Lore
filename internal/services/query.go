@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ type QueryService interface {
 	FindDecision(ctx context.Context, req FindDecisionRequest) (*entities.EvidenceBundle, error)
 }
 
-// Around is refused, not ignored: event anchoring is unsupported.
 type FindDecisionRequest struct {
 	Question string
 	Around   string
@@ -28,22 +26,38 @@ type FindDecisionRequest struct {
 	Until    time.Time
 }
 
-const defaultTopK = 12
+const (
+	defaultTopK        = 12
+	defaultEventWindow = 30 * 24 * time.Hour
+)
+
+type QueryConfig struct {
+	TopK        int
+	WalkDepth   int
+	EventWindow time.Duration
+}
 
 type queryService struct {
 	store repositories.IndexStore
 	emb   embedder.Embedder
-	topK  int
+	cfg   QueryConfig
+	now   func() time.Time
 }
 
 var _ QueryService = (*queryService)(nil)
 
-func NewQueryService(store repositories.IndexStore, emb embedder.Embedder, topK int) QueryService {
-	if topK <= 0 {
-		topK = defaultTopK
+func NewQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg QueryConfig) QueryService {
+	if cfg.TopK <= 0 {
+		cfg.TopK = defaultTopK
+	}
+	if cfg.WalkDepth <= 0 {
+		cfg.WalkDepth = defaultWalkDepth
+	}
+	if cfg.EventWindow <= 0 {
+		cfg.EventWindow = defaultEventWindow
 	}
 
-	return &queryService{store: store, emb: emb, topK: topK}
+	return &queryService{store: store, emb: emb, cfg: cfg, now: time.Now}
 }
 
 func (q *queryService) FindDecision(ctx context.Context, req FindDecisionRequest) (*entities.EvidenceBundle, error) {
@@ -51,89 +65,91 @@ func (q *queryService) FindDecision(ctx context.Context, req FindDecisionRequest
 	if question == "" {
 		return nil, internalerror.NewBadRequestError("question must not be empty", nil)
 	}
-	if strings.TrimSpace(req.Around) != "" {
-		return nil, internalerror.NewPreconditionError("event anchoring not yet supported", nil)
-	}
 
-	filters := filtersOf(req)
-
-	vectors, err := q.emb.Embed(ctx, []string{question})
-	if err != nil {
-		return nil, internalerror.NewInternalError("embedding the question failed", err)
-	}
-	if len(vectors) != 1 {
-		return nil, internalerror.NewInternalError(
-			fmt.Sprintf("embedder returned %d vectors for one text", len(vectors)), nil)
-	}
-
-	lexical, err := q.store.SearchLexical(ctx, question, filters, q.topK)
-	if err != nil {
-		return nil, internalerror.NewInternalError("lexical search failed", err)
-	}
-	semantic, err := q.store.SearchVector(ctx, vectors[0], filters, q.topK)
-	if err != nil {
-		return nil, internalerror.NewInternalError("vector search failed", err)
-	}
-
-	nodes, err := q.lift(ctx, fuse(lexical, semantic))
+	event, err := resolveEvent(ctx, q.store, q.emb, req.Around,
+		eventOptions{Window: q.cfg.EventWindow, TopK: q.cfg.TopK})
 	if err != nil {
 		return nil, err
 	}
 
+	fused, err := hybridSearch(ctx, q.store, q.emb, question, filtersOf(req, event.Window), q.cfg.TopK)
+	if err != nil {
+		return nil, err
+	}
+	seeds, err := liftDocuments(ctx, q.store, fused)
+	if err != nil {
+		return nil, err
+	}
+
+	walked, err := walkGraph(ctx, q.store, seedIDs(seeds),
+		walkOptions{Depth: q.cfg.WalkDepth, Direction: entities.DirBoth})
+	if err != nil {
+		return nil, internalerror.NewInternalError("walking the provenance graph failed", err)
+	}
+
+	found := rank(rankRequest{Seeds: seeds, Walk: walked, Window: event.Window, Now: q.now()})
+
 	return &entities.EvidenceBundle{
 		Question: question,
-		Anchor:   entities.Anchor{Kind: entities.AnchorQuery, Query: question},
-		Nodes:    nodes,
+		Anchor:   anchorOf(question, event.Window),
+		Nodes:    found.Nodes,
+		Chains:   found.Chains,
+		Gaps:     gapsOf(event.Gap, found.Gaps),
 	}, nil
 }
 
-func filtersOf(req FindDecisionRequest) entities.Filters {
+func filtersOf(req FindDecisionRequest, window *entities.TimeWindow) entities.Filters {
+	from, to := intersected(req.Since, req.Until, window)
+
 	return entities.Filters{
 		Source:      req.Source,
 		RepoRef:     req.Repo,
 		DocType:     entities.DocType(req.DocType),
-		CreatedFrom: req.Since,
-		CreatedTo:   req.Until,
+		CreatedFrom: from,
+		CreatedTo:   to,
 	}
 }
 
-func (q *queryService) lift(ctx context.Context, fused []fusedChunk) ([]entities.EvidenceNode, error) {
-	if len(fused) == 0 {
-		return nil, nil
+// A zero bound is absent, not an instant in year 1, so it never narrows the window.
+func intersected(since, until time.Time, window *entities.TimeWindow) (from, to time.Time) {
+	if window == nil {
+		return since, until
 	}
 
-	ids := make([]entities.DocID, 0, len(fused))
-	best := make(map[entities.DocID]fusedChunk, len(fused))
-	for _, chunk := range fused {
-		if _, seen := best[chunk.DocID]; seen {
-			continue
-		}
-		best[chunk.DocID] = chunk
-		ids = append(ids, chunk.DocID)
+	from, to = window.From, window.To
+	if since.After(from) {
+		from = since
+	}
+	if !until.IsZero() && until.Before(to) {
+		to = until
 	}
 
-	metas, err := q.store.DocumentsByID(ctx, ids)
-	if err != nil {
-		return nil, internalerror.NewInternalError("loading document metadata failed", err)
-	}
-	byID := make(map[entities.DocID]entities.DocumentMeta, len(metas))
-	for _, meta := range metas {
-		byID[meta.ID] = meta
+	return from, to
+}
+
+func seedIDs(seeds []seedHit) []entities.DocID {
+	ids := make([]entities.DocID, len(seeds))
+	for i, seed := range seeds {
+		ids[i] = seed.Meta.ID
 	}
 
-	nodes := make([]entities.EvidenceNode, 0, len(ids))
-	for _, id := range ids {
-		meta, held := byID[id]
-		if !held || meta.URL == "" {
-			continue
-		}
-		nodes = append(nodes, entities.EvidenceNode{
-			Doc:     meta,
-			Excerpt: best[id].Text,
-			Role:    entities.RoleSeed,
-			Score:   best[id].Score,
-		})
+	return ids
+}
+
+func anchorOf(question string, window *entities.TimeWindow) entities.Anchor {
+	kind := entities.AnchorQuery
+	if window != nil {
+		kind |= entities.AnchorTimeWindow
 	}
 
-	return nodes, nil
+	return entities.Anchor{Kind: kind, Query: question, Window: window}
+}
+
+// An unresolved event comes first: it explains why the rest is unwindowed.
+func gapsOf(event string, found []string) []string {
+	if event == "" {
+		return found
+	}
+
+	return append([]string{event}, found...)
 }

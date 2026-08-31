@@ -37,7 +37,7 @@ const (
 	topK = 12
 )
 
-var prDocID = entities.NewDocID("github", entities.DocTypePR, fixtureRepo+"/pull/42")
+var prDocID = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/42")
 
 const fakeDims = 8
 
@@ -104,16 +104,18 @@ const (
 
 type fixtureAPI struct {
 	t      *testing.T
+	dir    string
 	server *httptest.Server
 
 	mu    sync.Mutex
 	calls map[string]int
 }
 
-func newFixtureAPI(t *testing.T) *fixtureAPI {
+// An empty dir reads testdata itself, so corpora nest without moving the first one.
+func newFixtureAPI(t *testing.T, dir string) *fixtureAPI {
 	t.Helper()
 
-	api := &fixtureAPI{t: t, calls: make(map[string]int)}
+	api := &fixtureAPI{t: t, dir: dir, calls: make(map[string]int)}
 	api.server = httptest.NewServer(http.HandlerFunc(api.serve))
 	t.Cleanup(api.server.Close)
 	return api
@@ -162,7 +164,7 @@ func (a *fixtureAPI) serveREST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *fixtureAPI) write(w http.ResponseWriter, name string) {
-	body, err := os.ReadFile(filepath.Join("testdata", name))
+	body, err := os.ReadFile(filepath.Join("testdata", a.dir, name))
 	if err != nil {
 		a.reject(w, "read fixture %s: %v", name, err)
 		return
@@ -197,13 +199,15 @@ type workspace struct {
 	api    *fixtureAPI
 	round  services.SyncOrchestrator
 	query  services.QueryService
+	trace  services.TraceService
+	impact services.ImpactService
 	status services.StatusService
 }
 
-func newWorkspace(t *testing.T) *workspace {
+func newWorkspace(t *testing.T, fixtures string) *workspace {
 	t.Helper()
 
-	api := newFixtureAPI(t)
+	api := newFixtureAPI(t, fixtures)
 
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "workspace.db"), fakeDims)
 	if err != nil {
@@ -222,8 +226,10 @@ func newWorkspace(t *testing.T) *workspace {
 
 	return &workspace{
 		api:    api,
-		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb),
-		query:  services.NewQueryService(store, emb, topK),
+		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store)),
+		query:  services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
+		trace:  services.NewTraceService(store),
+		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
 	}
 }
@@ -261,7 +267,7 @@ func (w *workspace) ask(ctx context.Context, t *testing.T) *entities.EvidenceBun
 
 func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	ctx := context.Background()
-	w := newWorkspace(t)
+	w := newWorkspace(t, "")
 
 	w.sync(ctx, t, "first")
 
@@ -278,7 +284,7 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if stats.Chunks < stats.Documents {
 		t.Errorf("indexed chunks = %d, want at least one per document (%d)", stats.Chunks, stats.Documents)
 	}
-	if len(stats.Cursors) != 1 || stats.Cursors[0].Connector != "github" {
+	if len(stats.Cursors) != 1 || stats.Cursors[0].Connector != githubSource {
 		t.Errorf("checkpointed connectors = %+v, want one entry for github", stats.Cursors)
 	}
 
@@ -293,14 +299,38 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if bundle.Anchor.Query != question {
 		t.Errorf("anchor query = %q, want %q", bundle.Anchor.Query, question)
 	}
-	if len(bundle.Chains) != 0 || len(bundle.Gaps) != 0 {
-		t.Errorf("bundle carries %d chains and %d gaps, want none of either",
-			len(bundle.Chains), len(bundle.Gaps))
-	}
 
 	if len(bundle.Nodes) == 0 {
 		t.Fatalf("bundle cites nothing for %q", question)
 	}
+	if len(bundle.Chains) == 0 {
+		t.Errorf("bundle carries no chain for %q, though the fixture documents reference each other", question)
+	}
+
+	cited := make(map[entities.DocID]bool, len(bundle.Nodes))
+	for _, node := range bundle.Nodes {
+		cited[node.Doc.ID] = true
+	}
+	chained := make(map[entities.DocID]bool, len(bundle.Nodes))
+	for _, chain := range bundle.Chains {
+		for _, id := range chain {
+			if !cited[id] {
+				t.Errorf("chain %v names %s, which the bundle does not cite", chain, id)
+			}
+			chained[id] = true
+		}
+	}
+	if !chained[prDocID] {
+		t.Errorf("chains %v leave out the pull request that argues for SQLite (%s)", bundle.Chains, prDocID)
+	}
+	for _, gap := range bundle.Gaps {
+		for id := range chained {
+			if strings.Contains(gap, string(id)) {
+				t.Errorf("gap %q calls %s standalone, though a chain links it", gap, id)
+			}
+		}
+	}
+
 	for _, node := range bundle.Nodes {
 		if !strings.HasPrefix(node.Doc.URL, w.api.server.URL) {
 			t.Errorf("node %s cites %q, want a URL on the fixture host %s",
@@ -325,7 +355,7 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 
 func TestSecondSyncOverUnchangedFixturesChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	w := newWorkspace(t)
+	w := newWorkspace(t, "")
 
 	w.sync(ctx, t, "first")
 	before, beforeBundle := w.stats(ctx, t), w.ask(ctx, t)

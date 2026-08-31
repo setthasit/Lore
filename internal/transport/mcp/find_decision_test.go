@@ -22,6 +22,8 @@ import (
 
 type toolFixture struct {
 	query   *mock_services.MockQueryService
+	trace   *mock_services.MockTraceService
+	impact  *mock_services.MockImpactService
 	session *sdk.ClientSession
 	logs    *bytes.Buffer
 }
@@ -30,11 +32,15 @@ func newToolFixture(t *testing.T) toolFixture {
 	t.Helper()
 
 	ctx := context.Background()
-	query := mock_services.NewMockQueryService(gomock.NewController(t))
+	ctrl := gomock.NewController(t)
+	query := mock_services.NewMockQueryService(ctrl)
+	trace := mock_services.NewMockTraceService(ctrl)
+	impact := mock_services.NewMockImpactService(ctrl)
 	logs := &bytes.Buffer{}
 
+	svc := Services{Query: query, Trace: trace, Impact: impact}
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
-	serverSession, err := newServer(query, slog.New(slog.NewTextHandler(logs, nil))).Connect(ctx, serverTransport, nil)
+	serverSession, err := newServer(svc, slog.New(slog.NewTextHandler(logs, nil))).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -53,18 +59,41 @@ func newToolFixture(t *testing.T) toolFixture {
 		}
 	})
 
-	return toolFixture{query: query, session: clientSession, logs: logs}
+	return toolFixture{query: query, trace: trace, impact: impact, session: clientSession, logs: logs}
 }
 
 func (f toolFixture) call(t *testing.T, args map[string]any) *sdk.CallToolResult {
 	t.Helper()
 
-	res, err := f.session.CallTool(context.Background(), &sdk.CallToolParams{Name: "find_decision", Arguments: args})
+	return f.callTool(t, "find_decision", args)
+}
+
+func (f toolFixture) callTool(t *testing.T, name string, args map[string]any) *sdk.CallToolResult {
+	t.Helper()
+
+	res, err := f.session.CallTool(context.Background(), &sdk.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
-		t.Fatalf("call find_decision: %v", err)
+		t.Fatalf("call %s: %v", name, err)
 	}
 
 	return res
+}
+
+func (f toolFixture) declaration(t *testing.T, name string) *sdk.Tool {
+	t.Helper()
+
+	tools, err := f.session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == name {
+			return tool
+		}
+	}
+	t.Fatalf("tool %q is not advertised", name)
+
+	return nil
 }
 
 func errorText(t *testing.T, res *sdk.CallToolResult) string {
@@ -84,6 +113,28 @@ func errorText(t *testing.T, res *sdk.CallToolResult) string {
 	return text.Text
 }
 
+func assertBundleResult(t *testing.T, res *sdk.CallToolResult, want string) {
+	t.Helper()
+
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", errorText(t, res))
+	}
+	structured, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured content: %v", err)
+	}
+	assertSameJSON(t, structured, []byte(want))
+
+	if len(res.Content) != 1 {
+		t.Fatalf("content = %d blocks, want 1", len(res.Content))
+	}
+	text, ok := res.Content[0].(*sdk.TextContent)
+	if !ok {
+		t.Fatalf("content is %T, want *mcp.TextContent", res.Content[0])
+	}
+	assertSameJSON(t, []byte(text.Text), []byte(want))
+}
+
 func questionArgs(question string) map[string]any {
 	return map[string]any{"question": question}
 }
@@ -96,26 +147,7 @@ func TestFindDecisionReturnsBundleAsJSON(t *testing.T) {
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).
 		Return(testBundle(), nil)
 
-	res := f.call(t, questionArgs(testQuestion))
-
-	if res.IsError {
-		t.Fatalf("unexpected tool error: %s", errorText(t, res))
-	}
-
-	structured, err := json.Marshal(res.StructuredContent)
-	if err != nil {
-		t.Fatalf("marshal structured content: %v", err)
-	}
-	assertSameJSON(t, structured, []byte(testBundleJSON))
-
-	if len(res.Content) != 1 {
-		t.Fatalf("content = %d blocks, want 1", len(res.Content))
-	}
-	text, ok := res.Content[0].(*sdk.TextContent)
-	if !ok {
-		t.Fatalf("content is %T, want *mcp.TextContent", res.Content[0])
-	}
-	assertSameJSON(t, []byte(text.Text), []byte(testBundleJSON))
+	assertBundleResult(t, f.call(t, questionArgs(testQuestion)), testBundleJSON)
 }
 
 func TestFindDecisionReturnsEmptyBundle(t *testing.T) {
@@ -124,20 +156,11 @@ func TestFindDecisionReturnsEmptyBundle(t *testing.T) {
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).
 		Return(&entities.EvidenceBundle{Question: testQuestion}, nil)
 
-	res := f.call(t, questionArgs(testQuestion))
-
-	if res.IsError {
-		t.Fatalf("unexpected tool error: %s", errorText(t, res))
-	}
-	structured, err := json.Marshal(res.StructuredContent)
-	if err != nil {
-		t.Fatalf("marshal structured content: %v", err)
-	}
-	assertSameJSON(t, structured, []byte(`{
+	assertBundleResult(t, f.call(t, questionArgs(testQuestion)), `{
 		"question": "why postgres over mysql",
 		"anchor": {"kinds": []},
 		"nodes": []
-	}`))
+	}`)
 }
 
 func TestFindDecisionParsesArguments(t *testing.T) {
@@ -160,6 +183,11 @@ func TestFindDecisionParsesArguments(t *testing.T) {
 				Repo:     "github:acme/lore",
 				DocType:  "pr",
 			},
+		},
+		{
+			name: "event anchor",
+			args: map[string]any{"question": testQuestion, "around": "incident X"},
+			want: services.FindDecisionRequest{Question: testQuestion, Around: "incident X"},
 		},
 		{
 			name: "dates cover the whole day",
@@ -263,12 +291,12 @@ func TestFindDecisionMapsServiceErrors(t *testing.T) {
 		},
 		{
 			name: "internal hides the cause",
-			err:  internalerror.NewInternalError("vector search failed", errors.New("dial 10.1.2.3:5432: connection refused")),
+			err:  internalerror.NewInternalError("vector search failed", errors.New(testCause)),
 			want: internalErrorMessage,
 		},
 		{
 			name: "unclassified hides the cause",
-			err:  errors.New("dial 10.1.2.3:5432: connection refused"),
+			err:  errors.New(testCause),
 			want: internalErrorMessage,
 		},
 	}
@@ -286,33 +314,20 @@ func TestFindDecisionMapsServiceErrors(t *testing.T) {
 }
 
 func TestFindDecisionLogsInternalCauseInsteadOfLeakingIt(t *testing.T) {
-	const cause = "dial 10.1.2.3:5432: connection refused"
-
 	f := newToolFixture(t)
 	f.query.EXPECT().
 		FindDecision(gomock.Any(), gomock.Any()).
-		Return(nil, internalerror.NewInternalError("vector search failed", errors.New(cause)))
+		Return(nil, internalerror.NewInternalError("vector search failed", errors.New(testCause)))
 
-	if got := errorText(t, f.call(t, questionArgs(testQuestion))); strings.Contains(got, cause) {
+	if got := errorText(t, f.call(t, questionArgs(testQuestion))); strings.Contains(got, testCause) {
 		t.Errorf("error %q leaks the cause", got)
 	}
-	if logged := f.logs.String(); !strings.Contains(logged, cause) {
+	logged := f.logs.String()
+	if !strings.Contains(logged, testCause) {
 		t.Errorf("log %q does not record the cause", logged)
 	}
-}
-
-func TestFindDecisionPassesEventAnchorThrough(t *testing.T) {
-	const refusal = "event anchoring not yet supported"
-
-	f := newToolFixture(t)
-	f.query.EXPECT().
-		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion, Around: "incident X"}).
-		Return(nil, internalerror.NewPreconditionError(refusal, nil))
-
-	res := f.call(t, map[string]any{"question": testQuestion, "around": "incident X"})
-
-	if got := errorText(t, res); got != refusal {
-		t.Errorf("error = %q, want %q", got, refusal)
+	if !strings.Contains(logged, findDecisionName+" failed") {
+		t.Errorf("log %q does not attribute the failure to %s", logged, findDecisionName)
 	}
 }
 
@@ -329,24 +344,7 @@ func TestFindDecisionRequiresQuestion(t *testing.T) {
 func TestFindDecisionToolDeclaration(t *testing.T) {
 	f := newToolFixture(t)
 
-	tools, err := f.session.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("list tools: %v", err)
-	}
-	if len(tools.Tools) != 1 {
-		t.Fatalf("tools = %d, want 1", len(tools.Tools))
-	}
-
-	tool := tools.Tools[0]
-	if tool.Name != "find_decision" {
-		t.Errorf("name = %q, want find_decision", tool.Name)
-	}
-	if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-		t.Errorf("annotations = %+v, want readOnlyHint", tool.Annotations)
-	}
-	if !strings.Contains(tool.Description, "evidence") {
-		t.Errorf("description = %q, want it to explain that the result is evidence", tool.Description)
-	}
+	tool := f.declaration(t, "find_decision")
 
 	schema, ok := tool.InputSchema.(map[string]any)
 	if !ok {

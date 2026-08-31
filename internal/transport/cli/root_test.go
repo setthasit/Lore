@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
+	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	mock_services "lore/internal/mocks/services"
 )
@@ -55,6 +57,73 @@ func mockQuery(t *testing.T) (*Runtime, *mock_services.MockQueryService) {
 
 	query := mock_services.NewMockQueryService(gomock.NewController(t))
 	return &Runtime{Query: query}, query
+}
+
+func mockTrace(t *testing.T) (*Runtime, *mock_services.MockTraceService) {
+	t.Helper()
+
+	trace := mock_services.NewMockTraceService(gomock.NewController(t))
+	return &Runtime{Trace: trace}, trace
+}
+
+func mockImpact(t *testing.T) (*Runtime, *mock_services.MockImpactService) {
+	t.Helper()
+
+	impact := mock_services.NewMockImpactService(gomock.NewController(t))
+	return &Runtime{Impact: impact}, impact
+}
+
+var (
+	anchorDoc = entities.DocumentMeta{
+		ID:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
+		Source:    "notion",
+		Type:      entities.DocTypePage,
+		Title:     "Storage design",
+		Author:    "arch@example.test",
+		URL:       "https://notion.so/design/storage",
+		CreatedAt: time.Date(2025, time.March, 10, 9, 30, 0, 0, time.UTC),
+	}
+	followUpDoc = entities.DocumentMeta{
+		ID:        entities.NewDocID("github", entities.DocTypePR, "12"),
+		Source:    "github",
+		Type:      entities.DocTypePR,
+		Title:     "Index on SQLite, not Postgres",
+		Author:    "dev@example.test",
+		URL:       "https://github.com/acme/lore/pull/12",
+		CreatedAt: time.Date(2025, time.March, 12, 14, 0, 0, 0, time.UTC),
+	}
+)
+
+func timelineBundle(question string) *entities.EvidenceBundle {
+	return &entities.EvidenceBundle{
+		Question: question,
+		Anchor:   documentAnchor(),
+		Nodes: []entities.EvidenceNode{{
+			Doc:     anchorDoc,
+			Excerpt: "postgres with pgvector was the alternative",
+			Role:    entities.RoleSeed,
+			Score:   1,
+		}, {
+			Doc:     followUpDoc,
+			Excerpt: "sqlite ships everywhere and needs no server",
+			Role:    entities.RoleFollowUp,
+			Score:   0.62,
+		}},
+		Chains: [][]entities.DocID{{anchorDoc.ID, followUpDoc.ID}},
+		Gaps:   []string{"trail ends at PROJ-4521; no linked follow-up"},
+	}
+}
+
+func documentAnchor() entities.Anchor {
+	return entities.Anchor{
+		Kind: entities.AnchorDocument,
+		Doc: &entities.DocRef{
+			ID:        anchorDoc.ID,
+			Title:     anchorDoc.Title,
+			URL:       anchorDoc.URL,
+			CreatedAt: anchorDoc.CreatedAt,
+		},
+	}
 }
 
 func TestReportMapsKindsToExitCodes(t *testing.T) {
@@ -125,13 +194,28 @@ func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 }
 
 func TestHelpSucceeds(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"ask", "--help"}, {"init", "--help"}} {
+	for _, args := range [][]string{
+		{"--help"}, {"ask", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
+	} {
 		res := run(t, nil, args...)
 		if res.exitCode != exitOK {
 			t.Errorf("%v: exit = %d, stderr = %q", args, res.exitCode, res.stderr)
 		}
 		if res.stdout == "" {
 			t.Errorf("%v: printed no help", args)
+		}
+	}
+}
+
+func TestRootHelpListsTheQueryCommands(t *testing.T) {
+	res := run(t, nil, "--help")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	for _, want := range []string{"ask", "trace", "impact"} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("help does not list %q\n--- help ---\n%s", want, res.stdout)
 		}
 	}
 }

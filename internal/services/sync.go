@@ -31,6 +31,7 @@ type syncOrchestrator struct {
 	connectors []entities.Connector
 	chunker    Chunker
 	emb        embedder.Embedder
+	links      LinkResolver
 	holder     string
 }
 
@@ -41,12 +42,14 @@ func NewSyncOrchestrator(
 	connectors []entities.Connector,
 	chunker Chunker,
 	emb embedder.Embedder,
+	links LinkResolver,
 ) SyncOrchestrator {
 	return &syncOrchestrator{
 		store:      store,
 		connectors: connectors,
 		chunker:    chunker,
 		emb:        emb,
+		links:      links,
 		holder:     leaseHolder(),
 	}
 }
@@ -82,7 +85,7 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) error {
 		}
 	}
 
-	return nil
+	return s.links.LinkPending(ctx)
 }
 
 func (s *syncOrchestrator) reconcileIdentity(ctx context.Context, opts SyncOptions) error {
@@ -189,7 +192,7 @@ func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch e
 		}
 	}
 
-	return nil
+	return s.links.Link(ctx, batch.Docs)
 }
 
 // A document that chunks to nothing still calls ReplaceChunks, or the previous edit's chunks stay retrievable.

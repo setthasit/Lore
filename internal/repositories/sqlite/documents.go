@@ -67,8 +67,12 @@ func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) e
 	return nil
 }
 
-const selectDocumentMetaSQL = `
-SELECT doc_id, source, type, title, author, url, created_at, updated_at
+const documentMetaColumns = `doc_id, source, type, title, author, url, created_at, updated_at`
+
+const documentColumns = documentMetaColumns + `, body, repo_ref`
+
+const selectDocumentsSQL = `
+SELECT %s
 FROM documents
 WHERE doc_id IN (%s)`
 
@@ -78,19 +82,45 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 		return nil, nil
 	}
 
+	rows, err := s.queryDocuments(ctx, documentMetaColumns, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanDocumentMetas(rows, len(ids))
+}
+
+func (s *Store) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows, err := s.queryDocuments(ctx, documentColumns, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanDocuments(rows, len(ids))
+}
+
+func (s *Store) queryDocuments(ctx context.Context, columns string, ids []entities.DocID) (*sql.Rows, error) {
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = string(id)
 	}
 
-	stmt := fmt.Sprintf(selectDocumentMetaSQL, placeholders(len(ids)))
-	rows, err := s.db.QueryContext(ctx, stmt, args...)
+	query := fmt.Sprintf(selectDocumentsSQL, columns, placeholders(len(ids)))
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
 	}
-	defer func() { _ = rows.Close() }()
+	return rows, nil
+}
 
-	metas := make([]entities.DocumentMeta, 0, len(ids))
+func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, error) {
+	metas := make([]entities.DocumentMeta, 0, sizeHint)
 	for rows.Next() {
 		var (
 			m         entities.DocumentMeta
@@ -107,18 +137,57 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 
 		m.ID = entities.DocID(docID)
 		m.Type = entities.DocType(docType)
-		if m.CreatedAt, err = parseTime(createdAt); err != nil {
-			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
-		}
-		if m.UpdatedAt, err = parseTime(updatedAt); err != nil {
-			return nil, fmt.Errorf("sqlite: document %q: %w", m.ID, err)
+		if m.CreatedAt, m.UpdatedAt, err = documentTimes(m.ID, createdAt, updatedAt); err != nil {
+			return nil, err
 		}
 		metas = append(metas, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite: read %d documents: %w", len(ids), err)
+		return nil, fmt.Errorf("sqlite: read document metas: %w", err)
 	}
 	return metas, nil
+}
+
+func scanDocuments(rows *sql.Rows, sizeHint int) ([]entities.Document, error) {
+	docs := make([]entities.Document, 0, sizeHint)
+	for rows.Next() {
+		var (
+			d         entities.Document
+			docID     string
+			docType   string
+			createdAt string
+			updatedAt string
+		)
+		err := rows.Scan(&docID, &d.Source, &docType, &d.Title,
+			&d.Author, &d.URL, &createdAt, &updatedAt, &d.Body, &d.RepoRef)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: scan document: %w", err)
+		}
+
+		d.ID = entities.DocID(docID)
+		d.Type = entities.DocType(docType)
+		if d.CreatedAt, d.UpdatedAt, err = documentTimes(d.ID, createdAt, updatedAt); err != nil {
+			return nil, err
+		}
+		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: read documents: %w", err)
+	}
+	return docs, nil
+}
+
+func documentTimes(id entities.DocID, createdAt, updatedAt string) (time.Time, time.Time, error) {
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sqlite: document %q: %w", id, err)
+	}
+
+	updated, err := parseTime(updatedAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("sqlite: document %q: %w", id, err)
+	}
+	return created, updated, nil
 }
 
 // Only the marker count reaches the SQL text; every value stays bound.
@@ -321,16 +390,20 @@ func externalID(id entities.DocID) string {
 	return rest
 }
 
-// Lowercased so a prefix lookup does not depend on how a source cased its hex.
-// Empty for every document type but commits.
+// Connectors build a commit external key as "<owner>/<repo>/commit/<oid>", so the
+// SHA is its trailing segment; lowercased so a lookup does not depend on casing.
 func shaPrefix(t entities.DocType, externalKey string) string {
 	if t != entities.DocTypeCommit {
 		return ""
 	}
-	if len(externalKey) > shaPrefixLen {
-		externalKey = externalKey[:shaPrefixLen]
+	sha := externalKey[strings.LastIndexByte(externalKey, '/')+1:]
+	if len(sha) < minSHARefLen || !isHexString(sha) {
+		return ""
 	}
-	return strings.ToLower(externalKey)
+	if len(sha) > shaPrefixLen {
+		sha = sha[:shaPrefixLen]
+	}
+	return strings.ToLower(sha)
 }
 
 func formatTime(t time.Time) string {

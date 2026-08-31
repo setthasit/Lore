@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -338,6 +339,52 @@ func TestDocumentsByID(t *testing.T) {
 	}
 	if metas != nil {
 		t.Errorf("DocumentsByID(nil) = %+v, want nil", metas)
+	}
+}
+
+func TestDocumentsWithBody(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	created := time.Date(2025, 7, 4, 10, 30, 0, 0, time.UTC)
+	doc := entities.Document{
+		ID:        entities.NewDocID("github", entities.DocTypePR, "acme/lore/pull/12"),
+		Source:    "github",
+		Type:      entities.DocTypePR,
+		RepoRef:   "github:acme/lore",
+		Title:     "Resolve refs after the batch commits",
+		Body:      "Supersedes #4.\nCloses acme/lore#9.",
+		Author:    "author@example.test",
+		URL:       "https://github.com/acme/lore/pull/12",
+		CreatedAt: created,
+		UpdatedAt: created.Add(time.Hour),
+		Refs:      []entities.RawRef{{Kind: entities.RefKindPRNumber, Value: "acme/lore#9"}},
+	}
+	if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+
+	ids := []entities.DocID{doc.ID, "github:pr:acme/lore/pull/999"}
+	docs, err := s.DocumentsWithBody(ctx, ids)
+	if err != nil {
+		t.Fatalf("DocumentsWithBody: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("DocumentsWithBody returned %d documents, want only the stored one", len(docs))
+	}
+
+	want := doc
+	want.Refs = nil
+	if got := docs[0]; !reflect.DeepEqual(got, want) {
+		t.Errorf("DocumentsWithBody = %+v, want %+v", got, want)
+	}
+
+	docs, err = s.DocumentsWithBody(ctx, nil)
+	if err != nil {
+		t.Fatalf("DocumentsWithBody (empty): %v", err)
+	}
+	if docs != nil {
+		t.Errorf("DocumentsWithBody(nil) = %+v, want nil", docs)
 	}
 }
 

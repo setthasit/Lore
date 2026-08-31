@@ -35,6 +35,7 @@ type syncMocks struct {
 	store   *mock_repositories.MockIndexStore
 	chunker *mock_services.MockChunker
 	emb     *mock_embedder.MockEmbedder
+	links   *mock_services.MockLinkResolver
 }
 
 func newSyncMocks(t *testing.T) syncMocks {
@@ -47,6 +48,7 @@ func newSyncMocks(t *testing.T) syncMocks {
 		store:   mock_repositories.NewMockIndexStore(ctrl),
 		chunker: mock_services.NewMockChunker(ctrl),
 		emb:     mock_embedder.NewMockEmbedder(ctrl),
+		links:   mock_services.NewMockLinkResolver(ctrl),
 	}
 }
 
@@ -67,8 +69,16 @@ func (m syncMocks) connector(name string) *mock_entities.MockConnector {
 	return conn
 }
 
+func (m syncMocks) linkedBatches(n int) {
+	m.links.EXPECT().Link(gomock.Any(), gomock.Any()).Times(n).Return(nil)
+}
+
+func (m syncMocks) linkedPending() {
+	m.links.EXPECT().LinkPending(gomock.Any()).Return(nil)
+}
+
 func (m syncMocks) orchestrator(connectors ...entities.Connector) services.SyncOrchestrator {
-	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb)
+	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb, m.links)
 }
 
 type syncStreamItem struct {
@@ -166,8 +176,10 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 		m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, texts...)),
 		m.emb.EXPECT().Embed(gomock.Any(), texts).Return(vectors, nil),
 		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, stored).Return(nil),
+		m.links.EXPECT().Link(gomock.Any(), []entities.Document{doc}).Return(nil),
 		m.store.EXPECT().SetCursor(gomock.Any(), "github", next).Return(nil),
 		m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil),
+		m.links.EXPECT().LinkPending(gomock.Any()).Return(nil),
 	)
 
 	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
@@ -296,6 +308,7 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
 	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
+	m.linkedBatches(1)
 
 	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 	assertSyncKind(t, err, internalerror.KindInternal)
@@ -343,6 +356,7 @@ func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
 			m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 			m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
 			m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(tt.heartbeat)
+			m.linkedBatches(1)
 
 			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 			assertSyncKind(t, err, tt.want)
@@ -406,6 +420,8 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 	)
 
+	m.linkedPending()
+
 	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
@@ -444,6 +460,8 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil),
 			)
+
+			m.linkedPending()
 
 			err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{Reembed: true})
 			if err != nil {
@@ -525,6 +543,8 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", ghCursor).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "notion", noCursor).Return(nil)
 	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Times(2).Return(nil)
+	m.linkedBatches(2)
+	m.linkedPending()
 
 	if err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
@@ -552,6 +572,8 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
 	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
+	m.linkedBatches(1)
+	m.linkedPending()
 
 	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
@@ -579,6 +601,8 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", entities.Cursor{"page": "1"}).Return(nil)
+	m.linkedBatches(1)
+	m.linkedPending()
 
 	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
@@ -591,6 +615,7 @@ func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 	m := newSyncMocks(t)
 	m.heldLease()
 	m.matchingIdentity()
+	m.linkedPending()
 
 	if err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
