@@ -1,0 +1,67 @@
+{
+  "isLast": true,
+  "issues": [
+    {
+      "key": "PROJ-123",
+      "fields": {
+        "summary": "Decide the queue backpressure policy",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "heading",
+              "attrs": { "level": 2 },
+              "content": [{ "type": "text", "text": "Options" }]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [{ "type": "text", "text": "Drop on overflow" }]
+                    }
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        { "type": "text", "text": "Block the producer, as PROJ-101 asked" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "inlineCard",
+                  "attrs": { "url": "https://www.notion.so/acme/Backpressure-9c4d" }
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2024-05-02T13:20:00.000+0000",
+        "updated": "2024-05-03T12:00:00.500+0000",
+        "reporter": { "displayName": "Alan Turing", "accountId": "557058:0003" }
+      }
+    },
+    {
+      "key": "INFRA-7",
+      "fields": {
+        "summary": "Provision the retry queue",
+        "created": "2024-05-04T07:00:00.000+0000",
+        "updated": "2024-05-04T08:00:00.000+0000"
+      }
+    }
+  ]
+}

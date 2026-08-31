@@ -1,0 +1,18 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "codeBlock",
+      "attrs": {
+        "language": "go"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "if err != nil {\n\treturn err\n}"
+        }
+      ]
+    }
+  ]
+}
