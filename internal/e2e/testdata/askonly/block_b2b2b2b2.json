@@ -1,0 +1,23 @@
+{
+  "object": "block",
+  "id": "b2b2b2b2-0000-4000-8000-000000000002",
+  "type": "toggle",
+  "has_children": true,
+  "parent": {
+    "type": "page_id",
+    "page_id": "a1a1a1a1-0000-4000-8000-000000000001"
+  },
+  "toggle": {
+    "rich_text": [
+      {
+        "type": "text",
+        "plain_text": "Subsystems",
+        "href": null,
+        "text": {
+          "content": "Subsystems",
+          "link": null
+        }
+      }
+    ]
+  }
+}
