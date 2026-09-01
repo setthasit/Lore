@@ -251,7 +251,8 @@ func newIndexedWorkspace(
 		trace:  services.NewTraceService(store),
 		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
-		why:    services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
+		// Every e2e corpus is a source-only workspace: no clone is ever registered.
+		why: services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, nil),
 	}
 }
 
