@@ -49,10 +49,12 @@ var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedd
 
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
+	newCodeRepos,
 	newQueryService,
 	newWhyService,
 	services.NewTraceService,
 	newImpactService,
+	services.NewHistoryService,
 	services.NewLinkResolver,
 	services.NewSyncOrchestrator,
 	services.NewStatusService,
@@ -189,7 +191,7 @@ func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg 
 	})
 }
 
-func newWhyService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.WhyService {
+func newCodeRepos(cfg *config.Config) []services.CodeRepo {
 	repos := make([]services.CodeRepo, 0, len(cfg.Repos))
 	for _, repo := range cfg.Repos {
 		repos = append(repos, services.CodeRepo{
@@ -199,6 +201,15 @@ func newWhyService(store repositories.IndexStore, emb embedder.Embedder, cfg *co
 		})
 	}
 
+	return repos
+}
+
+func newWhyService(
+	store repositories.IndexStore,
+	emb embedder.Embedder,
+	cfg *config.Config,
+	repos []services.CodeRepo,
+) services.WhyService {
 	return services.NewWhyService(store, emb, services.QueryConfig{
 		TopK:        cfg.Query.TopK,
 		WalkDepth:   cfg.Query.WalkDepth,
