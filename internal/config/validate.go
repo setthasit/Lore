@@ -61,7 +61,8 @@ func (c *Config) validateSources() error {
 	return nil
 }
 
-// An unmatched repos[].remote is a StartupWarnings entry, not an error.
+// A clone whose remote matches no configured source repo is a startup warning,
+// not an error.
 func (c *Config) validateRepos() error {
 	for i := range c.Repos {
 		path := c.Repos[i].Path
