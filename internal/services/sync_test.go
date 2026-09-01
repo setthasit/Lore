@@ -3,7 +3,6 @@ package services_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 	"os"
 	"strconv"
@@ -19,7 +18,6 @@ import (
 	mock_entities "lore/internal/mocks/entities"
 	mock_repositories "lore/internal/mocks/repositories"
 	mock_services "lore/internal/mocks/services"
-	"lore/internal/repositories"
 	"lore/internal/services"
 )
 
@@ -193,7 +191,6 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, stored).Return(nil),
 		m.links.EXPECT().Link(gomock.Any(), []entities.Document{doc}).Return(nil),
 		m.store.EXPECT().SetCursor(gomock.Any(), "github", next).Return(nil),
-		m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil),
 		m.links.EXPECT().LinkPending(gomock.Any()).Return(nil),
 	)
 
@@ -207,7 +204,6 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 
 	doc := syncDoc("github:pr:1")
 	committed := entities.Cursor{"updated_at": "1"}
-	chunks := syncChunks(doc.ID, "only chunk")
 
 	tests := []struct {
 		name      string
@@ -248,7 +244,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
-				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "only chunk"))
 				m.emb.EXPECT().Embed(gomock.Any(), []string{"only chunk"}).Return(nil, errSyncStore)
 			},
 			want:      internalerror.KindInternal,
@@ -272,7 +268,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
-				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "only chunk"))
 				m.emb.EXPECT().Embed(gomock.Any(), gomock.Any()).Return([][]float32{{0.1}}, nil)
 				m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, gomock.Any()).Return(errSyncStore)
 			},
@@ -322,7 +318,6 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.linkedBatches(1)
 
 	_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
@@ -330,56 +325,6 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 
 	if stream.yields != 2 {
 		t.Errorf("connector yielded %d items, want 2 — the round must abandon the stream, not drain it", stream.yields)
-	}
-}
-
-func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		heartbeat error
-		want      internalerror.Kind
-	}{
-		{
-			name:      "the lease was taken over",
-			heartbeat: fmt.Errorf("sqlite: sync lease is not held by %q: %w", "daemon/1", repositories.ErrLeaseLost),
-			want:      internalerror.KindPrecondition,
-		},
-		{
-			name:      "the store could not be reached",
-			heartbeat: errSyncStore,
-			want:      internalerror.KindInternal,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			m := newSyncMocks(t)
-			m.acquiredLease()
-			m.matchingIdentity()
-
-			first := entities.Cursor{"page": "1"}
-			stream := newSyncStream(syncBatch(first), syncBatch(entities.Cursor{"page": "2"}))
-
-			conn := m.connector("github")
-			conn.EXPECT().Changes(gomock.Any(), nil).Return(stream.seq())
-
-			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
-			m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
-			m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
-			m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(tt.heartbeat)
-			m.linkedBatches(1)
-
-			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-			assertSyncKind(t, err, tt.want)
-
-			if stream.yields != 1 {
-				t.Errorf("connector yielded %d items, want 1 — a round whose heartbeat failed must stop", stream.yields)
-			}
-		})
 	}
 }
 
@@ -640,7 +585,6 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	}
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", ghCursor).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "notion", noCursor).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Times(2).Return(nil)
 	m.linkedBatches(2)
 	m.linkedPending()
 
@@ -669,7 +613,6 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	// No Embed is declared: an empty chunk set must not cost an embedding call.
 	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.linkedBatches(1)
 	m.linkedPending()
 
@@ -687,7 +630,6 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	m.matchingIdentity()
 	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), want).Return(true, nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), want).Return(nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
 
 	conn := m.connector("github")

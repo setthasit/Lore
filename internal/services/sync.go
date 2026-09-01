@@ -42,6 +42,7 @@ type syncOrchestrator struct {
 	emb        embedder.Embedder
 	links      LinkResolver
 	holder     string
+	heartbeat  time.Duration
 }
 
 var _ SyncOrchestrator = (*syncOrchestrator)(nil)
@@ -60,6 +61,7 @@ func NewSyncOrchestrator(
 		emb:        emb,
 		links:      links,
 		holder:     leaseHolder(),
+		heartbeat:  heartbeatInterval,
 	}
 }
 
@@ -84,21 +86,83 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 	}
 	defer func() { _ = s.store.ReleaseLease(context.WithoutCancel(ctx), s.holder) }()
 
-	if err := s.reconcileIdentity(ctx, opts); err != nil {
-		return SyncResult{}, err
+	round, abort := context.WithCancelCause(ctx)
+	stopped := make(chan struct{})
+	defer func() { <-stopped }()
+	defer abort(nil)
+
+	go func() {
+		defer close(stopped)
+
+		if lost := heartbeatLease(round, s.store, s.holder, s.heartbeat); lost != nil {
+			abort(lost)
+		}
+	}()
+
+	if err := s.reconcileIdentity(round, opts); err != nil {
+		return SyncResult{}, roundFailure(round, err)
 	}
 
 	for _, conn := range s.connectors {
-		if err := s.syncConnector(ctx, conn); err != nil {
-			return SyncResult{}, err
+		if err := s.syncConnector(round, conn); err != nil {
+			return SyncResult{}, roundFailure(round, err)
 		}
 	}
 
-	if err := s.links.LinkPending(ctx); err != nil {
-		return SyncResult{}, err
+	if err := s.links.LinkPending(round); err != nil {
+		return SyncResult{}, roundFailure(round, err)
 	}
 
 	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+}
+
+const (
+	heartbeatInterval = 15 * time.Second
+
+	// Ticks a transient store failure may burn before the round stops; a lost lease never waits.
+	heartbeatGrace = 2
+)
+
+func heartbeatLease(ctx context.Context, store repositories.IndexStore, holder string, interval time.Duration) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// A store this round cannot reach is only fatal once the lease is a tick away from being takeable.
+	budget := min(interval*heartbeatGrace, repositories.LeaseTTL-interval)
+	held := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			err := store.HeartbeatLease(ctx, holder)
+			switch {
+			case ctx.Err() != nil:
+				return nil
+			case err == nil:
+				held = time.Now()
+			case errors.Is(err, repositories.ErrLeaseLost):
+				return internalerror.NewPreconditionError(
+					"the workspace sync lease is no longer held by this round — another process took it over; retry later",
+					err)
+			case time.Since(held) >= budget:
+				return internalerror.NewInternalError(
+					"could not heartbeat the workspace sync lease", err)
+			}
+		}
+	}
+}
+
+// A failed heartbeat cancels the round, so it outranks the context error whichever
+// store call was in flight reported. Callers must ask before the round's own cancel runs.
+func roundFailure(round context.Context, err error) error {
+	cause := context.Cause(round)
+	if cause == nil || errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return err
+	}
+
+	return cause
 }
 
 func (s *syncOrchestrator) tookOver(previous *entities.LeaseState) *entities.LeaseState {
@@ -173,8 +237,6 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 	return nil
 }
 
-// The lease is heartbeated once per batch, so a batch outliving repositories.LeaseTTL
-// lets another process take it over; this round learns to stop from its next heartbeat.
 func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Connector) error {
 	name := conn.Name()
 
@@ -197,17 +259,6 @@ func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Conn
 		if err := s.store.SetCursor(ctx, name, batch.Cursor); err != nil {
 			return internalerror.NewInternalError(
 				fmt.Sprintf("could not checkpoint the %s sync cursor", name), err)
-		}
-
-		if err := s.store.HeartbeatLease(ctx, s.holder); err != nil {
-			if errors.Is(err, repositories.ErrLeaseLost) {
-				return internalerror.NewPreconditionError(
-					"the workspace sync lease is no longer held by this round — another process took it over; retry later",
-					err)
-			}
-
-			return internalerror.NewInternalError(
-				"could not heartbeat the workspace sync lease", err)
 		}
 	}
 
