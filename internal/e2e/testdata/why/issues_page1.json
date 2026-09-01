@@ -1,0 +1,32 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 88,
+            "title": "Ingest stalls while one worker holds the writer",
+            "body": "Ingest went quiet for forty minutes on the second. Nothing was lost, but nothing moved either.\n\nEvery worker opens a writer of its own, so the workers spend the stall waiting on each other. Whichever one is holding the writer eventually runs out of patience and drops its batch, and the next worker inherits the same wait.\n\nWhat we want instead is for a worker to learn that ingest is behind while it can still hold on to the batch.\n",
+            "url": "https://github.example/acme/lore/issues/88",
+            "createdAt": "2024-05-02T07:30:00Z",
+            "updatedAt": "2024-05-02T07:30:00Z",
+            "author": {
+              "login": "reporter"
+            },
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}

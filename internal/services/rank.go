@@ -124,6 +124,34 @@ func (s *nodeSet) add(node entities.EvidenceNode) {
 	s.nodes = append(s.nodes, node)
 }
 
+// A path whose end document is not indexed yields no node.
+func (s *nodeSet) addWalked(walked walkResult, role func(entities.DocType) string) {
+	for _, path := range walked.Paths {
+		meta, indexed := walked.Metas[lastNode(path)]
+		if !indexed {
+			continue
+		}
+		s.add(entities.EvidenceNode{
+			Doc:   meta,
+			Role:  role(meta.Type),
+			Score: defaultRankWeights.proximity(len(path.Edges)) * path.Confidence,
+			Via:   path.Edges,
+		})
+	}
+}
+
+func (s *nodeSet) addMatches(matches []seedHit) {
+	relevance := scaledRelevance(matches)
+	for _, match := range matches {
+		s.add(entities.EvidenceNode{
+			Doc:     match.Meta,
+			Excerpt: match.Excerpt,
+			Role:    entities.RoleSemanticMatch,
+			Score:   relevance.of(match.Meta.ID),
+		})
+	}
+}
+
 func (w rankWeights) proximity(hops int) float32 {
 	decay := float32(1)
 	for range hops {
@@ -362,11 +390,15 @@ func standaloneSeedGaps(nodes []entities.EvidenceNode, chains [][]entities.DocID
 
 	var gaps []string
 	for _, node := range nodes {
-		if node.Role != entities.RoleSeed || linked[node.Doc.ID] {
+		if !seedRole(node.Role) || linked[node.Doc.ID] {
 			continue
 		}
 		gaps = append(gaps, fmt.Sprintf("%s (%s) stands alone; no linked discussion", node.Doc.Title, node.Doc.ID))
 	}
 
 	return gaps
+}
+
+func seedRole(role string) bool {
+	return role == entities.RoleSeed || role == entities.RoleBlamedCommit
 }

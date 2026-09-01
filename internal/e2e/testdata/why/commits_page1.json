@@ -1,0 +1,62 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": {
+        "target": {
+          "history": {
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "oid": "FOLLOWUP_SHA",
+                "url": "https://github.example/acme/lore/commit/FOLLOWUP_SHA",
+                "messageHeadline": "Rename the writer's closed sentinel",
+                "message": "Rename the writer's closed sentinel\n\nThe old name read as if the queue had closed, when what has gone away\nis the writer behind it.\nFollows up ANCHOR_SHA.\n",
+                "committedDate": "2024-05-08T10:20:00Z",
+                "authoredDate": "2024-05-08T10:00:00Z",
+                "changedFilesIfAvailable": 1,
+                "author": {
+                  "name": "Grace Hopper",
+                  "user": {
+                    "login": "grace"
+                  }
+                },
+                "associatedPullRequests": {
+                  "nodes": [
+                    {
+                      "number": 91
+                    }
+                  ]
+                }
+              },
+              {
+                "oid": "ANCHOR_SHA",
+                "url": "https://github.example/acme/lore/commit/ANCHOR_SHA",
+                "messageHeadline": "Put a bounded queue in front of the ingest writer",
+                "message": "Put a bounded queue in front of the ingest writer\n\nEnqueue hands its batch to the queue instead of opening a writer\nconnection of its own, so a full queue reaches the worker as a slow\nsend rather than as a timeout.\n",
+                "committedDate": "2024-05-06T09:10:00Z",
+                "authoredDate": "2024-05-06T09:00:00Z",
+                "changedFilesIfAvailable": 1,
+                "author": {
+                  "name": "Ada Lovelace",
+                  "user": {
+                    "login": "ada"
+                  }
+                },
+                "associatedPullRequests": {
+                  "nodes": [
+                    {
+                      "number": 91
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

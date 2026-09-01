@@ -6,6 +6,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"lore/internal/entities"
 	"lore/internal/services"
 )
 
@@ -100,6 +101,36 @@ func TestWhySendsTheParsedSpanToTheService(t *testing.T) {
 	}
 }
 
+func TestWhyPrintsTheAnchoredSpanAndItsBlamedCommits(t *testing.T) {
+	bundle := timelineBundle("why " + whyFile)
+	bundle.Anchor = entities.Anchor{
+		Kind: entities.AnchorCodeSpan,
+		Code: &entities.CodeAnchor{
+			Repo:      "github:acme/lore",
+			File:      whyFile,
+			LineStart: 10,
+			LineEnd:   13,
+			BlamedSHAs: []string{
+				"1111111111111111111111111111111111111111",
+				"2222222222222222222222222222222222222222",
+			},
+		},
+	}
+
+	rt, why := mockWhy(t)
+	why.EXPECT().Why(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	res := run(t, rt, "why", whyFile+":10-13")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	want := "anchor: github:acme/lore " + whyFile + ":10-13\n        blamed 111111111111, 222222222222\n"
+	if !strings.Contains(res.stdout, want) {
+		t.Errorf("output is missing %q\n--- output ---\n%s", want, res.stdout)
+	}
+}
+
 func TestWhySendsASingleLineWithoutAnEnd(t *testing.T) {
 	rt, why := mockWhy(t)
 	why.EXPECT().
@@ -128,7 +159,7 @@ func TestWhyRejectsAMalformedSpanWithoutOpeningTheWorkspace(t *testing.T) {
 }
 
 func TestWhyRefusesAnAskOnlyWorkspace(t *testing.T) {
-	rt := &Runtime{Why: services.NewWhyService(nil)}
+	rt := &Runtime{Why: services.NewWhyService(nil, nil, services.QueryConfig{}, nil)}
 
 	res := run(t, rt, "why", whyFile+":10-20")
 

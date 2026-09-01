@@ -71,13 +71,13 @@ const (
 func askOnlyWorkspace(ctx context.Context, t *testing.T) *workspace {
 	t.Helper()
 
-	api := newFixtureAPI(t, askOnlyFixtures, askOnlyHost)
+	api := newFixtureAPI(t, corpusDir(askOnlyFixtures), askOnlyHost)
 	api.listen(api.serveAskOnly)
 
 	w := newIndexedWorkspace(t, api, []entities.Connector{
 		notion.NewConnector(askOnlyNotionToken, []string{notionRootPageID}, api.server.URL),
 		jira.NewConnector(api.server.URL, askOnlyJiraEmail, askOnlyJiraToken, askOnlyProjects()),
-	})
+	}, nil)
 	w.sync(ctx, t, askOnlyFixtures)
 
 	if stats := w.stats(ctx, t); stats.Documents != askOnlyDocuments {
@@ -281,8 +281,8 @@ func TestAskOnlyWhyRefusesForWantOfACodeAnchor(t *testing.T) {
 	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 		t.Fatalf("why error kind = %s, want %s (error %v)", got, internalerror.KindPrecondition, err)
 	}
-	if want := "no repositories registered — code anchoring disabled for this workspace"; err.Error() != want {
-		t.Errorf("why error = %q, want %q", err, want)
+	if err.Error() != codeAnchorRefusal {
+		t.Errorf("why error = %q, want %q", err, codeAnchorRefusal)
 	}
 }
 

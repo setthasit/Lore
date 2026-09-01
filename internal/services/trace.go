@@ -121,18 +121,7 @@ func traceNodes(anchor entities.DocumentMeta, body string, walked walkResult) []
 	collected := newNodeSet(len(walked.Paths) + 1)
 	collected.add(entities.EvidenceNode{Doc: anchor, Excerpt: body, Role: entities.RoleSeed, Score: 1})
 
-	for _, path := range walked.Paths {
-		meta, indexed := walked.Metas[lastNode(path)]
-		if !indexed {
-			continue
-		}
-		collected.add(entities.EvidenceNode{
-			Doc:   meta,
-			Role:  graphRole(meta.Type),
-			Score: defaultRankWeights.proximity(len(path.Edges)) * path.Confidence,
-			Via:   path.Edges,
-		})
-	}
+	collected.addWalked(walked, graphRole)
 	slices.SortFunc(collected.nodes, byChronology)
 
 	return collected.nodes

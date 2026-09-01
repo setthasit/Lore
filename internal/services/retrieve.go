@@ -3,11 +3,14 @@ package services
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 
 	"lore/internal/connectors/embedder"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 )
+
+const anchorExcerptChars = 500
 
 type searchSource interface {
 	SearchLexical(ctx context.Context, query string, f entities.Filters, k int) ([]entities.ChunkHit, error)
@@ -82,4 +85,17 @@ func liftDocuments(ctx context.Context, s documentSource, fused []fusedChunk) ([
 	}
 
 	return seeds, nil
+}
+
+func anchorExcerpt(body string) string {
+	if len(body) <= anchorExcerptChars {
+		return body
+	}
+
+	cut := anchorExcerptChars
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+
+	return body[:cut]
 }
