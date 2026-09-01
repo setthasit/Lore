@@ -2,15 +2,18 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
 
+	"lore/internal/config"
 	"lore/internal/di"
 	"lore/internal/services"
 )
 
 type Runtime struct {
+	Config *config.Config
 	Query  services.QueryService
 	Why    services.WhyService
 	Trace  services.TraceService
@@ -27,7 +30,7 @@ func resolveWithFX(ctx context.Context, configPath string) (*Runtime, func() err
 	app := fx.New(
 		fx.NopLogger,
 		di.Workspace(configPath),
-		fx.Populate(&rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.Sync, &rt.Status),
+		fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.Sync, &rt.Status),
 	)
 	if err := app.Err(); err != nil {
 		return nil, nil, err
@@ -45,6 +48,10 @@ func withRuntime(cmd *cobra.Command, resolve Resolver, configPath string, run fu
 	if err != nil {
 		return err
 	}
+	for _, warning := range rt.Config.StartupWarnings() {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+warning)
+	}
+
 	if err := run(rt); err != nil {
 		_ = stop()
 		return err

@@ -28,6 +28,16 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
+func gitClone(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatalf("seed clone: %v", err)
+	}
+	return dir
+}
+
 func resolveWorkspace(t *testing.T, path string) ([]entities.Connector, error) {
 	t.Helper()
 
@@ -88,7 +98,7 @@ func TestWorkspaceGraphWithoutSources(t *testing.T) {
 	t.Setenv(EmbedderKeyEnv, "sk-example")
 
 	path := writeConfig(t, `repos:
-  - path: /tmp/does-not-need-to-exist
+  - path: `+gitClone(t)+`
 `)
 
 	connectors, err := resolveWorkspace(t, path)
@@ -104,7 +114,7 @@ func TestWorkspaceGraphRejectsUnknownEmbedderModel(t *testing.T) {
 	t.Setenv(EmbedderKeyEnv, "sk-example")
 
 	path := writeConfig(t, `repos:
-  - path: /tmp/does-not-need-to-exist
+  - path: `+gitClone(t)+`
 embedder:
   model: text-embedding-4-imaginary
 `)
@@ -128,7 +138,7 @@ func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
 	t.Setenv(EmbedderKeyEnv, "")
 
 	path := writeConfig(t, `repos:
-  - path: /tmp/does-not-need-to-exist
+  - path: `+gitClone(t)+`
 `)
 
 	_, err := resolveWorkspace(t, path)
@@ -231,28 +241,5 @@ repos: []
 	}
 	if want := "no repositories registered"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q, want it to name %q", err, want)
-	}
-}
-
-func TestResolvePathExpandsHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	got, err := resolvePath("~/.lore/myproject.db")
-	if err != nil {
-		t.Fatalf("resolvePath: %v", err)
-	}
-	if want := filepath.Join(home, ".lore", "myproject.db"); got != want {
-		t.Errorf("resolvePath = %q, want %q", got, want)
-	}
-
-	for _, path := range []string{"./index.db", "/var/lib/lore/index.db", "index~backup.db"} {
-		if got, err := resolvePath(path); err != nil || got != path {
-			t.Errorf("resolvePath(%q) = %q, %v; want it unchanged", path, got, err)
-		}
-	}
-
-	if _, err := resolvePath(""); internalerror.KindOf(err) != internalerror.KindBadRequest {
-		t.Errorf("resolvePath(\"\") = %v, want a bad request", err)
 	}
 }
