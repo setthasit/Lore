@@ -1,0 +1,64 @@
+{
+  "object": "list",
+  "results": [
+    {
+      "object": "block",
+      "id": "e5000004-0000-4000-8000-000000000004",
+      "type": "bulleted_list_item",
+      "has_children": false,
+      "bulleted_list_item": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Option A shards the shared lock per tenant and stays rejected.",
+            "href": null,
+            "text": {
+              "content": "Option A shards the shared lock per tenant and stays rejected.",
+              "link": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "e5000005-0000-4000-8000-000000000005",
+      "type": "bulleted_list_item",
+      "has_children": false,
+      "bulleted_list_item": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Option B serializes every checkout write behind one owning writer.",
+            "href": null,
+            "text": {
+              "content": "Option B serializes every checkout write behind one owning writer.",
+              "link": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "e5000006-0000-4000-8000-000000000006",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Written four days after the stall, once the timeline was reconstructed.",
+            "href": null,
+            "text": {
+              "content": "Written four days after the stall, once the timeline was reconstructed.",
+              "link": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}

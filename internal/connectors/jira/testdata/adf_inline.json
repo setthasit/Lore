@@ -1,0 +1,60 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "inlineCard",
+          "attrs": {
+            "url": "https://example.invalid/card"
+          }
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "type": "mention",
+          "attrs": {
+            "id": "557058:0000",
+            "text": "@Ada Lovelace"
+          }
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "type": "emoji",
+          "attrs": {
+            "shortName": ":thumbsup:",
+            "id": "1f44d"
+          }
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "type": "status",
+          "attrs": {
+            "text": "IN PROGRESS",
+            "color": "yellow"
+          }
+        },
+        {
+          "type": "text",
+          "text": " due "
+        },
+        {
+          "type": "date",
+          "attrs": {
+            "timestamp": "1714694400000"
+          }
+        }
+      ]
+    }
+  ]
+}

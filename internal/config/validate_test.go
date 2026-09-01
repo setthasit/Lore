@@ -86,6 +86,41 @@ repos: []
 			},
 		},
 		{
+			name: "an ask-only workspace with jira and notion but no github validates",
+			yaml: `
+workspace: asksources
+sources:
+  notion:
+    token_env: LORE_NOTION_TOKEN
+    root_pages: ["Engineering Wiki"]
+  jira:
+    base_url: https://acme.atlassian.net
+    email_env: LORE_JIRA_EMAIL
+    token_env: LORE_JIRA_TOKEN
+    projects: [PROJ]
+repos: []
+`,
+			env: map[string]string{
+				"LORE_NOTION_TOKEN": "notion-fake-value",
+				"LORE_JIRA_EMAIL":   "someone@example.test",
+				"LORE_JIRA_TOKEN":   "jira-fake-value",
+			},
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Sources.GitHub != nil {
+					t.Errorf("sources.github = %+v, want none", cfg.Sources.GitHub)
+				}
+				if cfg.Sources.Notion == nil || cfg.Sources.Jira == nil {
+					t.Fatalf("sources = %+v, want notion and jira", cfg.Sources)
+				}
+				if got := cfg.Sources.Jira.Projects; len(got) != 1 || got[0] != "PROJ" {
+					t.Errorf("jira projects = %v", got)
+				}
+				if len(cfg.Repos) != 0 {
+					t.Fatalf("Repos = %v, want none", cfg.Repos)
+				}
+			},
+		},
+		{
 			name: "local clones without any source are valid",
 			yaml: `
 workspace: clonesonly
@@ -148,6 +183,57 @@ sources:
 `,
 			env:     map[string]string{"LORE_JIRA_EMAIL": "someone@example.test", "LORE_JIRA_TOKEN": "jira-fake-value"},
 			wantErr: "sources.jira.base_url must be set",
+		},
+		{
+			name: "jira email_env naming an unset variable is rejected by name",
+			yaml: `
+workspace: unsetemail
+sources:
+  jira:
+    base_url: https://acme.atlassian.net
+    email_env: LORE_JIRA_EMAIL
+    token_env: LORE_JIRA_TOKEN
+`,
+			env:     map[string]string{"LORE_JIRA_EMAIL": "", "LORE_JIRA_TOKEN": "jira-fake-value"},
+			wantErr: "sources.jira.email_env names LORE_JIRA_EMAIL, but that environment variable is not set",
+		},
+		{
+			name: "jira with a blank email_env is rejected",
+			yaml: `
+workspace: blankemail
+sources:
+  jira:
+    base_url: https://acme.atlassian.net
+    email_env: ""
+    token_env: LORE_JIRA_TOKEN
+`,
+			env:     map[string]string{"LORE_JIRA_TOKEN": "jira-fake-value"},
+			wantErr: "sources.jira.email_env must name an environment variable",
+		},
+		{
+			name: "jira with an empty base_url is rejected",
+			yaml: `
+workspace: emptybaseurl
+sources:
+  jira:
+    base_url: ""
+    email_env: LORE_JIRA_EMAIL
+    token_env: LORE_JIRA_TOKEN
+`,
+			env:     map[string]string{"LORE_JIRA_EMAIL": "someone@example.test", "LORE_JIRA_TOKEN": "jira-fake-value"},
+			wantErr: "sources.jira.base_url must be set",
+		},
+		{
+			name: "notion token_env naming an unset variable is rejected by name",
+			yaml: `
+workspace: unsetnotion
+sources:
+  notion:
+    token_env: LORE_NOTION_TOKEN
+    root_pages: ["Engineering Wiki"]
+`,
+			env:     map[string]string{"LORE_NOTION_TOKEN": ""},
+			wantErr: "sources.notion.token_env names LORE_NOTION_TOKEN, but that environment variable is not set",
 		},
 		{
 			name: "llm api key env must exist when named",

@@ -23,6 +23,7 @@ const internalErrorMessage = "internal error: see the lore server log for detail
 
 type Services struct {
 	Query  services.QueryService
+	Why    services.WhyService
 	Trace  services.TraceService
 	Impact services.ImpactService
 }
@@ -35,6 +36,7 @@ func Serve(ctx context.Context, svc Services) error {
 func newServer(svc Services, log *slog.Logger) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: serverName, Version: serverVersion}, nil)
 	registerFindDecision(server, svc.Query, log)
+	registerWhy(server, svc.Why, log)
 	registerTrace(server, svc.Trace, log)
 	registerImpactOf(server, svc.Impact, log)
 

@@ -1,0 +1,57 @@
+{
+  "isLast": false,
+  "nextPageToken": "CAEaAmVu",
+  "issues": [
+    {
+      "key": "PROJ-101",
+      "fields": {
+        "summary": "Auth timeout on cold start",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Retries hammer the gateway; see " },
+                {
+                  "type": "text",
+                  "text": "the rollout note",
+                  "marks": [
+                    {
+                      "type": "link",
+                      "attrs": { "href": "https://www.notion.so/acme/Rollout-Note-4f21" }
+                    }
+                  ]
+                },
+                { "type": "text", "text": " and INFRA-7 for the queue side." }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Tracked under PROJ-101; the fix lands in internal/auth/auth.go."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2024-04-28T08:05:00.000+0000",
+        "updated": "2024-05-01T09:30:00.000+0000",
+        "reporter": { "displayName": "Ada Lovelace", "accountId": "557058:0001" }
+      }
+    },
+    {
+      "key": "PROJ-102",
+      "fields": {
+        "summary": "Document the retry budget",
+        "description": null,
+        "created": "2024-04-30T10:00:00.000+0000",
+        "updated": "2024-05-02T11:15:00.000+0000",
+        "reporter": { "displayName": "Grace Hopper", "accountId": "557058:0002" }
+      }
+    }
+  ]
+}

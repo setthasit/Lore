@@ -1,0 +1,26 @@
+{
+  "object": "list",
+  "results": [
+    {
+      "object": "block",
+      "id": "b6000001-0000-4000-8000-000000000001",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Campaign calendar for the next quarter.",
+            "href": null,
+            "text": {
+              "content": "Campaign calendar for the next quarter.",
+              "link": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}

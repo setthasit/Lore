@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lore/internal/connectors/refscan"
 	"lore/internal/entities"
 )
 
@@ -255,19 +256,19 @@ func (c *Connector) commitUnit(ctx context.Context, r repo, n *commitNode) (unit
 	doc.URL = n.URL
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.AuthoredDate, n.CommittedDate)
 
-	var refs refSet
+	var refs refscan.Set
 	for _, pr := range n.AssociatedPullRequests.Nodes {
-		refs.add(entities.RefKindPRNumber, r.numberRef(pr.Number))
+		refs.Add(entities.RefKindPRNumber, r.numberRef(pr.Number))
 	}
 	if n.touchesFiles() {
 		paths, err := c.client.commitFiles(ctx, r, n.OID)
 		if err != nil {
 			return unit{}, fmt.Errorf("commit %s: %w", n.OID, err)
 		}
-		refs.addAll(entities.RefKindFilePath, paths)
+		refs.AddAll(entities.RefKindFilePath, paths)
 	}
-	refs.addText(r, n.Message)
-	doc.Refs = refs.slice()
+	addTextRefs(&refs, r, n.Message)
+	doc.Refs = refs.Refs()
 
 	return unit{
 		key:         unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID},
@@ -285,18 +286,18 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 	doc.URL = n.URL
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
-	var refs refSet
+	var refs refscan.Set
 	for _, issue := range n.ClosingIssuesReferences.Nodes {
-		refs.add(entities.RefKindPRNumber, r.numberRef(issue.Number))
+		refs.Add(entities.RefKindPRNumber, r.numberRef(issue.Number))
 	}
 	oids, err := c.client.commitOIDs(ctx, r, n.Number, n.Commits)
 	if err != nil {
 		return unit{}, err
 	}
-	refs.addAll(entities.RefKindCommitSHA, oids)
+	refs.AddAll(entities.RefKindCommitSHA, oids)
 	// The head branch name carries ticket keys ("feature/PROJ-123-retry").
-	refs.addText(r, n.Title+"\n"+n.Body+"\n"+n.HeadRefName)
-	doc.Refs = refs.slice()
+	addTextRefs(&refs, r, n.Title+"\n"+n.Body+"\n"+n.HeadRefName)
+	doc.Refs = refs.Refs()
 
 	reviews, err := c.client.reviews(ctx, r, n.Number, n.Reviews)
 	if err != nil {
@@ -322,10 +323,10 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 	doc.URL = rv.URL
 	doc.CreatedAt, doc.UpdatedAt = timestamps(rv.CreatedAt, rv.UpdatedAt)
 
-	var refs refSet
-	refs.add(entities.RefKindPRNumber, r.numberRef(number))
-	refs.addText(r, rv.Body)
-	doc.Refs = refs.slice()
+	var refs refscan.Set
+	refs.Add(entities.RefKindPRNumber, r.numberRef(number))
+	addTextRefs(&refs, r, rv.Body)
+	doc.Refs = refs.Refs()
 
 	comments, err := c.client.reviewComments(ctx, rv.ID, rv.Comments)
 	if err != nil {
@@ -342,11 +343,11 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 		cdoc.URL = cm.URL
 		cdoc.CreatedAt, cdoc.UpdatedAt = timestamps(cm.CreatedAt, cm.UpdatedAt)
 
-		var crefs refSet
-		crefs.add(entities.RefKindFilePath, cm.Path)
-		crefs.add(entities.RefKindPRNumber, r.numberRef(number))
-		crefs.addText(r, cm.Body)
-		cdoc.Refs = crefs.slice()
+		var crefs refscan.Set
+		crefs.Add(entities.RefKindFilePath, cm.Path)
+		crefs.Add(entities.RefKindPRNumber, r.numberRef(number))
+		addTextRefs(&crefs, r, cm.Body)
+		cdoc.Refs = crefs.Refs()
 
 		docs = append(docs, cdoc)
 	}
@@ -362,9 +363,9 @@ func (c *Connector) issueUnit(ctx context.Context, r repo, n *issueNode) (unit, 
 	doc.URL = n.URL
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
-	var refs refSet
-	refs.addText(r, n.Title+"\n"+n.Body)
-	doc.Refs = refs.slice()
+	var refs refscan.Set
+	addTextRefs(&refs, r, n.Title+"\n"+n.Body)
+	doc.Refs = refs.Refs()
 
 	comments, err := c.client.issueComments(ctx, r, n.Number, n.Comments)
 	if err != nil {
@@ -381,10 +382,10 @@ func (c *Connector) issueUnit(ctx context.Context, r repo, n *issueNode) (unit, 
 		cdoc.URL = cm.URL
 		cdoc.CreatedAt, cdoc.UpdatedAt = timestamps(cm.CreatedAt, cm.UpdatedAt)
 
-		var crefs refSet
-		crefs.add(entities.RefKindPRNumber, r.numberRef(n.Number))
-		crefs.addText(r, cm.Body)
-		cdoc.Refs = crefs.slice()
+		var crefs refscan.Set
+		crefs.Add(entities.RefKindPRNumber, r.numberRef(n.Number))
+		addTextRefs(&crefs, r, cm.Body)
+		cdoc.Refs = crefs.Refs()
 
 		docs = append(docs, cdoc)
 	}
@@ -434,74 +435,25 @@ func reviewCommentTitle(r repo, number int, path string) string {
 	return title + " (" + path + ")"
 }
 
-var (
-	ticketKeyPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
-
-	// Bracketing characters stay out of the match so a markdown link yields a bare URL.
-	urlPattern = regexp.MustCompile(`https?://[^\s<>()\[\]{}"'` + "`" + `]+`)
-
-	// crossRefPattern matches "#123" and "owner/repo#123".
-	crossRefPattern = regexp.MustCompile(`(?:([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*))?#(\d+)`)
-
-	// commitSHAPattern matches abbreviated and full lowercase hex SHAs.
-	commitSHAPattern = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
-)
-
-// urlTrailing is punctuation that ends a sentence rather than a URL.
-const urlTrailing = ".,;:!?"
-
-// refSet drops duplicates while keeping first-seen order. Explicit API relations are
-// added before text matches, so the resolver sees the authoritative form first.
-type refSet struct {
-	seen map[entities.RawRef]struct{}
-	refs []entities.RawRef
-}
-
-func (s *refSet) add(kind entities.RefKind, value string) {
-	if value == "" {
-		return
-	}
-	ref := entities.RawRef{Kind: kind, Value: value}
-	if _, ok := s.seen[ref]; ok {
-		return
-	}
-	if s.seen == nil {
-		s.seen = make(map[entities.RawRef]struct{}, 8)
-	}
-	s.seen[ref] = struct{}{}
-	s.refs = append(s.refs, ref)
-}
-
-func (s *refSet) addAll(kind entities.RefKind, values []string) {
-	for _, v := range values {
-		s.add(kind, v)
-	}
-}
+// crossRefPattern matches "#123" and "owner/repo#123".
+var crossRefPattern = regexp.MustCompile(`(?:([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*))?#(\d+)`)
 
 // Precision is the resolver's problem: an unresolvable match never becomes an edge.
-func (s *refSet) addText(r repo, text string) {
+func addTextRefs(s *refscan.Set, r repo, text string) {
 	if text == "" {
 		return
 	}
-	for _, m := range ticketKeyPattern.FindAllString(text, -1) {
-		s.add(entities.RefKindTicketKey, m)
-	}
-	for _, m := range urlPattern.FindAllString(text, -1) {
-		s.add(entities.RefKindURL, strings.TrimRight(m, urlTrailing))
-	}
+	s.AddTicketKeys(text)
+	s.AddURLs(text)
 	for _, m := range crossRefPattern.FindAllStringSubmatch(text, -1) {
 		slug := m[1]
 		if slug == "" {
 			slug = r.slug
 		}
-		s.add(entities.RefKindPRNumber, slug+"#"+m[2])
+		s.Add(entities.RefKindPRNumber, slug+"#"+m[2])
 	}
-	for _, m := range commitSHAPattern.FindAllString(text, -1) {
-		s.add(entities.RefKindCommitSHA, m)
-	}
+	s.AddCommitSHAs(text)
 }
-
-func (s *refSet) slice() []entities.RawRef { return s.refs }
 
 // A malformed watermark is an error rather than a silent full re-backfill.
 func readCursor(c entities.Cursor, r repo) (unitKey, error) {

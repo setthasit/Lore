@@ -1,0 +1,23 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "panel",
+      "attrs": {
+        "panelType": "warning"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Do not retry blindly."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

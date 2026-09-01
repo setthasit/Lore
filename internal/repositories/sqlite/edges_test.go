@@ -94,31 +94,38 @@ func TestNeighborsHonorsDirectionAndKind(t *testing.T) {
 	}
 }
 
-func TestUpsertEdgesKeepsTheFirstConfidence(t *testing.T) {
-	s := openTestStore(t)
+func TestUpsertEdgesKeepsTheHighestConfidence(t *testing.T) {
 	ctx := context.Background()
 
-	edge := entities.Edge{
+	strong := entities.Edge{
 		Src:        entities.NewDocID("notion", entities.DocTypePage, "design/retrieval"),
 		Dst:        entities.NewDocID("github", entities.DocTypeCommit, "acme/lore/commit/bbbbbbbbbbbb"),
 		Kind:       entities.EdgeKindMentionsCommit,
 		Confidence: 0.9,
 	}
-	if err := s.UpsertEdges(ctx, []entities.Edge{edge}); err != nil {
-		t.Fatalf("UpsertEdges: %v", err)
-	}
+	weak := strong
+	weak.Confidence = 0.5
 
-	weaker := edge
-	weaker.Confidence = 0.5
-	if err := s.UpsertEdges(ctx, []entities.Edge{weaker}); err != nil {
-		t.Fatalf("UpsertEdges (again): %v", err)
+	orders := map[string][]entities.Edge{
+		"strong first": {strong, weak},
+		"weak first":   {weak, strong},
 	}
+	for name, order := range orders {
+		t.Run(name, func(t *testing.T) {
+			s := openTestStore(t)
+			for _, e := range order {
+				if err := s.UpsertEdges(ctx, []entities.Edge{e}); err != nil {
+					t.Fatalf("UpsertEdges: %v", err)
+				}
+			}
 
-	got, err := s.Neighbors(ctx, []entities.DocID{edge.Src}, nil, entities.DirOut)
-	if err != nil {
-		t.Fatalf("Neighbors: %v", err)
+			got, err := s.Neighbors(ctx, []entities.DocID{strong.Src}, nil, entities.DirOut)
+			if err != nil {
+				t.Fatalf("Neighbors: %v", err)
+			}
+			assertEdges(t, got, []entities.Edge{strong})
+		})
 	}
-	assertEdges(t, got, []entities.Edge{edge})
 }
 
 func TestPendingRefsSurviveUpsertAndTargetedDelete(t *testing.T) {

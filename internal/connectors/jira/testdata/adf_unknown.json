@@ -1,0 +1,36 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "mediaSingle",
+      "attrs": {
+        "layout": "center"
+      },
+      "content": [
+        {
+          "type": "media",
+          "attrs": {
+            "id": "0000",
+            "type": "file"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "diagram.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "After the media."
+        }
+      ]
+    }
+  ]
+}

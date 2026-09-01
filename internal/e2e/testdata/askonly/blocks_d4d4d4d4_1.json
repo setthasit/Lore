@@ -1,0 +1,75 @@
+{
+  "object": "list",
+  "results": [
+    {
+      "object": "block",
+      "id": "e5000001-0000-4000-8000-000000000001",
+      "type": "heading_2",
+      "has_children": false,
+      "heading_2": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "Decision",
+            "href": null,
+            "text": {
+              "content": "Decision",
+              "link": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "e5000002-0000-4000-8000-000000000002",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "We choose option B over option A: every checkout write goes through one owning writer.",
+            "href": null,
+            "text": {
+              "content": "We choose option B over option A: every checkout write goes through one owning writer.",
+              "link": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "e5000003-0000-4000-8000-000000000003",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "plain_text": "The trigger was INC-201, the checkout write stall. Ticket: ",
+            "href": null,
+            "text": {
+              "content": "The trigger was INC-201, the checkout write stall. Ticket: ",
+              "link": null
+            }
+          },
+          {
+            "type": "text",
+            "plain_text": "INC-201",
+            "href": "https://jira.example/browse/INC-201",
+            "text": {
+              "content": "INC-201",
+              "link": {
+                "url": "https://jira.example/browse/INC-201"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "next_cursor": "decision-body-2",
+  "has_more": true
+}

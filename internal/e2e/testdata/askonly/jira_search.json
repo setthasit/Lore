@@ -1,0 +1,146 @@
+{
+  "isLast": true,
+  "nextPageToken": "",
+  "issues": [
+    {
+      "key": "INC-201",
+      "fields": {
+        "summary": "Incident X: checkout writes stalled behind the shared lock",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Incident X opened when every checkout write queued behind one shared row lock and write latency passed thirty seconds."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Incident X is the trigger for the write path review; the shared lock is the contended resource in every proposal."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2024-06-03T09:15:00.000+0000",
+        "updated": "2024-06-04T07:00:00.000+0000",
+        "reporter": { "displayName": "Ada Lovelace", "accountId": "557058:0001" }
+      }
+    },
+    {
+      "key": "ARCH-88",
+      "fields": {
+        "summary": "Option A versus option B for the checkout write path",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "INC-201 forced a choice between two options for the checkout write path."
+                }
+              ]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Option A shards the shared lock per tenant, which keeps writes parallel and needs no new component."
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Option B routes every checkout write through one owning writer, which costs throughput but removes contention."
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Option A is rejected: a hot tenant still puts two writers on one row and would reproduce INC-201."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2024-06-05T10:00:00.000+0000",
+        "updated": "2024-06-06T16:20:00.000+0000",
+        "reporter": { "displayName": "Grace Hopper", "accountId": "557058:0002" }
+      }
+    },
+    {
+      "key": "OPS-410",
+      "fields": {
+        "summary": "Extend the owning writer to the refunds path",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                { "type": "text", "text": "Follow-up to " },
+                {
+                  "type": "text",
+                  "text": "the decision page",
+                  "marks": [
+                    {
+                      "type": "link",
+                      "attrs": { "href": "https://www.notion.so/acme/Adopt-Option-B-d4d4d4d4" }
+                    }
+                  ]
+                },
+                { "type": "text", "text": ", which covers the checkout path only." }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Refunds still take the shared lock, so the owning writer has to cover them as well."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2024-06-19T08:30:00.000+0000",
+        "updated": "2024-06-20T11:45:00.000+0000",
+        "reporter": { "displayName": "Katherine Johnson", "accountId": "557058:0003" }
+      }
+    }
+  ]
+}

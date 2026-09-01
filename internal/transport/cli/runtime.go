@@ -12,6 +12,7 @@ import (
 
 type Runtime struct {
 	Query  services.QueryService
+	Why    services.WhyService
 	Trace  services.TraceService
 	Impact services.ImpactService
 	Sync   services.SyncOrchestrator
@@ -26,7 +27,7 @@ func resolveWithFX(ctx context.Context, configPath string) (*Runtime, func() err
 	app := fx.New(
 		fx.NopLogger,
 		di.Workspace(configPath),
-		fx.Populate(&rt.Query, &rt.Trace, &rt.Impact, &rt.Sync, &rt.Status),
+		fx.Populate(&rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.Sync, &rt.Status),
 	)
 	if err := app.Err(); err != nil {
 		return nil, nil, err

@@ -1,0 +1,29 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "blockquote",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "We tried this in 2023."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "It regressed."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

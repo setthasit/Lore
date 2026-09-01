@@ -105,6 +105,7 @@ const (
 type fixtureAPI struct {
 	t      *testing.T
 	dir    string
+	host   string
 	server *httptest.Server
 
 	mu    sync.Mutex
@@ -112,13 +113,17 @@ type fixtureAPI struct {
 }
 
 // An empty dir reads testdata itself, so corpora nest without moving the first one.
-func newFixtureAPI(t *testing.T, dir string) *fixtureAPI {
+// host is the placeholder each corpus writes for its own API root.
+func newFixtureAPI(t *testing.T, dir, host string) *fixtureAPI {
 	t.Helper()
 
-	api := &fixtureAPI{t: t, dir: dir, calls: make(map[string]int)}
-	api.server = httptest.NewServer(http.HandlerFunc(api.serve))
-	t.Cleanup(api.server.Close)
-	return api
+	return &fixtureAPI{t: t, dir: dir, host: host, calls: make(map[string]int)}
+}
+
+// The route closes over the api, so the server cannot be built by the constructor.
+func (a *fixtureAPI) listen(route http.HandlerFunc) {
+	a.server = httptest.NewServer(route)
+	a.t.Cleanup(a.server.Close)
 }
 
 func (a *fixtureAPI) serve(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +176,7 @@ func (a *fixtureAPI) write(w http.ResponseWriter, name string) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	rewritten := strings.ReplaceAll(string(body), fixtureHost, a.server.URL)
+	rewritten := strings.ReplaceAll(string(body), a.host, a.server.URL)
 	if _, err := w.Write([]byte(rewritten)); err != nil {
 		a.t.Errorf("write fixture %s: %v", name, err)
 	}
@@ -202,12 +207,22 @@ type workspace struct {
 	trace  services.TraceService
 	impact services.ImpactService
 	status services.StatusService
+	why    services.WhyService
 }
 
 func newWorkspace(t *testing.T, fixtures string) *workspace {
 	t.Helper()
 
-	api := newFixtureAPI(t, fixtures)
+	api := newFixtureAPI(t, fixtures, fixtureHost)
+	api.listen(api.serve)
+
+	return newIndexedWorkspace(t, api, []entities.Connector{
+		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
+	})
+}
+
+func newIndexedWorkspace(t *testing.T, api *fixtureAPI, connectors []entities.Connector) *workspace {
+	t.Helper()
 
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "workspace.db"), fakeDims)
 	if err != nil {
@@ -220,9 +235,6 @@ func newWorkspace(t *testing.T, fixtures string) *workspace {
 	})
 
 	emb := fakeEmbedder{}
-	connectors := []entities.Connector{
-		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
-	}
 
 	return &workspace{
 		api:    api,
@@ -231,6 +243,8 @@ func newWorkspace(t *testing.T, fixtures string) *workspace {
 		trace:  services.NewTraceService(store),
 		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
+		// Every e2e corpus is a source-only workspace: no clone is ever registered.
+		why: services.NewWhyService(nil),
 	}
 }
 

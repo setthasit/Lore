@@ -32,6 +32,12 @@ type result struct {
 func run(t *testing.T, rt *Runtime, args ...string) result {
 	t.Helper()
 
+	return runWithInput(t, rt, "", args...)
+}
+
+func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) result {
+	t.Helper()
+
 	var out, errOut bytes.Buffer
 	res := result{}
 
@@ -40,6 +46,7 @@ func run(t *testing.T, rt *Runtime, args ...string) result {
 	}
 
 	root := newRootCommand(resolve)
+	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs(args)
@@ -57,6 +64,13 @@ func mockQuery(t *testing.T) (*Runtime, *mock_services.MockQueryService) {
 
 	query := mock_services.NewMockQueryService(gomock.NewController(t))
 	return &Runtime{Query: query}, query
+}
+
+func mockWhy(t *testing.T) (*Runtime, *mock_services.MockWhyService) {
+	t.Helper()
+
+	why := mock_services.NewMockWhyService(gomock.NewController(t))
+	return &Runtime{Why: why}, why
 }
 
 func mockTrace(t *testing.T) (*Runtime, *mock_services.MockTraceService) {
@@ -195,7 +209,7 @@ func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 
 func TestHelpSucceeds(t *testing.T) {
 	for _, args := range [][]string{
-		{"--help"}, {"ask", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
+		{"--help"}, {"ask", "--help"}, {"why", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
 	} {
 		res := run(t, nil, args...)
 		if res.exitCode != exitOK {
@@ -213,7 +227,7 @@ func TestRootHelpListsTheQueryCommands(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	for _, want := range []string{"ask", "trace", "impact"} {
+	for _, want := range []string{"ask", "why", "trace", "impact"} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("help does not list %q\n--- help ---\n%s", want, res.stdout)
 		}

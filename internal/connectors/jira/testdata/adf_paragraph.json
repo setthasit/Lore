@@ -1,0 +1,38 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "See "
+        },
+        {
+          "type": "text",
+          "text": "the ADR",
+          "marks": [
+            {
+              "type": "link",
+              "attrs": {
+                "href": "https://example.invalid/adr-7"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " first."
+        },
+        {
+          "type": "hardBreak"
+        },
+        {
+          "type": "text",
+          "text": "Then ship."
+        }
+      ]
+    }
+  ]
+}

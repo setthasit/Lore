@@ -15,6 +15,8 @@ import (
 	"lore/internal/connectors/embedder"
 	"lore/internal/connectors/embedder/openai"
 	"lore/internal/connectors/github"
+	"lore/internal/connectors/jira"
+	"lore/internal/connectors/notion"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/repositories"
@@ -47,6 +49,7 @@ var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedd
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
 	newQueryService,
+	newWhyService,
 	services.NewTraceService,
 	newImpactService,
 	services.NewLinkResolver,
@@ -100,19 +103,27 @@ func newConnectors(cfg *config.Config) ([]entities.Connector, error) {
 		connectors = append(connectors, github.NewConnector(token, gh.Repos, ""))
 	}
 
-	// A configured source this build has no connector for is refused, not ignored.
-	if cfg.Sources.Notion != nil {
-		return nil, unbuiltSource("notion")
+	if n := cfg.Sources.Notion; n != nil {
+		token, err := envValue("sources.notion.token_env", n.TokenEnv)
+		if err != nil {
+			return nil, err
+		}
+		connectors = append(connectors, notion.NewConnector(token, n.RootPages, ""))
 	}
-	if cfg.Sources.Jira != nil {
-		return nil, unbuiltSource("jira")
+
+	if j := cfg.Sources.Jira; j != nil {
+		email, err := envValue("sources.jira.email_env", j.EmailEnv)
+		if err != nil {
+			return nil, err
+		}
+		token, err := envValue("sources.jira.token_env", j.TokenEnv)
+		if err != nil {
+			return nil, err
+		}
+		connectors = append(connectors, jira.NewConnector(j.BaseURL, email, token, j.Projects))
 	}
 
 	return connectors, nil
-}
-
-func unbuiltSource(name string) error {
-	return internalerror.NewPreconditionError("sources."+name+" is configured, but this build has no "+name+" connector — remove the source or upgrade lore", nil)
 }
 
 func envValue(field, name string) (string, error) {
@@ -194,4 +205,13 @@ func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg 
 		WalkDepth:   cfg.Query.WalkDepth,
 		EventWindow: time.Duration(cfg.Query.EventWindow),
 	})
+}
+
+func newWhyService(cfg *config.Config) services.WhyService {
+	repos := make([]services.CodeRepo, 0, len(cfg.Repos))
+	for _, repo := range cfg.Repos {
+		repos = append(repos, services.CodeRepo{Path: repo.Path, Remote: repo.Remote})
+	}
+
+	return services.NewWhyService(repos)
 }
