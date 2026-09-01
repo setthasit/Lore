@@ -14,6 +14,9 @@ import (
 
 const dateLayout = "2006-01-02"
 
+// Matches the width the service abbreviates SHAs to in gap text.
+const blamedSHAChars = 12
+
 type bundleView int
 
 const (
@@ -49,6 +52,14 @@ func indent(text, pad string) string {
 	return strings.Join(lines, "\n")
 }
 
+func shortSHAs(shas []string) string {
+	short := make([]string, len(shas))
+	for i, sha := range shas {
+		short[i] = sha[:min(len(sha), blamedSHAChars)]
+	}
+	return strings.Join(short, ", ")
+}
+
 func writeJSON(w io.Writer, bundle *entities.EvidenceBundle) error {
 	encoded, err := mcp.EncodeBundle(bundle)
 	if err != nil {
@@ -71,6 +82,12 @@ func emitBundle(w io.Writer, bundle *entities.EvidenceBundle, raw bool, view bun
 
 func renderBundle(w io.Writer, bundle *entities.EvidenceBundle, view bundleView) {
 	printfln(w, "%s", bundle.Question)
+	if code := bundle.Anchor.Code; code != nil {
+		printfln(w, "anchor: %s %s:%d-%d", code.Repo, code.File, code.LineStart, code.LineEnd)
+		if len(code.BlamedSHAs) > 0 {
+			printfln(w, "        blamed %s", shortSHAs(code.BlamedSHAs))
+		}
+	}
 	if doc := bundle.Anchor.Doc; doc != nil {
 		printfln(w, "anchor: %s", doc.Title)
 		printfln(w, "        %s", doc.URL)

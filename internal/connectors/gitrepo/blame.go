@@ -47,12 +47,13 @@ func parseBlamePorcelain(out string) ([]BlameSpan, error) {
 		var text string
 		text, rest, _ = strings.Cut(rest, "\n")
 
-		if strings.HasPrefix(text, "\t") {
+		if content, isContent := strings.CutPrefix(text, "\t"); isContent {
 			if sha == "" {
 				return nil, fmt.Errorf("git blame porcelain: content line %q precedes any commit header", text)
 			}
 			if n := len(spans) - 1; n >= 0 && spans[n].SHA == sha && spans[n].LineEnd+1 == line {
 				spans[n].LineEnd = line
+				spans[n].Lines = append(spans[n].Lines, content)
 				continue
 			}
 			spans = append(spans, BlameSpan{
@@ -61,6 +62,7 @@ func parseBlamePorcelain(out string) ([]BlameSpan, error) {
 				LineEnd:   line,
 				Author:    meta[sha].author,
 				Time:      meta[sha].time,
+				Lines:     []string{content},
 			})
 			continue
 		}

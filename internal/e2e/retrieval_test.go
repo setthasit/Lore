@@ -244,7 +244,7 @@ func newIndexedWorkspace(t *testing.T, api *fixtureAPI, connectors []entities.Co
 		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
 		status: services.NewStatusService(store),
 		// Every e2e corpus is a source-only workspace: no clone is ever registered.
-		why: services.NewWhyService(nil),
+		why: services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, nil),
 	}
 }
 

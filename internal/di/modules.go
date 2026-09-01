@@ -15,6 +15,7 @@ import (
 	"lore/internal/connectors/embedder"
 	"lore/internal/connectors/embedder/openai"
 	"lore/internal/connectors/github"
+	"lore/internal/connectors/gitrepo"
 	"lore/internal/connectors/jira"
 	"lore/internal/connectors/notion"
 	"lore/internal/entities"
@@ -188,11 +189,19 @@ func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg 
 	})
 }
 
-func newWhyService(cfg *config.Config) services.WhyService {
+func newWhyService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.WhyService {
 	repos := make([]services.CodeRepo, 0, len(cfg.Repos))
 	for _, repo := range cfg.Repos {
-		repos = append(repos, services.CodeRepo{Path: repo.Path, Remote: repo.Remote})
+		repos = append(repos, services.CodeRepo{
+			Path:   repo.Path,
+			Remote: repo.Remote,
+			Git:    gitrepo.New(repo.Path),
+		})
 	}
 
-	return services.NewWhyService(repos)
+	return services.NewWhyService(store, emb, services.QueryConfig{
+		TopK:        cfg.Query.TopK,
+		WalkDepth:   cfg.Query.WalkDepth,
+		EventWindow: time.Duration(cfg.Query.EventWindow),
+	}, repos)
 }

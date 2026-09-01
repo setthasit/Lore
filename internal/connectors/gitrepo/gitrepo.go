@@ -25,13 +25,15 @@ type GitRepo interface {
 	HasFileAtHEAD(ctx context.Context, path string) (bool, error)
 }
 
-// Lines are 1-based and inclusive; Time is the author time in UTC.
+// LineStart and LineEnd are 1-based and inclusive; Time is the author time in
+// UTC. Lines is the blamed source text, one entry per line in span order.
 type BlameSpan struct {
 	SHA       string
 	LineStart int
 	LineEnd   int
 	Author    string
 	Time      time.Time
+	Lines     []string
 }
 
 // Time is the author time in UTC.

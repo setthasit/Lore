@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"lore/internal/connectors/embedder"
 	"lore/internal/entities"
@@ -22,8 +21,6 @@ type ImpactRequest struct {
 	Ref      string // a resolvable ref, or free text interpreted by retrieval
 	Question string
 }
-
-const anchorExcerptChars = 500
 
 type impactService struct {
 	store repositories.IndexStore
@@ -63,7 +60,7 @@ func (s *impactService) ImpactOf(ctx context.Context, req ImpactRequest) (*entit
 	}
 
 	question := impactQuestionOf(req.Question, anchor.meta.Title)
-	excerpt := impactAnchorExcerpt(anchor.body)
+	excerpt := anchorExcerpt(anchor.body)
 	matches, err := s.impactMatches(ctx, impactRetrievalText(question, excerpt), at)
 	if err != nil {
 		return nil, err
@@ -186,19 +183,6 @@ func impactRetrievalText(question, excerpt string) string {
 	return question + "\n\n" + excerpt
 }
 
-func impactAnchorExcerpt(body string) string {
-	if len(body) <= anchorExcerptChars {
-		return body
-	}
-
-	cut := anchorExcerptChars
-	for cut > 0 && !utf8.RuneStart(body[cut]) {
-		cut--
-	}
-
-	return body[:cut]
-}
-
 func impactNodes(
 	anchor entities.DocumentMeta,
 	excerpt string,
@@ -208,31 +192,16 @@ func impactNodes(
 	collected := newNodeSet(1 + len(walked.Paths) + len(matches))
 	collected.add(entities.EvidenceNode{Doc: anchor, Excerpt: excerpt, Role: entities.RoleSeed, Score: 1})
 
-	for _, path := range walked.Paths {
-		meta, indexed := walked.Metas[lastNode(path)]
-		if !indexed {
-			continue
-		}
-		collected.add(entities.EvidenceNode{
-			Doc:   meta,
-			Role:  entities.RoleFollowUp,
-			Score: defaultRankWeights.proximity(len(path.Edges)) * path.Confidence,
-			Via:   path.Edges,
-		})
-	}
-
-	relevance := scaledRelevance(matches)
-	for _, match := range matches {
-		collected.add(entities.EvidenceNode{
-			Doc:     match.Meta,
-			Excerpt: match.Excerpt,
-			Role:    entities.RoleSemanticMatch,
-			Score:   relevance.of(match.Meta.ID),
-		})
-	}
+	collected.addWalked(walked, followUpRole)
+	collected.addMatches(matches)
 	slices.SortFunc(collected.nodes, byChronology)
 
 	return collected.nodes
+}
+
+// impact_of reports every reached document as a consequence, whatever its type.
+func followUpRole(entities.DocType) string {
+	return entities.RoleFollowUp
 }
 
 func impactGaps(nodes []entities.EvidenceNode, chains [][]entities.DocID, at time.Time) []string {

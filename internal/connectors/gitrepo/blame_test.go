@@ -2,6 +2,7 @@ package gitrepo
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func assertSpans(t *testing.T, got, want []BlameSpan) {
 	for i, w := range want {
 		g := got[i]
 		if g.SHA != w.SHA || g.LineStart != w.LineStart || g.LineEnd != w.LineEnd ||
-			g.Author != w.Author || !g.Time.Equal(w.Time) {
+			g.Author != w.Author || !g.Time.Equal(w.Time) || !slices.Equal(g.Lines, w.Lines) {
 			t.Errorf("span %d\n got %+v\nwant %+v", i, g, w)
 		}
 	}
@@ -46,9 +47,9 @@ func TestBlameCollapsesRunsAndReusesCachedMetadata(t *testing.T) {
 		t.Fatalf("Blame: %v", err)
 	}
 	assertSpans(t, got, []BlameSpan{
-		{SHA: shaA, LineStart: 1, LineEnd: 2, Author: authorAda, Time: addedTime},
-		{SHA: shaB, LineStart: 3, LineEnd: 4, Author: authorGrace, Time: editedTime},
-		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: addedTime},
+		{SHA: shaA, LineStart: 1, LineEnd: 2, Author: authorAda, Time: addedTime, Lines: []string{"a1", "a2"}},
+		{SHA: shaB, LineStart: 3, LineEnd: 4, Author: authorGrace, Time: editedTime, Lines: []string{"b3", "b4"}},
+		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: addedTime, Lines: []string{"a5", "a6"}},
 	})
 }
 
@@ -60,7 +61,7 @@ func TestBlameSingleLine(t *testing.T) {
 		t.Fatalf("Blame: %v", err)
 	}
 	assertSpans(t, got, []BlameSpan{
-		{SHA: shaB, LineStart: 3, LineEnd: 3, Author: authorGrace, Time: mustTime(t, editedAt)},
+		{SHA: shaB, LineStart: 3, LineEnd: 3, Author: authorGrace, Time: mustTime(t, editedAt), Lines: []string{"b3"}},
 	})
 }
 
@@ -72,7 +73,7 @@ func TestBlameClampsEndBeyondLastLine(t *testing.T) {
 		t.Fatalf("Blame: %v", err)
 	}
 	assertSpans(t, got, []BlameSpan{
-		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: mustTime(t, addedAt)},
+		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a5", "a6"}},
 	})
 }
 
@@ -123,7 +124,7 @@ func TestBlamePinsHEADOverADirtyWorkingTree(t *testing.T) {
 		t.Fatalf("Blame: %v", err)
 	}
 	assertSpans(t, got, []BlameSpan{
-		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt)},
+		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a1", "a2", "a3"}},
 	})
 }
 
@@ -149,8 +150,23 @@ func TestBlameParsesSHA256ObjectNames(t *testing.T) {
 		t.Fatalf("Blame: %v", err)
 	}
 	assertSpans(t, got, []BlameSpan{
-		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt)},
+		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a1", "a2", "a3"}},
 	})
+}
+
+func TestBlameKeepsLeadingIndentation(t *testing.T) {
+	repo := newTestRepo(t)
+	repo.write("app.go", "func f() {\n\tif ok {\n\t\treturn nil\n\t}\n}\n")
+	sha := repo.commit(authorAda, addedAt, "add f")
+
+	got, err := repo.connector().Blame(context.Background(), "app.go", 2, 4)
+	if err != nil {
+		t.Fatalf("Blame: %v", err)
+	}
+	assertSpans(t, got, []BlameSpan{{
+		SHA: sha, LineStart: 2, LineEnd: 4, Author: authorAda, Time: mustTime(t, addedAt),
+		Lines: []string{"\tif ok {", "\t\treturn nil", "\t}"},
+	}})
 }
 
 func TestBlameRejectsContentBeforeAnyHeader(t *testing.T) {
