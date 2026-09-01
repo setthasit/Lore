@@ -246,7 +246,7 @@ func newIndexedWorkspace(
 
 	return &workspace{
 		api:    api,
-		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store)),
+		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store, repos)),
 		query:  services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
 		trace:  services.NewTraceService(store),
 		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
