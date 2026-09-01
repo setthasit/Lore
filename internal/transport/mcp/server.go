@@ -22,10 +22,11 @@ const (
 const internalErrorMessage = "internal error: see the lore server log for details"
 
 type Services struct {
-	Query  services.QueryService
-	Why    services.WhyService
-	Trace  services.TraceService
-	Impact services.ImpactService
+	Query   services.QueryService
+	Why     services.WhyService
+	Trace   services.TraceService
+	Impact  services.ImpactService
+	History services.HistoryService
 }
 
 // Blocks until ctx is cancelled or the client disconnects.
@@ -39,6 +40,7 @@ func newServer(svc Services, log *slog.Logger) *sdk.Server {
 	registerWhy(server, svc.Why, log)
 	registerTrace(server, svc.Trace, log)
 	registerImpactOf(server, svc.Impact, log)
+	registerHistoryOf(server, svc.History, log)
 
 	return server
 }

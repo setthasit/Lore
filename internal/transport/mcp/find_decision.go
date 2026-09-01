@@ -16,7 +16,7 @@ const findDecisionName = "find_decision"
 
 const findDecisionDescription = `Find the recorded evidence behind a decision: the commits, pull requests, reviews, tickets and design pages that explain why it was made.
 
-Use this for breadth across a decision; use trace for depth on one document, impact_of for the consequences of a decision.
+Use this for breadth across a decision; use trace for depth on one document, impact_of for the consequences of a decision, history_of for how one file evolved.
 
 Returns an evidence bundle, not an answer: cited documents ordered by relevance, each with an excerpt and the URL it came from. Nothing is synthesized here — you write the explanation from these citations, and every claim you make should point at one of their URLs. An empty bundle is a real answer: the index holds no evidence for that question, so widen the filters or rephrase it.`
 

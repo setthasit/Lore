@@ -42,6 +42,7 @@ func newRootCommand(resolve Resolver) *cobra.Command {
 		newWhyCommand(resolve, configPath),
 		newTraceCommand(resolve, configPath),
 		newImpactCommand(resolve, configPath),
+		newHistoryCommand(resolve, configPath),
 		newMCPCommand(resolve, configPath),
 	)
 	return root

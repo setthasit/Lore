@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,4 +127,71 @@ func TestEncodeBundleIsTheToolWireShape(t *testing.T) {
 		t.Fatalf("marshal structured content: %v", err)
 	}
 	assertSameJSON(t, structured, encoded)
+}
+
+func codeAnchorBundle(start, end int) *entities.EvidenceBundle {
+	return &entities.EvidenceBundle{
+		Question: testQuestion,
+		Anchor: entities.Anchor{
+			Kind: entities.AnchorCodeSpan,
+			Code: &entities.CodeAnchor{
+				Repo:       "github:acme/lore",
+				File:       testFile,
+				LineStart:  start,
+				LineEnd:    end,
+				BlamedSHAs: []string{"1111111111111111111111111111111111111111"},
+			},
+		},
+	}
+}
+
+func TestEncodeBundleKeepsASpannedCodeAnchor(t *testing.T) {
+	encoded, err := EncodeBundle(codeAnchorBundle(10, 13))
+	if err != nil {
+		t.Fatalf("EncodeBundle: %v", err)
+	}
+
+	want := `{
+  "repo": "github:acme/lore",
+  "file": "` + testFile + `",
+  "line_start": 10,
+  "line_end": 13,
+  "blamed_shas": ["1111111111111111111111111111111111111111"]
+}`
+	assertSameJSON(t, encodedCodeAnchor(t, encoded), []byte(want))
+}
+
+func TestEncodeBundleOmitsAWholeFileAnchorsLineSpan(t *testing.T) {
+	encoded, err := EncodeBundle(codeAnchorBundle(0, 0))
+	if err != nil {
+		t.Fatalf("EncodeBundle: %v", err)
+	}
+
+	want := `{
+  "repo": "github:acme/lore",
+  "file": "` + testFile + `",
+  "blamed_shas": ["1111111111111111111111111111111111111111"]
+}`
+	assertSameJSON(t, encodedCodeAnchor(t, encoded), []byte(want))
+
+	for _, field := range []string{"line_start", "line_end"} {
+		if strings.Contains(string(encoded), field) {
+			t.Errorf("encoded bundle still carries %q: %s", field, encoded)
+		}
+	}
+}
+
+func encodedCodeAnchor(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+
+	var wire struct {
+		Anchor struct {
+			Code json.RawMessage `json:"code"`
+		} `json:"anchor"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshal encoded bundle: %v", err)
+	}
+
+	return wire.Anchor.Code
 }

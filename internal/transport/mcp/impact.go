@@ -13,7 +13,7 @@ const impactName = "impact_of"
 
 const impactDescription = `Find what followed from a decision: the changes, follow-ups, reverts and discussions that came after it.
 
-Use this for the consequences of a decision; use find_decision for breadth across a decision, trace for depth on one document.
+Use this for the consequences of a decision; use find_decision for breadth across a decision, trace for depth on one document, history_of for how one file evolved.
 
 Returns an evidence bundle, not an answer: the documents that came after the anchor in chronological order, each with an excerpt and the URL it came from, and a gap for every trail that dead-ends. Nothing is synthesized here — you write the account from these citations. An empty bundle is a real answer: the index records nothing that followed that decision.`
 
