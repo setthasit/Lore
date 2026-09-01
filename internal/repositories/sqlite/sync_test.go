@@ -151,7 +151,7 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil 30s into the lease", acquired, err)
 	}
 
-	clock = start.Add(30*time.Second + leaseTTL)
+	clock = start.Add(30*time.Second + repositories.LeaseTTL)
 	if acquired, err = s.TryAcquireLease(ctx, "cli"); err != nil || acquired {
 		t.Fatalf("TryAcquireLease(cli) = %v, %v; want false, nil at exactly the TTL", acquired, err)
 	}
@@ -199,6 +199,48 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 
 	if _, err = s.TryAcquireLease(ctx, ""); err == nil {
 		t.Error("TryAcquireLease accepted an empty holder")
+	}
+}
+
+func TestLeaseReportsTheCurrentHolder(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	start := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	clock := start
+	s.now = func() time.Time { return clock }
+
+	got, err := s.Lease(ctx)
+	if err != nil {
+		t.Fatalf("Lease (free): %v", err)
+	}
+	if got != nil {
+		t.Errorf("Lease (free) = %+v, want nil", got)
+	}
+
+	if acquired, err := s.TryAcquireLease(ctx, "daemon"); err != nil || !acquired {
+		t.Fatalf("TryAcquireLease(daemon) = %v, %v; want true, nil", acquired, err)
+	}
+
+	clock = start.Add(30 * time.Second)
+	if err := s.HeartbeatLease(ctx, "daemon"); err != nil {
+		t.Fatalf("HeartbeatLease(daemon): %v", err)
+	}
+
+	clock = start.Add(2 * repositories.LeaseTTL)
+	if got, err = s.Lease(ctx); err != nil {
+		t.Fatalf("Lease (held): %v", err)
+	}
+	want := entities.LeaseState{Holder: "daemon", AcquiredAt: start, HeartbeatAt: start.Add(30 * time.Second)}
+	if got == nil || *got != want {
+		t.Errorf("Lease (lapsed but unreleased) = %+v, want %+v", got, want)
+	}
+
+	if err := s.ReleaseLease(ctx, "daemon"); err != nil {
+		t.Fatalf("ReleaseLease(daemon): %v", err)
+	}
+	if got, err = s.Lease(ctx); err != nil || got != nil {
+		t.Errorf("Lease (released) = %+v, %v; want nil, nil", got, err)
 	}
 }
 

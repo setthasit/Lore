@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"lore/internal/connectors/embedder"
 	"lore/internal/entities"
@@ -20,10 +21,18 @@ type SyncOptions struct {
 	Reembed bool
 }
 
+type SyncResult struct {
+	// Set only when this round claimed a lease a different, dead holder still owned.
+	TookOverFrom *entities.LeaseState
+}
+
+// Wrapped by the precondition error a round returns when it could not take the lease.
+var ErrSyncLocked = errors.New("sync lease held")
+
 type SyncOrchestrator interface {
 	// Cursors advance only past durably stored documents, so a failed round is
 	// consistent up to its last committed batch and re-running resumes without gaps.
-	Sync(ctx context.Context, opts SyncOptions) error
+	Sync(ctx context.Context, opts SyncOptions) (SyncResult, error)
 }
 
 type syncOrchestrator struct {
@@ -63,29 +72,55 @@ func leaseHolder() string {
 	return host + "/" + strconv.Itoa(os.Getpid())
 }
 
-func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) error {
+func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
+	previous, _ := s.store.Lease(ctx)
+
 	acquired, err := s.store.TryAcquireLease(ctx, s.holder)
 	if err != nil {
-		return internalerror.NewInternalError("could not take the workspace sync lease", err)
+		return SyncResult{}, internalerror.NewInternalError("could not take the workspace sync lease", err)
 	}
 	if !acquired {
-		return internalerror.NewPreconditionError(
-			"another sync holds the workspace lease — a scheduled round or another process is already writing this index; retry later, or wait out the 60s lease TTL if that holder crashed",
-			nil)
+		return SyncResult{}, s.leaseHeldError(ctx)
 	}
 	defer func() { _ = s.store.ReleaseLease(context.WithoutCancel(ctx), s.holder) }()
 
 	if err := s.reconcileIdentity(ctx, opts); err != nil {
-		return err
+		return SyncResult{}, err
 	}
 
 	for _, conn := range s.connectors {
 		if err := s.syncConnector(ctx, conn); err != nil {
-			return err
+			return SyncResult{}, err
 		}
 	}
 
-	return s.links.LinkPending(ctx)
+	if err := s.links.LinkPending(ctx); err != nil {
+		return SyncResult{}, err
+	}
+
+	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+}
+
+func (s *syncOrchestrator) tookOver(previous *entities.LeaseState) *entities.LeaseState {
+	if previous == nil || previous.Holder == s.holder {
+		return nil
+	}
+	if time.Since(previous.HeartbeatAt) <= repositories.LeaseTTL {
+		return nil
+	}
+
+	return previous
+}
+
+func (s *syncOrchestrator) leaseHeldError(ctx context.Context) error {
+	who := "another process"
+	if held, err := s.store.Lease(ctx); err == nil && held != nil {
+		who = fmt.Sprintf("%s (last heartbeat %s ago)", held.Holder, time.Since(held.HeartbeatAt).Round(time.Second))
+	}
+
+	return internalerror.NewPreconditionError("cannot run a sync round", fmt.Errorf(
+		"%w — %s is already writing this index; retry later, or wait out the %ds lease TTL if that holder crashed",
+		ErrSyncLocked, who, int(repositories.LeaseTTL.Seconds())))
 }
 
 func (s *syncOrchestrator) reconcileIdentity(ctx context.Context, opts SyncOptions) error {
@@ -138,8 +173,8 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 	return nil
 }
 
-// The lease is heartbeated once per batch, so a batch outliving the 60s TTL lets
-// another process take it over; this round learns to stop from its next heartbeat.
+// The lease is heartbeated once per batch, so a batch outliving repositories.LeaseTTL
+// lets another process take it over; this round learns to stop from its next heartbeat.
 func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Connector) error {
 	name := conn.Name()
 

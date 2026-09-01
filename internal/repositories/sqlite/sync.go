@@ -6,13 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"lore/internal/entities"
 	"lore/internal/repositories"
 )
-
-const leaseTTL = 60 * time.Second
 
 const syncLockID = 1
 
@@ -106,7 +103,7 @@ func (s *Store) TryAcquireLease(ctx context.Context, holder string) (bool, error
 	}
 
 	at := s.now()
-	now, cutoff := formatTime(at), formatTime(at.Add(-leaseTTL))
+	now, cutoff := formatTime(at), formatTime(at.Add(-repositories.LeaseTTL))
 
 	res, err := s.db.ExecContext(ctx, acquireLeaseSQL, syncLockID, holder, now, now, cutoff)
 	if err != nil {
