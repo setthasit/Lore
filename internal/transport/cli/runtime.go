@@ -13,13 +13,14 @@ import (
 )
 
 type Runtime struct {
-	Config *config.Config
-	Query  services.QueryService
-	Why    services.WhyService
-	Trace  services.TraceService
-	Impact services.ImpactService
-	Sync   services.SyncOrchestrator
-	Status services.StatusService
+	Config  *config.Config
+	Query   services.QueryService
+	Why     services.WhyService
+	Trace   services.TraceService
+	Impact  services.ImpactService
+	History services.HistoryService
+	Sync    services.SyncOrchestrator
+	Status  services.StatusService
 }
 
 type Resolver func(ctx context.Context, configPath string) (*Runtime, func() error, error)
@@ -30,7 +31,7 @@ func resolveWithFX(ctx context.Context, configPath string) (*Runtime, func() err
 	app := fx.New(
 		fx.NopLogger,
 		di.Workspace(configPath),
-		fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.Sync, &rt.Status),
+		fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status),
 	)
 	if err := app.Err(); err != nil {
 		return nil, nil, err

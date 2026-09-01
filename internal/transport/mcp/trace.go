@@ -13,7 +13,7 @@ const traceName = "trace"
 
 const traceDescription = `Trace one document's provenance neighborhood: what it came from, what came out of it, and its own full text.
 
-Use this for depth on one document; use find_decision for breadth across a decision, impact_of for the consequences of a decision.
+Use this for depth on one document; use find_decision for breadth across a decision, impact_of for the consequences of a decision, history_of for how one file evolved.
 
 Returns an evidence bundle, not an answer: the anchor document with its whole body rather than an excerpt, its linked neighbors, the chains connecting them, and a gap for every trail that dead-ends. Nothing is synthesized here — you write the account from these citations, and every claim you make should point at one of their URLs.`
 

@@ -60,6 +60,14 @@ func shortSHAs(shas []string) string {
 	return strings.Join(short, ", ")
 }
 
+func fileWithSpan(code *entities.CodeAnchor) string {
+	if code.LineStart == 0 {
+		return code.File
+	}
+
+	return fmt.Sprintf("%s:%d-%d", code.File, code.LineStart, code.LineEnd)
+}
+
 func writeJSON(w io.Writer, bundle *entities.EvidenceBundle) error {
 	encoded, err := mcp.EncodeBundle(bundle)
 	if err != nil {
@@ -83,7 +91,7 @@ func emitBundle(w io.Writer, bundle *entities.EvidenceBundle, raw bool, view bun
 func renderBundle(w io.Writer, bundle *entities.EvidenceBundle, view bundleView) {
 	printfln(w, "%s", bundle.Question)
 	if code := bundle.Anchor.Code; code != nil {
-		printfln(w, "anchor: %s %s:%d-%d", code.Repo, code.File, code.LineStart, code.LineEnd)
+		printfln(w, "anchor: %s %s", code.Repo, fileWithSpan(code))
 		if len(code.BlamedSHAs) > 0 {
 			printfln(w, "        blamed %s", shortSHAs(code.BlamedSHAs))
 		}

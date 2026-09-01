@@ -10,5 +10,6 @@ package mocks
 //go:generate go tool mockgen -destination services/why.go -package mock_services lore/internal/services WhyService
 //go:generate go tool mockgen -destination services/trace.go -package mock_services lore/internal/services TraceService
 //go:generate go tool mockgen -destination services/impact.go -package mock_services lore/internal/services ImpactService
+//go:generate go tool mockgen -destination services/history.go -package mock_services lore/internal/services HistoryService
 //go:generate go tool mockgen -destination services/sync.go -package mock_services lore/internal/services SyncOrchestrator
 //go:generate go tool mockgen -destination services/status.go -package mock_services lore/internal/services StatusService

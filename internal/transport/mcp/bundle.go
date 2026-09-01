@@ -28,11 +28,12 @@ type anchor struct {
 	Window *timeWindow `json:"window,omitempty"`
 }
 
+// Line numbers are 1-based, so an omitted line_start/line_end means a whole-file anchor.
 type codeAnchor struct {
 	Repo       string   `json:"repo"`
 	File       string   `json:"file"`
-	LineStart  int      `json:"line_start"`
-	LineEnd    int      `json:"line_end"`
+	LineStart  int      `json:"line_start,omitempty"`
+	LineEnd    int      `json:"line_end,omitempty"`
 	BlamedSHAs []string `json:"blamed_shas,omitempty"`
 }
 

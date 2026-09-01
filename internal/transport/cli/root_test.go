@@ -91,6 +91,13 @@ func mockImpact(t *testing.T) (*Runtime, *mock_services.MockImpactService) {
 	return &Runtime{Impact: impact}, impact
 }
 
+func mockHistory(t *testing.T) (*Runtime, *mock_services.MockHistoryService) {
+	t.Helper()
+
+	history := mock_services.NewMockHistoryService(gomock.NewController(t))
+	return &Runtime{History: history}, history
+}
+
 var (
 	anchorDoc = entities.DocumentMeta{
 		ID:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
@@ -213,7 +220,8 @@ func TestMalformedInvocationsAreBadRequests(t *testing.T) {
 
 func TestHelpSucceeds(t *testing.T) {
 	for _, args := range [][]string{
-		{"--help"}, {"ask", "--help"}, {"why", "--help"}, {"trace", "--help"}, {"impact", "--help"}, {"init", "--help"},
+		{"--help"}, {"ask", "--help"}, {"why", "--help"}, {"trace", "--help"}, {"impact", "--help"},
+		{"history", "--help"}, {"init", "--help"},
 	} {
 		res := run(t, nil, args...)
 		if res.exitCode != exitOK {
@@ -231,7 +239,7 @@ func TestRootHelpListsTheQueryCommands(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	for _, want := range []string{"ask", "why", "trace", "impact"} {
+	for _, want := range []string{"ask", "why", "trace", "impact", "history"} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("help does not list %q\n--- help ---\n%s", want, res.stdout)
 		}

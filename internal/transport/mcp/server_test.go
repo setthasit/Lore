@@ -101,19 +101,27 @@ func TestToolDeclarations(t *testing.T) {
 	}{
 		{
 			name:   "find_decision",
-			routes: []string{"breadth", "depth", "consequences", "trace", "impact_of"},
+			routes: []string{"breadth", "depth", "consequences", "trace", "impact_of", "history_of"},
 		},
 		{
 			name:   "why",
-			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace", "impact_of"},
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace", "impact_of", "history_of"},
 		},
 		{
 			name:   "trace",
-			routes: []string{"breadth", "depth", "consequences", "find_decision", "impact_of"},
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "impact_of", "history_of"},
 		},
 		{
 			name:   "impact_of",
-			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace"},
+			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace", "history_of"},
+		},
+		{
+			name: "history_of",
+			routes: []string{
+				"breadth", "depth", "consequences", "find_decision", "trace", "impact_of",
+				// "why" alone matches ordinary prose such as "why it was made".
+				"why for breadth on a span of lines",
+			},
 		},
 	}
 

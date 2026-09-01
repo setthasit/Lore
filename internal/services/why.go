@@ -26,18 +26,6 @@ type WhyRequest struct {
 	Question  string
 }
 
-// Remote is the "github:acme/lore" name mapping the clone onto a source repo.
-type CodeRepo struct {
-	Path   string
-	Remote string
-	Git    gitrepo.GitRepo
-}
-
-const askOnlyRefusal = "no repositories registered — code anchoring disabled for this workspace"
-
-// The width the index stores commit SHAs at, so a shortened SHA still resolves.
-const shortSHAChars = 12
-
 type whyService struct {
 	store repositories.IndexStore
 	emb   embedder.Embedder
@@ -67,7 +55,7 @@ func (w *whyService) Why(ctx context.Context, req WhyRequest) (*entities.Evidenc
 	if len(w.repos) == 0 {
 		return nil, internalerror.NewPreconditionError(askOnlyRefusal, nil)
 	}
-	repo, err := w.matchRepo(req.Repo)
+	repo, err := matchRepo(w.repos, req.Repo)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +126,8 @@ func (s codeSpan) evidenceAnchor(shas []string) entities.Anchor {
 }
 
 func (s codeSpan) blame(ctx context.Context) ([]blamedCommit, error) {
-	tracked, err := s.repo.Git.HasFileAtHEAD(ctx, s.file)
-	if err != nil {
-		return nil, internalerror.NewInternalError(
-			fmt.Sprintf("looking up %s in %s failed", s.file, s.repo.name()), err)
-	}
-	if !tracked {
-		return nil, internalerror.NewNotFoundError(
-			fmt.Sprintf("%s is not tracked at HEAD of %s", s.file, s.repo.name()), nil)
+	if err := requireTrackedFile(ctx, s.repo, s.file); err != nil {
+		return nil, err
 	}
 
 	spans, err := s.repo.Git.Blame(ctx, s.file, s.start, s.end)
@@ -166,14 +148,6 @@ func (c blamedCommit) excerpt() string {
 	return anchorExcerpt(strings.Join(c.lines, "\n"))
 }
 
-func (c blamedCommit) short() string {
-	if len(c.sha) <= shortSHAChars {
-		return c.sha
-	}
-
-	return c.sha[:shortSHAChars]
-}
-
 // One commit per blamed SHA, in first-blamed order, carrying every line it owns.
 func blamedCommits(spans []gitrepo.BlameSpan) []blamedCommit {
 	commits := make([]blamedCommit, 0, len(spans))
@@ -191,23 +165,17 @@ func blamedCommits(spans []gitrepo.BlameSpan) []blamedCommit {
 	return commits
 }
 
-// A SHA the index never ingested is a gap, not a failure: blame still names it.
 func (w *whyService) resolveBlamed(ctx context.Context, commits []blamedCommit) ([]string, error) {
 	var unsynced []string
 	for i := range commits {
-		candidates, err := w.store.ResolveRef(ctx, commits[i].sha)
+		docs, err := indexedCommits(ctx, w.store, commits[i].sha)
 		if err != nil {
 			return nil, internalerror.NewInternalError(
-				fmt.Sprintf("resolving the blamed commit %s failed", commits[i].short()), err)
+				fmt.Sprintf("resolving the blamed commit %s failed", shortSHA(commits[i].sha)), err)
 		}
-		for _, candidate := range candidates {
-			if candidate.Type == entities.DocTypeCommit {
-				commits[i].docs = append(commits[i].docs, candidate)
-			}
-		}
-		if len(commits[i].docs) == 0 {
-			unsynced = append(unsynced,
-				"trail ends at commit "+commits[i].short()+", not synced from a source")
+		commits[i].docs = docs
+		if len(docs) == 0 {
+			unsynced = append(unsynced, unsyncedCommitGap(commits[i].sha))
 		}
 	}
 
@@ -317,42 +285,4 @@ func validateLineSpan(start, end int) error {
 	}
 
 	return nil
-}
-
-func (w *whyService) matchRepo(requested string) (CodeRepo, error) {
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
-		if len(w.repos) == 1 {
-			return w.repos[0], nil
-		}
-
-		return CodeRepo{}, internalerror.NewBadRequestError(
-			"repo must name one of the registered repos: "+w.registeredRepos(), nil)
-	}
-
-	for _, repo := range w.repos {
-		if requested == repo.Remote || requested == repo.Path {
-			return repo, nil
-		}
-	}
-
-	return CodeRepo{}, internalerror.NewNotFoundError(
-		fmt.Sprintf("repo %q is not registered — registered repos: %s", requested, w.registeredRepos()), nil)
-}
-
-func (w *whyService) registeredRepos() string {
-	names := make([]string, 0, len(w.repos))
-	for _, repo := range w.repos {
-		names = append(names, repo.name())
-	}
-
-	return strings.Join(names, ", ")
-}
-
-func (r CodeRepo) name() string {
-	if r.Remote != "" {
-		return r.Remote
-	}
-
-	return r.Path
 }

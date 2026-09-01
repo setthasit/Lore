@@ -13,7 +13,7 @@ const whyName = "why"
 
 const whyDescription = `Explain why a span of code is the way it is: blame those lines in a registered local clone, then follow the commits, pull requests, reviews, tickets and design pages behind them.
 
-Use this when the question points at code you can name by file and line; use find_decision for breadth when there is no line to point at, trace for depth on one document, impact_of for the consequences of a decision.
+Use this when the question points at code you can name by file and line; use find_decision for breadth when there is no line to point at, trace for depth on one document, impact_of for the consequences of a decision, history_of for how a whole file evolved.
 
 Returns an evidence bundle, not an answer: the documents behind those lines with an excerpt and the URL each came from, and a gap for every trail that dead-ends. Nothing is synthesized here — you write the explanation from these citations, and every claim you make should point at one of their URLs. This tool needs the file's repository registered as a local clone; a workspace that registers none cannot anchor on code at all, and find_decision answers the same question from the index instead.`
 

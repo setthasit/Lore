@@ -17,10 +17,11 @@ func newMCPCommand(resolve Resolver, configPath *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
 				return mcp.Serve(cmd.Context(), mcp.Services{
-					Query:  rt.Query,
-					Why:    rt.Why,
-					Trace:  rt.Trace,
-					Impact: rt.Impact,
+					Query:   rt.Query,
+					Why:     rt.Why,
+					Trace:   rt.Trace,
+					Impact:  rt.Impact,
+					History: rt.History,
 				})
 			})
 		},
