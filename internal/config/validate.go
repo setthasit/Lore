@@ -1,7 +1,10 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"lore/internal/errors/internalerror"
 )
@@ -58,12 +61,32 @@ func (c *Config) validateSources() error {
 	return nil
 }
 
-// validateRepos only checks that a registered clone has a path. A clone whose
-// remote matches no configured source repo is a startup warning, not an error.
+// A clone whose remote matches no configured source repo is a startup warning,
+// not an error.
 func (c *Config) validateRepos() error {
 	for i := range c.Repos {
-		if c.Repos[i].Path == "" {
+		path := c.Repos[i].Path
+		if path == "" {
 			return internalerror.NewBadRequestError("every entry in repos must have a path", nil)
+		}
+
+		info, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return internalerror.NewBadRequestError("repos path "+path+" does not exist", err)
+		}
+		if err != nil {
+			return internalerror.NewBadRequestError("repos path "+path+" cannot be read", err)
+		}
+		if !info.IsDir() {
+			return internalerror.NewBadRequestError("repos path "+path+" is not a directory", nil)
+		}
+
+		_, err = os.Stat(filepath.Join(path, ".git"))
+		if errors.Is(err, fs.ErrNotExist) {
+			return internalerror.NewBadRequestError("repos path "+path+" is not a git repository — no .git entry found", err)
+		}
+		if err != nil {
+			return internalerror.NewBadRequestError("repos path "+path+" has a .git entry that cannot be read", err)
 		}
 	}
 	return nil

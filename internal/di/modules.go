@@ -58,10 +58,7 @@ var ServiceModule = fx.Module("services", fx.Provide(
 ))
 
 func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repositories.IndexStore, error) {
-	path, err := resolvePath(cfg.IndexPath)
-	if err != nil {
-		return nil, err
-	}
+	path := cfg.IndexPath
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, internalerror.NewInternalError("cannot create the index directory "+dir, err)
@@ -74,22 +71,6 @@ func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repo
 	}
 	lc.Append(fx.Hook{OnStop: func(context.Context) error { return store.Close() }})
 	return store, nil
-}
-
-// Only a leading "~" is expanded.
-func resolvePath(path string) (string, error) {
-	if path == "" {
-		return "", internalerror.NewBadRequestError("index_path must be set", nil)
-	}
-	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
-		return path, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", internalerror.NewBadRequestError("index_path "+path+" starts with ~, but this user has no home directory; set an absolute index_path", err)
-	}
-	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 func newConnectors(cfg *config.Config) ([]entities.Connector, error) {

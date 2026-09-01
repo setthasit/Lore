@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -153,14 +154,16 @@ func Load(path string) (*Config, error) {
 		return nil, internalerror.NewBadRequestError("invalid configuration at "+path, err)
 	}
 
-	cfg.applyDefaults()
+	if err := cfg.applyDefaults(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-func (c *Config) applyDefaults() {
+func (c *Config) applyDefaults() error {
 	if c.IndexPath == "" && c.Workspace != "" {
 		c.IndexPath = "~/.lore/" + c.Workspace + ".db"
 	}
@@ -173,4 +176,32 @@ func (c *Config) applyDefaults() {
 	if c.Query.TopK == 0 {
 		c.Query.TopK = DefaultTopK
 	}
+
+	indexPath, err := expandHome("index_path", c.IndexPath)
+	if err != nil {
+		return err
+	}
+	c.IndexPath = indexPath
+
+	for i := range c.Repos {
+		path, err := expandHome("repos path", c.Repos[i].Path)
+		if err != nil {
+			return err
+		}
+		c.Repos[i].Path = path
+	}
+	return nil
+}
+
+// Only a leading "~" is expanded.
+func expandHome(field, path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", internalerror.NewBadRequestError(field+" "+path+" starts with ~, but this user has no home directory; set an absolute "+field, err)
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }

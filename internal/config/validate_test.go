@@ -10,6 +10,8 @@ import (
 	"lore/internal/errors/internalerror"
 )
 
+const repoPlaceholder = "{{REPO}}"
+
 const docExample = `
 workspace: myproject
 index_path: ~/.lore/myproject.db
@@ -31,7 +33,7 @@ sources:
     projects: [PROJ, INFRA]
 
 repos:
-  - path: ~/dev/myproject
+  - path: {{REPO}}
     remote: github:acme/myproject
 
 query:
@@ -125,7 +127,7 @@ repos: []
 			yaml: `
 workspace: clonesonly
 repos:
-  - path: ~/dev/myproject
+  - path: {{REPO}}
     remote: github:acme/myproject
 `,
 			check: func(t *testing.T, cfg *Config) {
@@ -240,7 +242,7 @@ sources:
 			yaml: `
 workspace: withllm
 repos:
-  - path: ~/dev/myproject
+  - path: {{REPO}}
 llm:
   provider: anthropic
   model: claude-sonnet-4-5
@@ -265,11 +267,11 @@ query:
 			yaml: `
 workspace: demo
 repos:
-  - path: ~/dev/demo
+  - path: {{REPO}}
 `,
 			check: func(t *testing.T, cfg *Config) {
-				if cfg.IndexPath != "~/.lore/demo.db" {
-					t.Errorf("IndexPath = %q, want ~/.lore/demo.db", cfg.IndexPath)
+				if want := homePath(t, ".lore", "demo.db"); cfg.IndexPath != want {
+					t.Errorf("IndexPath = %q, want %q", cfg.IndexPath, want)
 				}
 				if cfg.Query.EventWindow != DefaultEventWindow {
 					t.Errorf("EventWindow = %s, want %s", cfg.Query.EventWindow, DefaultEventWindow)
@@ -288,7 +290,7 @@ repos:
 workspace: tuned
 index_path: /srv/lore/tuned.db
 repos:
-  - path: ~/dev/tuned
+  - path: {{REPO}}
 query:
   event_window: 12h
   walk_depth: 5
@@ -311,7 +313,7 @@ query:
 			yaml: `
 workspace: negative
 repos:
-  - path: ~/dev/negative
+  - path: {{REPO}}
 query:
   event_window: -5d
 `,
@@ -348,8 +350,8 @@ repos:
 				"LORE_LLM_KEY":      "llm-fake-value",
 			},
 			check: func(t *testing.T, cfg *Config) {
-				if cfg.Workspace != "myproject" || cfg.IndexPath != "~/.lore/myproject.db" {
-					t.Errorf("workspace/index_path = %q/%q", cfg.Workspace, cfg.IndexPath)
+				if want := homePath(t, ".lore", "myproject.db"); cfg.Workspace != "myproject" || cfg.IndexPath != want {
+					t.Errorf("workspace/index_path = %q/%q, want myproject/%q", cfg.Workspace, cfg.IndexPath, want)
 				}
 				if got := cfg.Sources.GitHub.Repos; len(got) != 2 || got[0] != "acme/myproject" {
 					t.Errorf("github repos = %v", got)
@@ -391,7 +393,12 @@ repos:
 				t.Setenv(name, value)
 			}
 
-			cfg, err := Load(writeConfig(t, test.yaml))
+			body := test.yaml
+			if strings.Contains(body, repoPlaceholder) {
+				body = strings.ReplaceAll(body, repoPlaceholder, gitClone(t))
+			}
+
+			cfg, err := Load(writeConfig(t, body))
 
 			if test.wantErr != "" {
 				if err == nil {
@@ -424,6 +431,149 @@ func TestLoadMissingFile(t *testing.T) {
 	if !strings.Contains(err.Error(), "absent.yaml") {
 		t.Fatalf("Load() error = %q, want it to name the path", err)
 	}
+}
+
+func TestLoadValidatesRepoPaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    func(*testing.T) string
+		wantErr string
+	}{
+		{
+			name: "a clone with a .git directory is accepted",
+			path: gitClone,
+		},
+		{
+			name: "a linked worktree with a .git file is accepted",
+			path: gitWorktree,
+		},
+		{
+			name:    "a path that does not exist is rejected",
+			path:    func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") },
+			wantErr: "does not exist",
+		},
+		{
+			name:    "a directory that is not a git repository is rejected",
+			path:    func(t *testing.T) string { return t.TempDir() },
+			wantErr: "is not a git repository",
+		},
+		{
+			name: "an unreadable .git entry is rejected as unreadable, not as missing",
+			path: func(t *testing.T) string {
+				dir := t.TempDir()
+				if err := os.Symlink(".git", filepath.Join(dir, ".git")); err != nil {
+					t.Fatalf("seed .git symlink loop: %v", err)
+				}
+				return dir
+			},
+			wantErr: "has a .git entry that cannot be read",
+		},
+		{
+			name: "a file instead of a directory is rejected",
+			path: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "myproject")
+				if err := os.WriteFile(path, nil, 0o600); err != nil {
+					t.Fatalf("seed file: %v", err)
+				}
+				return path
+			},
+			wantErr: "is not a directory",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := test.path(t)
+
+			cfg, err := Load(writeConfig(t, "workspace: anchored\nrepos:\n  - path: "+path+"\n"))
+
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() error = %v, want success", err)
+				}
+				if cfg.Repos[0].Path != path {
+					t.Errorf("Repos[0].Path = %q, want %q", cfg.Repos[0].Path, path)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Load() = %+v, want error containing %q", cfg, test.wantErr)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("Load() error kind = %s, want bad request", internalerror.KindOf(err))
+			}
+			for _, want := range []string{test.wantErr, path} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Load() error = %q, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadExpandsTildePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	clone := filepath.Join(home, "dev", "myproject")
+	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o750); err != nil {
+		t.Fatalf("seed clone: %v", err)
+	}
+
+	cfg, err := Load(writeConfig(t, "workspace: tilde\nrepos:\n  - path: ~/dev/myproject\n"))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want success", err)
+	}
+	if want := filepath.Join(home, ".lore", "tilde.db"); cfg.IndexPath != want {
+		t.Errorf("IndexPath = %q, want %q", cfg.IndexPath, want)
+	}
+	if cfg.Repos[0].Path != clone {
+		t.Errorf("Repos[0].Path = %q, want %q", cfg.Repos[0].Path, clone)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if got, err := expandHome("index_path", "~"); err != nil || got != home {
+		t.Errorf(`expandHome("~") = %q, %v; want %q`, got, err, home)
+	}
+	for _, path := range []string{"./index.db", "/var/lib/lore/index.db", "index~backup.db", "~notauser/index.db"} {
+		if got, err := expandHome("index_path", path); err != nil || got != path {
+			t.Errorf("expandHome(%q) = %q, %v; want it unchanged", path, got, err)
+		}
+	}
+}
+
+func gitClone(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatalf("seed clone: %v", err)
+	}
+	return dir
+}
+
+func gitWorktree(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/myproject\n"), 0o600); err != nil {
+		t.Fatalf("seed worktree: %v", err)
+	}
+	return dir
+}
+
+func homePath(t *testing.T, parts ...string) string {
+	t.Helper()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("user home: %v", err)
+	}
+	return filepath.Join(append([]string{home}, parts...)...)
 }
 
 func writeConfig(t *testing.T, body string) string {
