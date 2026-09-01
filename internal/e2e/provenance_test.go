@@ -292,6 +292,10 @@ func anchorTexts(a entities.Anchor) []string {
 	if a.Query != "" {
 		texts = append(texts, a.Query)
 	}
+	if a.Code != nil {
+		texts = append(texts, a.Code.Repo, a.Code.File)
+		texts = append(texts, a.Code.BlamedSHAs...)
+	}
 	if a.Doc != nil {
 		texts = append(texts, string(a.Doc.ID), a.Doc.URL)
 	}

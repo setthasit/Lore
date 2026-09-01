@@ -1,0 +1,14 @@
+{
+  "sha": "ANCHOR_SHA",
+  "commit": {
+    "message": "Put a bounded queue in front of the ingest writer"
+  },
+  "files": [
+    {
+      "filename": "internal/ingest/writer.go",
+      "status": "added",
+      "additions": 15,
+      "deletions": 0
+    }
+  ]
+}

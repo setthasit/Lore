@@ -1,0 +1,14 @@
+{
+  "sha": "FOLLOWUP_SHA",
+  "commit": {
+    "message": "Rename the writer's closed sentinel"
+  },
+  "files": [
+    {
+      "filename": "internal/ingest/writer.go",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    }
+  ]
+}

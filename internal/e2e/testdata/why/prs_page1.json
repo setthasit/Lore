@@ -1,0 +1,58 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 91,
+            "title": "Give the ingest writer a bounded queue",
+            "body": "## Decision\n\nEnqueue no longer opens a writer connection of its own. It sends the batch to a bounded queue owned by the writer, and the writer drains that queue on one goroutine.\n\n## Why\n\nThe stall in acme/lore#88 came from every worker holding a writer of its own: they queued behind one another until the slowest holder ran out of patience, and the timeout then arrived as a lost batch rather than as pressure the worker could report.\n\nA bounded queue turns that pressure into a slow send. The worker learns that ingest is behind while it still holds the batch, which is the only point where it can do something about it.\n\n## Cost\n\nOne draining goroutine caps write throughput at a single core. We measured the ceiling well above what the largest workspace we run produces, so the cap buys the failure mode we want.\n",
+            "url": "https://github.example/acme/lore/pull/91",
+            "createdAt": "2024-05-05T08:00:00Z",
+            "updatedAt": "2024-05-08T10:30:00Z",
+            "headRefName": "feature/bounded-writer-queue",
+            "author": {
+              "login": "ada"
+            },
+            "closingIssuesReferences": {
+              "nodes": [
+                {
+                  "number": 88
+                }
+              ]
+            },
+            "commits": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "commit": {
+                    "oid": "ANCHOR_SHA"
+                  }
+                },
+                {
+                  "commit": {
+                    "oid": "FOLLOWUP_SHA"
+                  }
+                }
+              ]
+            },
+            "reviews": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}
