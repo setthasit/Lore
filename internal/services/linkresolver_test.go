@@ -3,12 +3,15 @@ package services_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.uber.org/mock/gomock"
 
+	"lore/internal/connectors/gitrepo"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
+	mock_gitrepo "lore/internal/mocks/gitrepo"
 	mock_repositories "lore/internal/mocks/repositories"
 	"lore/internal/services"
 )
@@ -19,7 +22,12 @@ const (
 	linkPageURL = "https://notion.so/design/retrieval"
 	linkOldURL  = "https://notion.so/design/retrieval-v1"
 	linkTicket  = "PROJ-123"
+	linkFile    = "internal/auth/auth.go"
+	linkClone   = "/clones/lore"
 )
+
+// Mirrors the resolver's own cap on how much of one path's history it takes.
+const linkPathCommitCap = 50
 
 var (
 	linkCommitID  = entities.NewDocID("github", entities.DocTypeCommit, linkSlug+"/commit/"+linkFullSHA)
@@ -31,20 +39,61 @@ var (
 	linkTicketID  = entities.NewDocID("jira", entities.DocTypeTicket, linkTicket)
 )
 
-var errLinkStore = errors.New("store is on fire")
+var (
+	errLinkStore = errors.New("store is on fire")
+	errLinkGit   = errors.New("clone is unreadable")
+)
 
 type linkMocks struct {
 	store *mock_repositories.MockIndexStore
+	git   *mock_gitrepo.MockGitRepo
 }
 
 func newLinkMocks(t *testing.T) linkMocks {
 	t.Helper()
 
-	return linkMocks{store: mock_repositories.NewMockIndexStore(gomock.NewController(t))}
+	ctrl := gomock.NewController(t)
+
+	return linkMocks{
+		store: mock_repositories.NewMockIndexStore(ctrl),
+		git:   mock_gitrepo.NewMockGitRepo(ctrl),
+	}
 }
 
 func (m linkMocks) resolver() services.LinkResolver {
-	return services.NewLinkResolver(m.store)
+	return services.NewLinkResolver(m.store, []services.CodeRepo{{Path: linkClone, Git: m.git}})
+}
+
+func (m linkMocks) expectLog(shas ...string) {
+	m.git.EXPECT().HasFileAtHEAD(gomock.Any(), linkFile).Return(true, nil)
+
+	log := make([]gitrepo.CommitRef, len(shas))
+	for i, sha := range shas {
+		log[i] = gitrepo.CommitRef{SHA: sha}
+	}
+	m.git.EXPECT().Log(gomock.Any(), linkFile).Return(log, nil)
+}
+
+func (m linkMocks) expectCommit(sha string) *gomock.Call {
+	return m.store.EXPECT().ResolveRef(gomock.Any(), sha).
+		Return([]entities.DocumentMeta{linkMeta(linkCommitDocID(sha), entities.DocTypeCommit)}, nil)
+}
+
+func linkPathSHA(n int) string { return fmt.Sprintf("%040x", n) }
+
+func linkCommitDocID(sha string) entities.DocID {
+	return entities.NewDocID("github", entities.DocTypeCommit, linkSlug+"/commit/"+sha)
+}
+
+func linkPathDoc(id entities.DocID, docType entities.DocType, body string) entities.Document {
+	return linkDoc(id, docType, body, entities.RawRef{Kind: entities.RefKindFilePath, Value: linkFile})
+}
+
+func linkPathEdge(source entities.DocID, sha string) entities.Edge {
+	return entities.Edge{
+		Src: source, Dst: linkCommitDocID(sha),
+		Kind: entities.EdgeKindMentionsPath, Confidence: 0.7,
+	}
 }
 
 func linkDoc(id entities.DocID, docType entities.DocType, body string, refs ...entities.RawRef) entities.Document {
@@ -244,18 +293,208 @@ func TestLinkKeepsAReferenceItCannotPinToOneDocument(t *testing.T) {
 	}
 }
 
-func TestLinkNeverAsksTheStoreAboutAFilePath(t *testing.T) {
+func TestLinkTurnsAPathIntoAnEdgePerCommitThatTouchedIt(t *testing.T) {
 	t.Parallel()
 
 	m := newLinkMocks(t)
-	source := linkDoc(linkPRID, entities.DocTypePR, "rewrites internal/auth/auth.go",
-		entities.RawRef{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"})
+	shas := []string{linkPathSHA(1), linkPathSHA(2), linkPathSHA(3)}
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
 
-	// No ResolveRef and no UpsertEdges are declared: paths are not documents yet.
+	m.expectLog(shas...)
+	for _, sha := range shas {
+		m.expectCommit(sha)
+	}
+	// A pull request pointed at a commit would be commit_in_pr, were the commit the body's subject.
+	m.store.EXPECT().UpsertEdges(gomock.Any(), []entities.Edge{
+		linkPathEdge(linkPRID, shas[0]),
+		linkPathEdge(linkPRID, shas[1]),
+		linkPathEdge(linkPRID, shas[2]),
+	}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkTakesOnlyTheNewestCommitsOfALongHistory(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	shas := make([]string, linkPathCommitCap+2)
+	for i := range shas {
+		shas[i] = linkPathSHA(i)
+	}
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
+
+	m.expectLog(shas...)
+	// The commits past the cap are given no expectation: resolving one fails the test.
+	want := make([]entities.Edge, linkPathCommitCap)
+	for i := range linkPathCommitCap {
+		m.expectCommit(shas[i])
+		want[i] = linkPathEdge(linkPRID, shas[i])
+	}
+	m.store.EXPECT().UpsertEdges(gomock.Any(), want).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkLogsAPathOnceHoweverManyDocumentsNameIt(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	sha := linkPathSHA(1)
+	pr := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
+	page := linkPathDoc(linkPageID, entities.DocTypePage, "we split "+linkFile+" in two")
+
+	m.expectLog(sha)
+	m.expectCommit(sha)
+	m.store.EXPECT().UpsertEdges(gomock.Any(), []entities.Edge{
+		linkPathEdge(linkPRID, sha),
+		linkPathEdge(linkPageID, sha),
+	}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), []entities.PendingRef{
+		{SourceDoc: linkPRID, Ref: pr.Refs[0]},
+		{SourceDoc: linkPageID, Ref: page.Refs[0]},
+	}).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{pr, page}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkLeavesAPathNoCloneTracksPending(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
+
+	// No Log and no UpsertEdges are declared: an untracked path names no commit.
+	m.git.EXPECT().HasFileAtHEAD(gomock.Any(), linkFile).Return(false, nil)
 	m.store.EXPECT().UpsertPendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
 
 	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
 		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkKeepsAPathPendingWhenGitFailsAndStillLinksTheRest(t *testing.T) {
+	t.Parallel()
+
+	pathRef := entities.RawRef{Kind: entities.RefKindFilePath, Value: linkFile}
+	urlRef := entities.RawRef{Kind: entities.RefKindURL, Value: linkPageURL}
+	source := linkDoc(linkPRID, entities.DocTypePR,
+		"rewrites "+linkFile+", designed at "+linkPageURL, pathRef, urlRef)
+
+	tests := map[string]func(m linkMocks){
+		"the clone cannot be searched": func(m linkMocks) {
+			m.git.EXPECT().HasFileAtHEAD(gomock.Any(), linkFile).Return(false, errLinkGit)
+		},
+		"the log cannot be read": func(m linkMocks) {
+			m.git.EXPECT().HasFileAtHEAD(gomock.Any(), linkFile).Return(true, nil)
+			m.git.EXPECT().Log(gomock.Any(), linkFile).Return(nil, errLinkGit)
+		},
+	}
+
+	for name, fail := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newLinkMocks(t)
+			fail(m)
+			m.store.EXPECT().ResolveRef(gomock.Any(), linkPageURL).
+				Return([]entities.DocumentMeta{linkMeta(linkPageID, entities.DocTypePage)}, nil)
+			m.store.EXPECT().UpsertEdges(gomock.Any(), []entities.Edge{{
+				Src: linkPRID, Dst: linkPageID,
+				Kind: entities.EdgeKindReferencesDoc, Confidence: 1.0,
+			}}).Return(nil)
+			m.store.EXPECT().UpsertPendingRefs(gomock.Any(),
+				[]entities.PendingRef{{SourceDoc: linkPRID, Ref: pathRef}}).Return(nil)
+			m.store.EXPECT().DeletePendingRefs(gomock.Any(),
+				[]entities.PendingRef{{SourceDoc: linkPRID, Ref: urlRef}}).Return(nil)
+
+			if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+				t.Fatalf("Link() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestLinkSkipsALoggedCommitTheIndexNeverIngested(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	unsynced, ingested := linkPathSHA(1), linkPathSHA(2)
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
+
+	m.expectLog(unsynced, ingested)
+	m.store.EXPECT().ResolveRef(gomock.Any(), unsynced).Return(nil, nil)
+	m.expectCommit(ingested)
+	m.store.EXPECT().UpsertEdges(gomock.Any(),
+		[]entities.Edge{linkPathEdge(linkPRID, ingested)}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkNeverReadsAPathAsASupersedingReference(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	sha := linkPathSHA(1)
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "Supersedes "+linkFile+" for good.")
+
+	m.expectLog(sha)
+	m.expectCommit(sha)
+	m.store.EXPECT().UpsertEdges(gomock.Any(),
+		[]entities.Edge{linkPathEdge(linkPRID, sha)}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkNeverPointsACommitAtItselfThroughItsOwnPath(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	own, earlier := linkPathSHA(1), linkPathSHA(2)
+	source := linkPathDoc(linkCommitDocID(own), entities.DocTypeCommit, "rewrites "+linkFile)
+
+	m.expectLog(own, earlier)
+	m.expectCommit(own)
+	m.expectCommit(earlier)
+	m.store.EXPECT().UpsertEdges(gomock.Any(),
+		[]entities.Edge{linkPathEdge(linkCommitDocID(own), earlier)}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []entities.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkFailsTheRoundWhenALoggedCommitCannotBeResolved(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	sha := linkPathSHA(1)
+	source := linkPathDoc(linkPRID, entities.DocTypePR, "rewrites "+linkFile)
+
+	m.expectLog(sha)
+	m.store.EXPECT().ResolveRef(gomock.Any(), sha).Return(nil, errLinkStore)
+
+	err := m.resolver().Link(context.Background(), []entities.Document{source})
+	if !internalerror.IsInternal(err) {
+		t.Fatalf("Link() = %v (%s), want internal", err, internalerror.KindOf(err))
+	}
+	if !errors.Is(err, errLinkStore) {
+		t.Errorf("Link() = %v, want the store's cause wrapped", err)
 	}
 }
 

@@ -44,14 +44,19 @@ var refTargetTypes = map[entities.RefKind][]entities.DocType{
 
 var supersedePhrases = []string{"supersede", "replaces", "replaced by"}
 
+// A long-lived file's log runs to thousands of commits; only its recent history
+// is plausibly what a document naming the path is about.
+const maxPathCommits = 50
+
 type linkResolver struct {
 	store repositories.IndexStore
+	repos []CodeRepo
 }
 
 var _ LinkResolver = (*linkResolver)(nil)
 
-func NewLinkResolver(store repositories.IndexStore) LinkResolver {
-	return &linkResolver{store: store}
+func NewLinkResolver(store repositories.IndexStore, repos []CodeRepo) LinkResolver {
+	return &linkResolver{store: store, repos: slices.Clone(repos)}
 }
 
 func (l *linkResolver) Link(ctx context.Context, docs []entities.Document) error {
@@ -89,17 +94,20 @@ func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, 
 	var (
 		pending  []entities.PendingRef
 		resolved []resolvedRef
+		done     []entities.PendingRef
+		err      error
 	)
+	logged := map[loggedPath][]entities.DocumentMeta{}
 	for _, ref := range refs {
-		target, ok, err := l.target(ctx, ref)
-		if err != nil {
+		before := len(resolved)
+		if resolved, err = l.appendTargets(ctx, resolved, logged, ref); err != nil {
 			return err
 		}
-		if !ok {
+		if len(resolved) == before {
 			pending = append(pending, ref)
 			continue
 		}
-		resolved = append(resolved, resolvedRef{ref: ref, target: target})
+		done = append(done, ref)
 	}
 
 	sources, err := l.sourceDocuments(ctx, resolved, inHand)
@@ -108,20 +116,96 @@ func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, 
 	}
 
 	edges := make([]entities.Edge, len(resolved))
-	done := make([]entities.PendingRef, len(resolved))
 	for i, r := range resolved {
 		edges[i] = edgeFor(sources[r.ref.SourceDoc], r)
-		done[i] = r.ref
 	}
 
 	return l.commit(ctx, edges, pending, done)
 }
 
-func (l *linkResolver) target(ctx context.Context, ref entities.PendingRef) (entities.DocumentMeta, bool, error) {
+// A path names every commit that touched it, so one ref yields many targets.
+func (l *linkResolver) appendTargets(
+	ctx context.Context,
+	into []resolvedRef,
+	logged map[loggedPath][]entities.DocumentMeta,
+	ref entities.PendingRef,
+) ([]resolvedRef, error) {
 	if ref.Ref.Kind == entities.RefKindFilePath {
-		return entities.DocumentMeta{}, false, nil
+		commits, err := l.pathCommits(ctx, logged, ref.Ref.Value)
+		if err != nil {
+			return into, err
+		}
+		for _, commit := range commits {
+			if commit.ID != ref.SourceDoc {
+				into = append(into, resolvedRef{ref: ref, target: commit})
+			}
+		}
+
+		return into, nil
 	}
 
+	target, ok, err := l.target(ctx, ref)
+	if err != nil || !ok {
+		return into, err
+	}
+
+	return append(into, resolvedRef{ref: ref, target: target}), nil
+}
+
+// Keyed for one resolve call only: a cache outliving the round would miss new commits.
+type loggedPath struct {
+	repo string
+	path string
+}
+
+func (l *linkResolver) pathCommits(
+	ctx context.Context,
+	logged map[loggedPath][]entities.DocumentMeta,
+	path string,
+) ([]entities.DocumentMeta, error) {
+	var commits []entities.DocumentMeta
+	for _, repo := range l.repos {
+		key := loggedPath{repo: repo.name(), path: path}
+		touching, cached := logged[key]
+		if !cached {
+			var err error
+			if touching, err = l.commitsTouching(ctx, repo, path); err != nil {
+				return nil, err
+			}
+			logged[key] = touching
+		}
+		commits = append(commits, touching...)
+	}
+
+	return commits, nil
+}
+
+// A clone git cannot read leaves the path pending for a later round, never failing the sync.
+func (l *linkResolver) commitsTouching(ctx context.Context, repo CodeRepo, path string) ([]entities.DocumentMeta, error) {
+	tracked, err := repo.Git.HasFileAtHEAD(ctx, path)
+	if err != nil || !tracked {
+		return nil, nil
+	}
+
+	history, err := repo.Git.Log(ctx, path)
+	if err != nil {
+		return nil, nil
+	}
+
+	var commits []entities.DocumentMeta
+	for _, entry := range history[:min(len(history), maxPathCommits)] {
+		indexed, err := indexedCommits(ctx, l.store, entry.SHA)
+		if err != nil {
+			return nil, internalerror.NewInternalError(
+				fmt.Sprintf("could not resolve the commit %s touching %s", shortSHA(entry.SHA), path), err)
+		}
+		commits = append(commits, indexed...)
+	}
+
+	return commits, nil
+}
+
+func (l *linkResolver) target(ctx context.Context, ref entities.PendingRef) (entities.DocumentMeta, bool, error) {
 	candidates, err := l.store.ResolveRef(ctx, ref.Ref.Value)
 	if err != nil {
 		return entities.DocumentMeta{}, false, internalerror.NewInternalError(
@@ -189,10 +273,7 @@ func (l *linkResolver) sourceDocuments(
 }
 
 func edgeFor(source entities.Document, r resolvedRef) entities.Edge {
-	rule, explicit := explicitRelation(source.Type, r.target.Type)
-	if !explicit {
-		rule = textRule(source, r.ref.Ref)
-	}
+	rule := ruleFor(source, r)
 
 	return entities.Edge{
 		Src:        r.ref.SourceDoc,
@@ -200,6 +281,19 @@ func edgeFor(source entities.Document, r resolvedRef) entities.Edge {
 		Kind:       rule.kind,
 		Confidence: rule.confidence,
 	}
+}
+
+// Neither the document type pair nor a supersede phrase qualifies a path ref: its
+// targets are commits the path itself picked, not documents the body talks about.
+func ruleFor(source entities.Document, r resolvedRef) edgeRule {
+	if kind := r.ref.Ref.Kind; kind == entities.RefKindFilePath {
+		return refKindRules[kind]
+	}
+	if rule, explicit := explicitRelation(source.Type, r.target.Type); explicit {
+		return rule
+	}
+
+	return textRule(source, r.ref.Ref)
 }
 
 // Connectors emit API relations and body-text matches under the same RefKind, so
