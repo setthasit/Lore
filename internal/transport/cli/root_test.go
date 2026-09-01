@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"lore/internal/config"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	mock_services "lore/internal/mocks/services"
@@ -42,6 +43,9 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 	res := result{}
 
 	resolve := func(context.Context, string) (*Runtime, func() error, error) {
+		if rt.Config == nil {
+			rt.Config = new(config.Config)
+		}
 		return rt, func() error { res.released = true; return nil }, nil
 	}
 
