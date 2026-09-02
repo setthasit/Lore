@@ -185,7 +185,8 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 }
 
 func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
-	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", nil))
+	// The cause is what a caller-facing kind must not print: Message already says everything actionable.
+	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", errUnclassified))
 
 	var stderr bytes.Buffer
 	if got := report(&stderr, wrapped); got != exitPrecondition {

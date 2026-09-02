@@ -130,8 +130,9 @@ func TestToolDeclarations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(advertised.Tools) != len(tests) {
-		t.Fatalf("tools = %d, want %d", len(advertised.Tools), len(tests))
+	wantTools := len(tests) + len(syncToolNames)
+	if len(advertised.Tools) != wantTools {
+		t.Fatalf("tools = %d, want %d", len(advertised.Tools), wantTools)
 	}
 
 	for _, tt := range tests {

@@ -127,7 +127,7 @@ func TestTraceReturnsBundleAsJSON(t *testing.T) {
 		Trace(gomock.Any(), services.TraceRequest{Ref: testRef}).
 		Return(testBundle(), nil)
 
-	assertBundleResult(t, f.callTool(t, "trace", traceArgs(testRef)), testBundleJSON)
+	assertResultJSON(t, f.callTool(t, "trace", traceArgs(testRef)), testBundleJSON)
 }
 
 func TestTraceKeepsAmbiguousRefCandidates(t *testing.T) {

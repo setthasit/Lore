@@ -79,7 +79,7 @@ func TestHistoryOfReturnsBundleAsJSON(t *testing.T) {
 		HistoryOf(gomock.Any(), services.HistoryRequest{File: testFile}).
 		Return(testBundle(), nil)
 
-	assertBundleResult(t, f.callTool(t, historyName, historyArgs(testFile)), testBundleJSON)
+	assertResultJSON(t, f.callTool(t, historyName, historyArgs(testFile)), testBundleJSON)
 }
 
 func TestHistoryOfDeliversThePreconditionRefusalVerbatim(t *testing.T) {
