@@ -17,9 +17,10 @@ import (
 
 // Defaults applied at load when the corresponding key is absent.
 const (
-	DefaultEventWindow = Duration(30 * 24 * time.Hour)
-	DefaultWalkDepth   = 3
-	DefaultTopK        = 12
+	DefaultEventWindow       = Duration(30 * 24 * time.Hour)
+	DefaultWalkDepth         = 3
+	DefaultTopK              = 12
+	DefaultSchedulerInterval = Duration(30 * time.Minute)
 )
 
 // Config is a parsed lore.yaml workspace configuration.
@@ -89,6 +90,7 @@ type LLM struct {
 }
 
 type Scheduler struct {
+	// Zero is absent, not "never sync": Load fills it with DefaultSchedulerInterval.
 	Interval Duration `yaml:"interval"`
 }
 
@@ -175,6 +177,9 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.Query.TopK == 0 {
 		c.Query.TopK = DefaultTopK
+	}
+	if c.Scheduler.Interval == 0 {
+		c.Scheduler.Interval = DefaultSchedulerInterval
 	}
 
 	indexPath, err := expandHome("index_path", c.IndexPath)

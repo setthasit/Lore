@@ -30,6 +30,9 @@ func (c *Config) Validate() error {
 	if err := c.validateQuery(); err != nil {
 		return err
 	}
+	if err := c.validateScheduler(); err != nil {
+		return err
+	}
 	if c.LLM != nil && c.LLM.APIKeyEnv != "" {
 		return requireEnvValue("llm.api_key_env", c.LLM.APIKeyEnv)
 	}
@@ -100,6 +103,13 @@ func (c *Config) validateQuery() error {
 	}
 	if c.Query.TopK < 0 {
 		return internalerror.NewBadRequestError("query.top_k must not be negative", nil)
+	}
+	return nil
+}
+
+func (c *Config) validateScheduler() error {
+	if c.Scheduler.Interval < 0 {
+		return internalerror.NewBadRequestError("scheduler.interval must not be negative, got "+c.Scheduler.Interval.String(), nil)
 	}
 	return nil
 }
