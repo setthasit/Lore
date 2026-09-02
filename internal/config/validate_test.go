@@ -467,6 +467,127 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestValidateListenAddr(t *testing.T) {
+	tests := []struct {
+		name    string
+		addr    string
+		mtls    *MTLS
+		wantErr string
+	}{
+		{name: "loopback IPv4 in the clear", addr: "127.0.0.1:8080"},
+		{name: "another address in the loopback range", addr: "127.0.0.53:8080"},
+		{name: "loopback IPv6 in the clear", addr: "[::1]:8080"},
+		{name: "loopback IPv6 with a zone", addr: "[::1%lo0]:8080"},
+		{name: "IPv4-mapped loopback", addr: "[::ffff:127.0.0.1]:8080"},
+		{name: "port zero is still loopback", addr: "127.0.0.1:0"},
+		{
+			name:    "a bare port binds every interface",
+			addr:    ":8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "every IPv4 interface",
+			addr:    "0.0.0.0:8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "every IPv6 interface",
+			addr:    "[::]:8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "a routable address",
+			addr:    "10.1.2.3:8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "localhost is a name, not proof",
+			addr:    "localhost:8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "a host that does not resolve",
+			addr:    "nowhere.invalid:8080",
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "no port",
+			addr:    "127.0.0.1",
+			wantErr: "must be a host:port address",
+		},
+		{
+			name:    "empty",
+			wantErr: "must be a host:port address",
+		},
+		{
+			name:    "unbracketed IPv6",
+			addr:    "::1:8080",
+			wantErr: "must be a host:port address",
+		},
+		{
+			name:    "a malformed address is refused even with TLS",
+			addr:    "127.0.0.1:8080:9090",
+			mtls:    &MTLS{Cert: "./certs/server.pem", Key: "./certs/server-key.pem"},
+			wantErr: "must be a host:port address",
+		},
+		{
+			name: "non-loopback with a certificate and a key",
+			addr: "0.0.0.0:8443",
+			mtls: &MTLS{Cert: "./certs/server.pem", Key: "./certs/server-key.pem"},
+		},
+		{
+			name:    "non-loopback with a certificate but no key",
+			addr:    "0.0.0.0:8443",
+			mtls:    &MTLS{Cert: "./certs/server.pem"},
+			wantErr: "is not a loopback address",
+		},
+		{
+			name:    "non-loopback with a client CA only",
+			addr:    "0.0.0.0:8443",
+			mtls:    &MTLS{ClientCA: "./certs/ca.pem"},
+			wantErr: "is not a loopback address",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{Server: Server{MTLS: test.mtls}}
+
+			err := cfg.ValidateListenAddr(test.addr)
+
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateListenAddr(%q) = %v, want success", test.addr, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateListenAddr(%q) = nil, want error containing %q", test.addr, test.wantErr)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("ValidateListenAddr(%q) error kind = %s, want bad request", test.addr, internalerror.KindOf(err))
+			}
+			for _, want := range []string{test.wantErr, "server.http_addr"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("ValidateListenAddr(%q) error = %q, want it to contain %q", test.addr, err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateListenAddrRefusalNamesTheRemedy(t *testing.T) {
+	err := new(Config).ValidateListenAddr("0.0.0.0:8443")
+	if err == nil {
+		t.Fatal("ValidateListenAddr() = nil, want a refusal")
+	}
+	for _, want := range []string{"server.mtls.cert", "server.mtls.key", "127.0.0.1:8443", "TLS"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err, want)
+		}
+	}
+}
+
 func TestLoadValidatesRepoPaths(t *testing.T) {
 	tests := []struct {
 		name    string

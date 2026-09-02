@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/fx"
 	"go.uber.org/mock/gomock"
 
 	"lore/internal/config"
@@ -28,6 +29,7 @@ type result struct {
 	stderr   string
 	exitCode int
 	released bool
+	modules  []fx.Option
 }
 
 func run(t *testing.T, rt *Runtime, args ...string) result {
@@ -42,10 +44,11 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 	var out, errOut bytes.Buffer
 	res := result{}
 
-	resolve := func(context.Context, string) (*Runtime, func() error, error) {
+	resolve := func(_ context.Context, _ string, modules ...fx.Option) (*Runtime, func() error, error) {
 		if rt.Config == nil {
 			rt.Config = new(config.Config)
 		}
+		res.modules = modules
 		return rt, func() error { res.released = true; return nil }, nil
 	}
 

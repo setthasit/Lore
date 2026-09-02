@@ -3,8 +3,11 @@ package config
 import (
 	"errors"
 	"io/fs"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"lore/internal/errors/internalerror"
 )
@@ -13,7 +16,7 @@ import (
 // defaults before calling it, so absent optional tuning is already filled in.
 //
 // The loopback/TLS rule is deliberately not enforced here: it depends on the
-// addresses `lore serve` actually binds and is checked at startup.
+// address `lore serve` actually binds and is ValidateListenAddr's job.
 func (c *Config) Validate() error {
 	if c.Workspace == "" {
 		return internalerror.NewBadRequestError("workspace must be set", nil)
@@ -37,6 +40,25 @@ func (c *Config) Validate() error {
 		return requireEnvValue("llm.api_key_env", c.LLM.APIKeyEnv)
 	}
 	return nil
+}
+
+// Serving in the clear needs an addr that is provably loopback: a host name is never
+// proof, it is not resolved here, and an empty host as in ":8080" reaches every interface.
+func (c *Config) ValidateListenAddr(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return internalerror.NewBadRequestError(
+			"server.http_addr must be a host:port address, got "+strconv.Quote(addr), err)
+	}
+	if ip, err := netip.ParseAddr(host); err == nil && ip.IsLoopback() {
+		return nil
+	}
+	if c.Server.MTLS != nil && c.Server.MTLS.Cert != "" && c.Server.MTLS.Key != "" {
+		return nil
+	}
+	return internalerror.NewBadRequestError("server.http_addr "+strconv.Quote(addr)+
+		" is not a loopback address, so it must be served over TLS: set both server.mtls.cert"+
+		" and server.mtls.key, or bind 127.0.0.1:"+port, nil)
 }
 
 func (c *Config) validateSources() error {
