@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -296,6 +297,12 @@ func (o *scheduledSync) Sync(context.Context, services.SyncOptions) (services.Sy
 	<-o.released
 
 	return services.SyncResult{}, nil
+}
+
+func (o *scheduledSync) Subscribe() (<-chan entities.SyncEvent, func()) {
+	events := make(chan entities.SyncEvent)
+
+	return events, sync.OnceFunc(func() { close(events) })
 }
 
 func (o *scheduledSync) awaitRound(t *testing.T) {

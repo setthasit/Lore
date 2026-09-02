@@ -50,3 +50,24 @@ type LeaseState struct {
 	AcquiredAt  time.Time
 	HeartbeatAt time.Time
 }
+
+type SyncPhase string
+
+const (
+	SyncPhaseRoundStarted      SyncPhase = "round_started"
+	SyncPhaseBatchStored       SyncPhase = "batch_stored"
+	SyncPhaseChunksIndexed     SyncPhase = "chunks_indexed"
+	SyncPhaseConnectorFinished SyncPhase = "connector_finished"
+	SyncPhasePendingLinked     SyncPhase = "pending_linked"
+	SyncPhaseRoundFinished     SyncPhase = "round_finished"
+	SyncPhaseFailed            SyncPhase = "failed"
+)
+
+type SyncEvent struct {
+	Source    string
+	Phase     SyncPhase
+	Documents int64
+	Chunks    int64
+	Err       error
+	At        time.Time
+}

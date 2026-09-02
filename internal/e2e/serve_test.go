@@ -18,6 +18,7 @@ import (
 
 	"lore/internal/di"
 	"lore/internal/entities"
+	"lore/internal/transport"
 	"lore/internal/transport/cli"
 	"lore/internal/transport/mcp"
 )
@@ -50,8 +51,8 @@ type servedWorkspace struct {
 	joined  sync.Once
 }
 
-func (w *workspace) mcpServices() mcp.Services {
-	return mcp.Services{
+func (w *workspace) services() transport.Services {
+	return transport.Services{
 		Query:   w.query,
 		Why:     w.why,
 		Trace:   w.trace,
@@ -72,7 +73,7 @@ func serveWorkspace(t *testing.T, w *workspace) *servedWorkspace {
 
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- mcp.ServeHTTP(ctx, listener, w.mcpServices(), nil) }()
+	go func() { served <- mcp.ServeHTTP(ctx, listener, w.services(), nil) }()
 
 	s := &servedWorkspace{workspace: w, stop: stop, served: served}
 	t.Cleanup(func() { s.shutDown(t) })

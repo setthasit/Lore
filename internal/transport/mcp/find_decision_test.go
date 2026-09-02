@@ -18,6 +18,7 @@ import (
 	"lore/internal/errors/internalerror"
 	mock_services "lore/internal/mocks/services"
 	"lore/internal/services"
+	"lore/internal/transport"
 )
 
 type toolFixture struct {
@@ -78,8 +79,8 @@ func newMockedTools(t *testing.T) toolFixture {
 	}
 }
 
-func (f toolFixture) services() Services {
-	return Services{
+func (f toolFixture) services() transport.Services {
+	return transport.Services{
 		Query:   f.query,
 		Why:     f.why,
 		Trace:   f.trace,
@@ -320,12 +321,12 @@ func TestFindDecisionMapsServiceErrors(t *testing.T) {
 		{
 			name: "internal hides the cause",
 			err:  internalerror.NewInternalError("vector search failed", errors.New(testCause)),
-			want: internalErrorMessage,
+			want: transport.InternalErrorMessage,
 		},
 		{
 			name: "unclassified hides the cause",
 			err:  errors.New(testCause),
-			want: internalErrorMessage,
+			want: transport.InternalErrorMessage,
 		},
 	}
 

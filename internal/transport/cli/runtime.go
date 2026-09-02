@@ -10,7 +10,7 @@ import (
 	"lore/internal/config"
 	"lore/internal/di"
 	"lore/internal/services"
-	"lore/internal/transport/mcp"
+	"lore/internal/transport"
 )
 
 type Runtime struct {
@@ -48,8 +48,8 @@ func resolveWithFX(ctx context.Context, configPath string, modules ...fx.Option)
 	return rt, func() error { return app.Stop(context.WithoutCancel(ctx)) }, nil
 }
 
-func (rt *Runtime) mcpServices() mcp.Services {
-	return mcp.Services{
+func (rt *Runtime) services() transport.Services {
+	return transport.Services{
 		Query:   rt.Query,
 		Why:     rt.Why,
 		Trace:   rt.Trace,

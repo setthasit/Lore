@@ -42,9 +42,14 @@ func (c roundCall) end(result SyncResult, err error) {
 type scriptedOrchestrator struct {
 	calls     chan roundCall
 	abandoned chan struct{}
+	events    syncEventBus
 }
 
 var _ SyncOrchestrator = (*scriptedOrchestrator)(nil)
+
+func (o *scriptedOrchestrator) Subscribe() (<-chan entities.SyncEvent, func()) {
+	return o.events.subscribe()
+}
 
 func (o *scriptedOrchestrator) Sync(ctx context.Context, _ SyncOptions) (SyncResult, error) {
 	call := roundCall{ctx: ctx, ends: make(chan roundOutcome)}

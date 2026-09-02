@@ -57,7 +57,7 @@ func serveMCP(cmd *cobra.Command, rt *Runtime, override string) error {
 	}
 	printfln(cmd.ErrOrStderr(), "lore: serving MCP on %s%s%s", scheme(tlsConfig), listener.Addr(), mcp.EndpointPath)
 
-	return mcp.ServeHTTP(cmd.Context(), listener, rt.mcpServices(), tlsConfig)
+	return mcp.ServeHTTP(cmd.Context(), listener, rt.services(), tlsConfig)
 }
 
 func scheme(tlsConfig *tls.Config) string {
