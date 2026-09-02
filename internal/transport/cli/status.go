@@ -30,6 +30,7 @@ func newStatusCommand(resolve Resolver, configPath *string) *cobra.Command {
 func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 	printfln(w, "documents: %d", stats.Documents)
 	printfln(w, "chunks:    %d", stats.Chunks)
+	printfln(w, "edges:     %d", stats.Edges)
 
 	printfln(w, "")
 	if len(stats.Cursors) == 0 {

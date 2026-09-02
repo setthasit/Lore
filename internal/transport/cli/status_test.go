@@ -26,6 +26,7 @@ func TestStatusRendersCountsCursorAgesAndLock(t *testing.T) {
 	rt := mockStatus(t, entities.IndexStats{
 		Documents: 1284,
 		Chunks:    9613,
+		Edges:     431,
 		Cursors: []entities.CursorAge{
 			{Connector: "github", UpdatedAt: now.Add(-90 * time.Minute)},
 			{Connector: "notion", UpdatedAt: now.Add(-3 * 24 * time.Hour)},
@@ -48,6 +49,7 @@ func TestStatusRendersCountsCursorAgesAndLock(t *testing.T) {
 	for _, want := range []string{
 		"documents: 1284",
 		"chunks:    9613",
+		"edges:     431",
 		"github     last checkpoint 1h ago",
 		"notion     last checkpoint 3d ago",
 		"sync lock: held by host-1/4242 since 2025-03-12T09:30:00Z, heartbeat 12s ago",
@@ -65,7 +67,13 @@ func TestStatusOnAnUnsyncedWorkspace(t *testing.T) {
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	for _, want := range []string{"documents: 0", "chunks:    0", "none have checkpointed yet", "sync lock: free"} {
+	for _, want := range []string{
+		"documents: 0",
+		"chunks:    0",
+		"edges:     0",
+		"none have checkpointed yet",
+		"sync lock: free",
+	} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("output is missing %q\n--- output ---\n%s", want, res.stdout)
 		}

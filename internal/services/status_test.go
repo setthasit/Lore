@@ -30,6 +30,7 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 	want := entities.IndexStats{
 		Documents: 1284,
 		Chunks:    9613,
+		Edges:     431,
 		Cursors:   []entities.CursorAge{{Connector: "github", UpdatedAt: at}},
 		Lease:     &entities.LeaseState{Holder: "host-1/4242", AcquiredAt: at, HeartbeatAt: at},
 	}
@@ -39,8 +40,9 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if got.Documents != want.Documents || got.Chunks != want.Chunks {
-		t.Errorf("counts = %d, %d; want %d, %d", got.Documents, got.Chunks, want.Documents, want.Chunks)
+	if got.Documents != want.Documents || got.Chunks != want.Chunks || got.Edges != want.Edges {
+		t.Errorf("counts = %d, %d, %d; want %d, %d, %d",
+			got.Documents, got.Chunks, got.Edges, want.Documents, want.Chunks, want.Edges)
 	}
 	if len(got.Cursors) != 1 || got.Cursors[0] != want.Cursors[0] {
 		t.Errorf("cursors = %+v, want %+v", got.Cursors, want.Cursors)
