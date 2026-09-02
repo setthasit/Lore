@@ -26,6 +26,8 @@ type toolFixture struct {
 	trace   *mock_services.MockTraceService
 	impact  *mock_services.MockImpactService
 	history *mock_services.MockHistoryService
+	sync    *mock_services.MockSyncOrchestrator
+	status  *mock_services.MockStatusService
 	session *sdk.ClientSession
 	logs    *bytes.Buffer
 }
@@ -40,9 +42,19 @@ func newToolFixture(t *testing.T) toolFixture {
 	trace := mock_services.NewMockTraceService(ctrl)
 	impact := mock_services.NewMockImpactService(ctrl)
 	history := mock_services.NewMockHistoryService(ctrl)
+	sync := mock_services.NewMockSyncOrchestrator(ctrl)
+	status := mock_services.NewMockStatusService(ctrl)
 	logs := &bytes.Buffer{}
 
-	svc := Services{Query: query, Why: why, Trace: trace, Impact: impact, History: history}
+	svc := Services{
+		Query:   query,
+		Why:     why,
+		Trace:   trace,
+		Impact:  impact,
+		History: history,
+		Sync:    sync,
+		Status:  status,
+	}
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
 	serverSession, err := newServer(svc, slog.New(slog.NewTextHandler(logs, nil))).Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -69,6 +81,8 @@ func newToolFixture(t *testing.T) toolFixture {
 		trace:   trace,
 		impact:  impact,
 		history: history,
+		sync:    sync,
+		status:  status,
 		session: clientSession,
 		logs:    logs,
 	}
@@ -125,7 +139,7 @@ func errorText(t *testing.T, res *sdk.CallToolResult) string {
 	return text.Text
 }
 
-func assertBundleResult(t *testing.T, res *sdk.CallToolResult, want string) {
+func assertResultJSON(t *testing.T, res *sdk.CallToolResult, want string) {
 	t.Helper()
 
 	if res.IsError {
@@ -159,7 +173,7 @@ func TestFindDecisionReturnsBundleAsJSON(t *testing.T) {
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).
 		Return(testBundle(), nil)
 
-	assertBundleResult(t, f.call(t, questionArgs(testQuestion)), testBundleJSON)
+	assertResultJSON(t, f.call(t, questionArgs(testQuestion)), testBundleJSON)
 }
 
 func TestFindDecisionReturnsEmptyBundle(t *testing.T) {
@@ -168,7 +182,7 @@ func TestFindDecisionReturnsEmptyBundle(t *testing.T) {
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).
 		Return(&entities.EvidenceBundle{Question: testQuestion}, nil)
 
-	assertBundleResult(t, f.call(t, questionArgs(testQuestion)), `{
+	assertResultJSON(t, f.call(t, questionArgs(testQuestion)), `{
 		"question": "why postgres over mysql",
 		"anchor": {"kinds": []},
 		"nodes": []

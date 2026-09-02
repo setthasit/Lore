@@ -27,6 +27,8 @@ type Services struct {
 	Trace   services.TraceService
 	Impact  services.ImpactService
 	History services.HistoryService
+	Sync    services.SyncOrchestrator
+	Status  services.StatusService
 }
 
 // Blocks until ctx is cancelled or the client disconnects.
@@ -41,6 +43,8 @@ func newServer(svc Services, log *slog.Logger) *sdk.Server {
 	registerTrace(server, svc.Trace, log)
 	registerImpactOf(server, svc.Impact, log)
 	registerHistoryOf(server, svc.History, log)
+	registerSyncNow(server, svc.Sync, log)
+	registerSyncStatus(server, svc.Status, log)
 
 	return server
 }

@@ -22,6 +22,8 @@ func newMCPCommand(resolve Resolver, configPath *string) *cobra.Command {
 					Trace:   rt.Trace,
 					Impact:  rt.Impact,
 					History: rt.History,
+					Sync:    rt.Sync,
+					Status:  rt.Status,
 				})
 			})
 		},

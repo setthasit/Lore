@@ -153,7 +153,7 @@ func Load(path string) (*Config, error) {
 
 	var cfg Config
 	if err := decoder.Decode(&cfg); err != nil {
-		return nil, internalerror.NewBadRequestError("invalid configuration at "+path, err)
+		return nil, internalerror.NewBadRequestError("invalid configuration at "+path+": "+err.Error(), err)
 	}
 
 	if err := cfg.applyDefaults(); err != nil {

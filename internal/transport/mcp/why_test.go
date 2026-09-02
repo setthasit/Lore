@@ -100,7 +100,7 @@ func TestWhyReturnsBundleAsJSON(t *testing.T) {
 		Why(gomock.Any(), services.WhyRequest{File: testFile, LineStart: 10}).
 		Return(testBundle(), nil)
 
-	assertBundleResult(t, f.callTool(t, whyName, whyArgs(testFile, 10)), testBundleJSON)
+	assertResultJSON(t, f.callTool(t, whyName, whyArgs(testFile, 10)), testBundleJSON)
 }
 
 func TestWhyMapsServiceErrors(t *testing.T) {

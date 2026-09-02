@@ -69,7 +69,7 @@ func TestImpactReturnsBundleAsJSON(t *testing.T) {
 		ImpactOf(gomock.Any(), services.ImpactRequest{Ref: testRef}).
 		Return(testBundle(), nil)
 
-	assertBundleResult(t, f.callTool(t, "impact_of", impactArgs(testRef)), testBundleJSON)
+	assertResultJSON(t, f.callTool(t, "impact_of", impactArgs(testRef)), testBundleJSON)
 }
 
 func TestImpactKeepsAmbiguousRefCandidates(t *testing.T) {

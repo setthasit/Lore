@@ -165,6 +165,18 @@ func assertSyncKind(t *testing.T, err error, want internalerror.Kind) {
 	}
 }
 
+// Transports may show the caller nothing but Message, so it carries the assertions.
+func syncMessage(t *testing.T, err error) string {
+	t.Helper()
+
+	var classified *internalerror.Error
+	if !errors.As(err, &classified) {
+		t.Fatalf("Sync() error %v is unclassified", err)
+	}
+
+	return classified.Message
+}
+
 func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	t.Parallel()
 
@@ -349,7 +361,7 @@ func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
 			name:     "an unreadable lease still refuses the round",
 			leaseErr: errSyncStore,
 			want:     "another process",
-			wantExact: "cannot run a sync round: sync lease held — another process is already writing this index; " +
+			wantExact: "cannot run a sync round — another process is already writing this index; " +
 				"retry later, or wait out the 60s lease TTL if that holder crashed",
 		},
 	}
@@ -368,13 +380,87 @@ func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
 			if !errors.Is(err, services.ErrSyncLocked) {
 				t.Errorf("Sync() error = %v, want it to wrap ErrSyncLocked", err)
 			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("Sync() error = %q, want it to name %q", err, tt.want)
+			message := syncMessage(t, err)
+			if !strings.Contains(message, tt.want) {
+				t.Errorf("Sync() message = %q, want it to name %q", message, tt.want)
 			}
-			if tt.wantExact != "" && err.Error() != tt.wantExact {
-				t.Errorf("Sync() error = %q, want exactly %q", err, tt.wantExact)
+			if tt.wantExact != "" && message != tt.wantExact {
+				t.Errorf("Sync() message = %q, want exactly %q", message, tt.wantExact)
 			}
 		})
+	}
+}
+
+func TestSyncRestrictsTheRoundToTheNamedSource(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+	m.linkedPending()
+
+	github, notion := m.connector("github"), m.connector("notion")
+	// notion declares no Cursor or Changes call: the strict controller fails the round if it is read.
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	github.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+
+	_, err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{Source: "github"})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+func TestSyncWithoutASourceRunsEveryConnector(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+	m.linkedPending()
+
+	var connectors []entities.Connector
+	for _, name := range []string{"github", "notion"} {
+		conn := m.connector(name)
+		m.store.EXPECT().Cursor(gomock.Any(), name).Return(nil, nil)
+		conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+		connectors = append(connectors, conn)
+	}
+
+	if _, err := m.orchestrator(connectors...).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+func TestSyncRejectsAnUnknownSource(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	// No lease call is declared: an unknown source is refused before the round takes the lock.
+	_, err := m.orchestrator(m.connector("github"), m.connector("notion")).
+		Sync(context.Background(), services.SyncOptions{Source: "gitlab"})
+
+	assertSyncKind(t, err, internalerror.KindBadRequest)
+
+	message := syncMessage(t, err)
+	for _, want := range []string{`"gitlab"`, "github, notion"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("Sync() message = %q, want it to name %q", message, want)
+		}
+	}
+}
+
+func TestSyncRefusesToReembedASingleSource(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	// No store call is declared: a re-embed wipes chunks workspace-wide, so the pair dies before any of it.
+	_, err := m.orchestrator(m.connector("github"), m.connector("notion")).
+		Sync(context.Background(), services.SyncOptions{Source: "github", Reembed: true})
+
+	assertSyncKind(t, err, internalerror.KindBadRequest)
+
+	if message := syncMessage(t, err); !strings.Contains(message, "whole workspace") {
+		t.Errorf("Sync() message = %q, want it to say a re-embed covers the whole workspace", message)
 	}
 }
 

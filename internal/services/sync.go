@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"lore/internal/connectors/embedder"
@@ -17,6 +18,9 @@ import (
 const metaKeyEmbedderIdentity = "embedder_identity"
 
 type SyncOptions struct {
+	// Restricts the round to the connector of that name; empty syncs every configured connector.
+	Source string
+
 	// Wipes chunks, resets every cursor, and re-reads sources from the beginning.
 	Reembed bool
 }
@@ -77,6 +81,17 @@ func leaseHolder() string {
 }
 
 func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
+	if opts.Reembed && opts.Source != "" {
+		return SyncResult{}, internalerror.NewBadRequestError(
+			"cannot re-embed a single source: a re-embed wipes every source's chunks and rewinds every cursor, "+
+				"so it must run across the whole workspace", nil)
+	}
+
+	selected, err := s.selectConnectors(opts.Source)
+	if err != nil {
+		return SyncResult{}, err
+	}
+
 	previous, _ := s.store.Lease(ctx)
 
 	acquired, err := s.store.TryAcquireLease(ctx, s.holder)
@@ -105,7 +120,7 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 		return SyncResult{}, roundFailure(round, err)
 	}
 
-	for _, conn := range s.connectors {
+	for _, conn := range selected {
 		if err := s.syncConnector(round, conn); err != nil {
 			return SyncResult{}, roundFailure(round, err)
 		}
@@ -116,6 +131,33 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 	}
 
 	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+}
+
+func (s *syncOrchestrator) selectConnectors(source string) ([]entities.Connector, error) {
+	if source == "" {
+		return s.connectors, nil
+	}
+	for _, conn := range s.connectors {
+		if conn.Name() == source {
+			return []entities.Connector{conn}, nil
+		}
+	}
+
+	return nil, internalerror.NewBadRequestError(fmt.Sprintf(
+		"unknown source %q; this workspace has %s", source, s.configuredSources()), nil)
+}
+
+func (s *syncOrchestrator) configuredSources() string {
+	if len(s.connectors) == 0 {
+		return "no configured sources"
+	}
+
+	names := make([]string, len(s.connectors))
+	for i, conn := range s.connectors {
+		names[i] = conn.Name()
+	}
+
+	return strings.Join(names, ", ")
 }
 
 const (
@@ -178,6 +220,7 @@ func (s *syncOrchestrator) tookOver(previous *entities.LeaseState) *entities.Lea
 	return previous
 }
 
+// Transports may render Message alone, so the holder must not hide in the cause.
 func (s *syncOrchestrator) leaseHeldError(ctx context.Context) error {
 	who := "another process"
 	if held, err := s.store.Lease(ctx); err == nil && held != nil {
@@ -185,9 +228,10 @@ func (s *syncOrchestrator) leaseHeldError(ctx context.Context) error {
 		who = fmt.Sprintf("%s (last heartbeat %s ago)", held.Holder, age)
 	}
 
-	return internalerror.NewPreconditionError("cannot run a sync round", fmt.Errorf(
-		"%w — %s is already writing this index; retry later, or wait out the %ds lease TTL if that holder crashed",
-		ErrSyncLocked, who, int(repositories.LeaseTTL.Seconds())))
+	return internalerror.NewPreconditionError(fmt.Sprintf(
+		"cannot run a sync round — %s is already writing this index; retry later, "+
+			"or wait out the %ds lease TTL if that holder crashed",
+		who, int(repositories.LeaseTTL.Seconds())), ErrSyncLocked)
 }
 
 func (s *syncOrchestrator) reconcileIdentity(ctx context.Context, opts SyncOptions) error {

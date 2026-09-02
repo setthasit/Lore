@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	countDocumentsSQL = `SELECT count(*) FROM documents`
-	countChunksSQL    = `SELECT count(*) FROM chunks`
+	countIndexRowsSQL = `SELECT
+	(SELECT count(*) FROM documents),
+	(SELECT count(*) FROM chunks),
+	(SELECT count(*) FROM edges)`
 
 	// Ordered by connector so a rendered report is stable between runs.
 	selectCursorAgesSQL = `SELECT connector, updated_at FROM cursors ORDER BY connector`
@@ -22,11 +24,9 @@ const (
 func (s *Store) Stats(ctx context.Context) (entities.IndexStats, error) {
 	var stats entities.IndexStats
 
-	if err := s.db.QueryRowContext(ctx, countDocumentsSQL).Scan(&stats.Documents); err != nil {
-		return entities.IndexStats{}, fmt.Errorf("sqlite: count documents: %w", err)
-	}
-	if err := s.db.QueryRowContext(ctx, countChunksSQL).Scan(&stats.Chunks); err != nil {
-		return entities.IndexStats{}, fmt.Errorf("sqlite: count chunks: %w", err)
+	err := s.db.QueryRowContext(ctx, countIndexRowsSQL).Scan(&stats.Documents, &stats.Chunks, &stats.Edges)
+	if err != nil {
+		return entities.IndexStats{}, fmt.Errorf("sqlite: count index rows: %w", err)
 	}
 
 	ages, err := s.cursorAges(ctx)

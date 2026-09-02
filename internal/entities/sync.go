@@ -30,6 +30,7 @@ type Connector interface {
 type IndexStats struct {
 	Documents int64
 	Chunks    int64
+	Edges     int64
 
 	// One entry per connector that has ever checkpointed, ordered by connector name.
 	Cursors []CursorAge

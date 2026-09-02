@@ -17,6 +17,8 @@ const (
 	exitNotFound     = 4
 )
 
+// The kinds a caller can act on say everything actionable in Message; only an
+// error the caller cannot act on falls back to the cause for diagnosis.
 func report(w io.Writer, err error) int {
 	if err == nil {
 		return exitOK
@@ -26,7 +28,7 @@ func report(w io.Writer, err error) int {
 
 	var classified *internalerror.Error
 	if errors.As(err, &classified) {
-		message = classified.Error()
+		message = classified.Message
 		switch classified.Kind {
 		case internalerror.KindBadRequest:
 			code = exitBadRequest
@@ -35,7 +37,7 @@ func report(w io.Writer, err error) int {
 		case internalerror.KindNotFound:
 			code = exitNotFound
 		default:
-			code = exitInternal
+			message, code = classified.Error(), exitInternal
 		}
 	}
 

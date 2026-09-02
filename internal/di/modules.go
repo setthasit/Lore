@@ -238,7 +238,8 @@ func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
 
 	emb, err := openai.New(key, spec.model, "", spec.dims)
 	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot configure the "+spec.provider+" embedder", err)
+		return nil, internalerror.NewBadRequestError(
+			"cannot configure the "+spec.provider+" embedder: "+err.Error(), err)
 	}
 	return emb, nil
 }

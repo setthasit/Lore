@@ -15,8 +15,9 @@ func TestStatsEmptyStoreIsZeros(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if got.Documents != 0 || got.Chunks != 0 {
-		t.Errorf("counts = %d documents, %d chunks; want 0, 0", got.Documents, got.Chunks)
+	if got.Documents != 0 || got.Chunks != 0 || got.Edges != 0 {
+		t.Errorf("counts = %d documents, %d chunks, %d edges; want 0, 0, 0",
+			got.Documents, got.Chunks, got.Edges)
 	}
 	if got.Cursors != nil {
 		t.Errorf("Cursors = %v, want none", got.Cursors)
@@ -33,6 +34,43 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 	ctx := context.Background()
 
 	seedSearchCorpus(t, s)
+
+	// A second chunk under one document keeps the three counts distinct, so a
+	// transposed positional scan in Stats cannot pass.
+	split := searchCorpus[0]
+	first := entities.Chunk{
+		DocID:     split.id,
+		Ordinal:   0,
+		Text:      split.text,
+		Source:    split.source,
+		RepoRef:   split.repoRef,
+		DocType:   split.docType,
+		Author:    "dev@example.test",
+		CreatedAt: split.created,
+		UpdatedAt: split.created,
+		ThreadID:  "thread-split",
+		Embedding: split.embedding,
+	}
+	second := first
+	second.Ordinal = 1
+	if err := s.ReplaceChunks(ctx, split.id, []entities.Chunk{first, second}); err != nil {
+		t.Fatalf("ReplaceChunks(%q): %v", split.id, err)
+	}
+
+	edges := []entities.Edge{{
+		Src:        searchCorpus[0].id,
+		Dst:        searchCorpus[1].id,
+		Kind:       entities.EdgeKindCommitInPR,
+		Confidence: 1,
+	}, {
+		Src:        searchCorpus[1].id,
+		Dst:        searchCorpus[3].id,
+		Kind:       entities.EdgeKindPRClosesIssue,
+		Confidence: 1,
+	}}
+	if err := s.UpsertEdges(ctx, edges); err != nil {
+		t.Fatalf("UpsertEdges: %v", err)
+	}
 
 	if err := s.SetCursor(ctx, "notion", entities.Cursor{"page": "3"}); err != nil {
 		t.Fatalf("SetCursor(notion): %v", err)
@@ -53,8 +91,11 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 	if got.Documents != int64(len(searchCorpus)) {
 		t.Errorf("Documents = %d, want %d", got.Documents, len(searchCorpus))
 	}
-	if got.Chunks != int64(len(searchCorpus)) {
-		t.Errorf("Chunks = %d, want %d", got.Chunks, len(searchCorpus))
+	if got.Chunks != int64(len(searchCorpus))+1 {
+		t.Errorf("Chunks = %d, want %d", got.Chunks, len(searchCorpus)+1)
+	}
+	if got.Edges != int64(len(edges)) {
+		t.Errorf("Edges = %d, want %d", got.Edges, len(edges))
 	}
 
 	if len(got.Cursors) != 2 {
