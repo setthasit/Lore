@@ -50,6 +50,7 @@ llm:
   provider: anthropic
   model: claude-sonnet-4-5
   api_key_env: LORE_LLM_KEY
+  base_url: https://api.anthropic.com
 
 scheduler:
   interval: 30m
@@ -445,7 +446,8 @@ repos:
 					cfg.Embedder.BaseURL != "https://api.openai.com" {
 					t.Errorf("embedder = %+v", cfg.Embedder)
 				}
-				if cfg.LLM.Provider != "anthropic" || cfg.LLM.APIKeyEnv != "LORE_LLM_KEY" {
+				if cfg.LLM.Provider != "anthropic" || cfg.LLM.APIKeyEnv != "LORE_LLM_KEY" ||
+					cfg.LLM.BaseURL != "https://api.anthropic.com" {
 					t.Errorf("llm = %+v", cfg.LLM)
 				}
 				if want := Duration(30 * time.Minute); cfg.Scheduler.Interval != want {

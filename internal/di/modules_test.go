@@ -16,6 +16,7 @@ import (
 
 	"lore/internal/config"
 	"lore/internal/connectors/embedder"
+	"lore/internal/connectors/llm"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/repositories"
@@ -266,6 +267,160 @@ embedder:
 		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
 	}
 	if want := "embedder.dimensions must not be set"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not contain %q", err, want)
+	}
+}
+
+const llmKeyEnv = "LORE_TEST_LLM_KEY"
+
+func resolveSynthesis(t *testing.T, path string) (services.SynthesisService, llm.LLM, error) {
+	t.Helper()
+
+	var (
+		svc   services.SynthesisService
+		model llm.LLM
+	)
+	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&svc, &model))
+	if err := app.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	ctx := context.Background()
+	if err := app.Start(ctx); err != nil {
+		return nil, nil, err
+	}
+	if err := app.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	return svc, model, nil
+}
+
+// `lore mcp`, `lore sync` and `lore status` run on workspaces that never synthesize.
+func TestWorkspaceGraphResolvesWithoutAnLLMBlock(t *testing.T) {
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+`)
+
+	svc, model, err := resolveSynthesis(t, path)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if model != nil {
+		t.Errorf("llm = %v, want none for a workspace with no llm: block", model)
+	}
+
+	_, err = svc.Synthesize(context.Background(), "why option B?", &entities.EvidenceBundle{})
+	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
+		t.Fatalf("kind = %s, want %s (error %v)", got, internalerror.KindPrecondition, err)
+	}
+	if want := "llm:"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not name the %s block", err, want)
+	}
+}
+
+func TestWorkspaceGraphResolvesTheConfiguredLLM(t *testing.T) {
+	t.Setenv(llmKeyEnv, "sk-example")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-5
+  api_key_env: `+llmKeyEnv+`
+`)
+
+	svc, model, err := resolveSynthesis(t, path)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if svc == nil || model == nil {
+		t.Fatalf("graph resolved to synthesis=%v llm=%v; want both", svc, model)
+	}
+}
+
+func TestWorkspaceGraphResolvesTheOllamaLLMWithoutAKey(t *testing.T) {
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+llm:
+  provider: ollama
+  model: qwen2.5
+  base_url: http://127.0.0.1:11434
+`)
+
+	_, model, err := resolveSynthesis(t, path)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if model == nil {
+		t.Error("llm = none, want the local provider, which needs no key")
+	}
+}
+
+func TestWorkspaceGraphRejectsUnknownLLMProvider(t *testing.T) {
+	t.Setenv(llmKeyEnv, "sk-example")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+llm:
+  provider: gemini
+  model: gemini-2.5-pro
+  api_key_env: `+llmKeyEnv+`
+`)
+
+	_, _, err := resolveSynthesis(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error naming the provider")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindPrecondition)
+	}
+	for _, want := range []string{"gemini", providerOpenAI, providerAnthropic, providerZAI, providerOllama} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+// The unset variable is refused while lore.yaml loads, before any provider is built.
+func TestWorkspaceGraphRejectsAnUnsetLLMKeyVariableAtLoad(t *testing.T) {
+	t.Setenv(llmKeyEnv, "")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+llm:
+  provider: openai
+  model: gpt-5
+  api_key_env: `+llmKeyEnv+`
+`)
+
+	_, _, err := resolveSynthesis(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error naming the key variable")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+	if !strings.Contains(err.Error(), llmKeyEnv) {
+		t.Errorf("error %q does not name %s", err, llmKeyEnv)
+	}
+}
+
+func TestWorkspaceGraphRejectsAKeyedLLMWithoutAKeyVariable(t *testing.T) {
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+llm:
+  provider: zai
+  model: glm-4.6
+`)
+
+	_, _, err := resolveSynthesis(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error naming llm.api_key_env")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+	if want := "llm.api_key_env must name the environment variable holding the zai API key"; !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err, want)
 	}
 }
