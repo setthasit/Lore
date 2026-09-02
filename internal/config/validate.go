@@ -44,11 +44,11 @@ func (c *Config) Validate() error {
 
 // Serving in the clear needs an addr that is provably loopback: a host name is never
 // proof, it is not resolved here, and an empty host as in ":8080" reaches every interface.
-func (c *Config) ValidateListenAddr(addr string) error {
+func (c *Config) ValidateListenAddr(setting, addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return internalerror.NewBadRequestError(
-			"server.http_addr must be a host:port address, got "+strconv.Quote(addr), err)
+			setting+" must be a host:port address, got "+strconv.Quote(addr), err)
 	}
 	if ip, err := netip.ParseAddr(host); err == nil && ip.IsLoopback() {
 		return nil
@@ -56,7 +56,7 @@ func (c *Config) ValidateListenAddr(addr string) error {
 	if c.Server.MTLS != nil && c.Server.MTLS.Cert != "" && c.Server.MTLS.Key != "" {
 		return nil
 	}
-	return internalerror.NewBadRequestError("server.http_addr "+strconv.Quote(addr)+
+	return internalerror.NewBadRequestError(setting+" "+strconv.Quote(addr)+
 		" is not a loopback address, so it must be served over TLS: set both server.mtls.cert"+
 		" and server.mtls.key, or bind 127.0.0.1:"+port, nil)
 }

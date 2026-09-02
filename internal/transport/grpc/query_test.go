@@ -65,7 +65,7 @@ func newRPCFixture(t *testing.T) rpcFixture {
 	listener := bufconn.Listen(rpcBuffer)
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, listener, svc, log) }()
+	go func() { served <- Serve(ctx, listener, svc, log, nil) }()
 
 	conn, err := grpclib.NewClient("passthrough:///bufnet",
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),

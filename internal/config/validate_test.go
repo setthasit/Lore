@@ -553,23 +553,27 @@ func TestValidateListenAddr(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := &Config{Server: Server{MTLS: test.mtls}}
 
-			err := cfg.ValidateListenAddr(test.addr)
+			for _, setting := range []string{"server.http_addr", "server.grpc_addr"} {
+				err := cfg.ValidateListenAddr(setting, test.addr)
 
-			if test.wantErr == "" {
-				if err != nil {
-					t.Fatalf("ValidateListenAddr(%q) = %v, want success", test.addr, err)
+				if test.wantErr == "" {
+					if err != nil {
+						t.Fatalf("ValidateListenAddr(%q, %q) = %v, want success", setting, test.addr, err)
+					}
+					continue
 				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("ValidateListenAddr(%q) = nil, want error containing %q", test.addr, test.wantErr)
-			}
-			if !internalerror.IsBadRequest(err) {
-				t.Fatalf("ValidateListenAddr(%q) error kind = %s, want bad request", test.addr, internalerror.KindOf(err))
-			}
-			for _, want := range []string{test.wantErr, "server.http_addr"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("ValidateListenAddr(%q) error = %q, want it to contain %q", test.addr, err, want)
+				if err == nil {
+					t.Fatalf("ValidateListenAddr(%q, %q) = nil, want error containing %q", setting, test.addr, test.wantErr)
+				}
+				if !internalerror.IsBadRequest(err) {
+					t.Fatalf("ValidateListenAddr(%q, %q) error kind = %s, want bad request",
+						setting, test.addr, internalerror.KindOf(err))
+				}
+				for _, want := range []string{test.wantErr, setting} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("ValidateListenAddr(%q, %q) error = %q, want it to contain %q",
+							setting, test.addr, err, want)
+					}
 				}
 			}
 		})
@@ -577,11 +581,11 @@ func TestValidateListenAddr(t *testing.T) {
 }
 
 func TestValidateListenAddrRefusalNamesTheRemedy(t *testing.T) {
-	err := new(Config).ValidateListenAddr("0.0.0.0:8443")
+	err := new(Config).ValidateListenAddr("server.grpc_addr", "0.0.0.0:8443")
 	if err == nil {
 		t.Fatal("ValidateListenAddr() = nil, want a refusal")
 	}
-	for _, want := range []string{"server.mtls.cert", "server.mtls.key", "127.0.0.1:8443", "TLS"} {
+	for _, want := range []string{"server.grpc_addr", "server.mtls.cert", "server.mtls.key", "127.0.0.1:8443", "TLS"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %q, want it to contain %q", err, want)
 		}
