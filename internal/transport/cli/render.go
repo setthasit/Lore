@@ -7,8 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
+	"lore/internal/services"
 	"lore/internal/transport/mcp"
 )
 
@@ -17,12 +20,7 @@ const dateLayout = "2006-01-02"
 // Matches the width the service abbreviates SHAs to in gap text.
 const blamedSHAChars = 12
 
-type bundleView int
-
-const (
-	viewRelevance bundleView = iota
-	viewTimeline
-)
+const noEvidence = "no evidence found — nothing links to this document yet, or run `lore sync` if the trail should be there"
 
 func printfln(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format+"\n", args...)
@@ -79,16 +77,41 @@ func writeJSON(w io.Writer, bundle *entities.EvidenceBundle) error {
 	return nil
 }
 
-func emitBundle(w io.Writer, bundle *entities.EvidenceBundle, raw bool, view bundleView) error {
-	if raw {
-		return writeJSON(w, bundle)
+type evidenceOutput struct {
+	raw     bool
+	explain bool
+}
+
+func (o *evidenceOutput) flags(cmd *cobra.Command) {
+	f := cmd.Flags()
+	f.BoolVar(&o.raw, "raw", false, "emit the evidence bundle as JSON instead of the timeline")
+	f.BoolVar(&o.explain, "explain", false,
+		"explain the evidence as prose instead of the timeline; needs the llm: block in lore.yaml")
+}
+
+func (o evidenceOutput) emit(cmd *cobra.Command, synthesis services.SynthesisService, bundle *entities.EvidenceBundle) error {
+	switch {
+	case o.raw:
+		return writeJSON(cmd.OutOrStdout(), bundle)
+	case o.explain:
+		return emitProse(cmd, synthesis, bundle)
 	}
-	renderBundle(w, bundle, view)
+	renderBundle(cmd.OutOrStdout(), bundle)
 
 	return nil
 }
 
-func renderBundle(w io.Writer, bundle *entities.EvidenceBundle, view bundleView) {
+func emitProse(cmd *cobra.Command, synthesis services.SynthesisService, bundle *entities.EvidenceBundle) error {
+	answer, err := synthesis.Synthesize(cmd.Context(), bundle.Question, bundle)
+	if err != nil {
+		return err
+	}
+	printfln(cmd.OutOrStdout(), "%s", answer)
+
+	return nil
+}
+
+func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 	printfln(w, "%s", bundle.Question)
 	if code := bundle.Anchor.Code; code != nil {
 		printfln(w, "anchor: %s %s", code.Repo, fileWithSpan(code))
@@ -107,20 +130,20 @@ func renderBundle(w io.Writer, bundle *entities.EvidenceBundle, view bundleView)
 	printfln(w, "")
 
 	if len(bundle.Nodes) == 0 {
-		printfln(w, "%s", view.emptyMessage())
+		printfln(w, "%s", noEvidence)
 	} else {
-		renderNodes(w, bundle.Nodes, view)
+		renderNodes(w, bundle.Nodes)
 	}
 
 	renderChains(w, bundle.Chains)
 	renderGaps(w, bundle.Gaps)
 }
 
-func renderNodes(w io.Writer, nodes []entities.EvidenceNode, view bundleView) {
+func renderNodes(w io.Writer, nodes []entities.EvidenceNode) {
 	printfln(w, "%s", plural(len(nodes), "document", "documents"))
-	for i, node := range nodes {
+	for _, node := range nodes {
 		printfln(w, "")
-		printfln(w, "%s %s", view.entryLead(i, node), node.Doc.Title)
+		printfln(w, "%s %s", entryLead(node), node.Doc.Title)
 		printfln(w, "   %s", metaLine(node))
 		printfln(w, "   %s", node.Doc.URL)
 		if excerpt := strings.TrimSpace(node.Excerpt); excerpt != "" {
@@ -129,21 +152,11 @@ func renderNodes(w io.Writer, nodes []entities.EvidenceNode, view bundleView) {
 	}
 }
 
-func (v bundleView) entryLead(index int, node entities.EvidenceNode) string {
-	if v == viewRelevance {
-		return strconv.Itoa(index+1) + "."
-	}
+func entryLead(node entities.EvidenceNode) string {
 	if node.Doc.CreatedAt.IsZero() {
 		return "undated"
 	}
 	return node.Doc.CreatedAt.UTC().Format(dateLayout)
-}
-
-func (v bundleView) emptyMessage() string {
-	if v == viewRelevance {
-		return "no evidence found — widen the filters, or run `lore sync` if the trail should be there"
-	}
-	return "no evidence found — nothing links to this document yet, or run `lore sync` if the trail should be there"
 }
 
 func metaLine(node entities.EvidenceNode) string {

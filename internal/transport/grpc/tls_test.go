@@ -97,9 +97,10 @@ func newECDSAKey(t *testing.T) *ecdsa.PrivateKey {
 }
 
 type mutualTLSFixture struct {
-	addr  string
-	ca    certAuthority
-	query *mock_services.MockQueryService
+	addr      string
+	ca        certAuthority
+	query     *mock_services.MockQueryService
+	synthesis *mock_services.MockSynthesisService
 }
 
 func newMutualTLSFixture(t *testing.T) mutualTLSFixture {
@@ -108,6 +109,7 @@ func newMutualTLSFixture(t *testing.T) mutualTLSFixture {
 	ca := newCertAuthority(t)
 	ctrl := gomock.NewController(t)
 	query := mock_services.NewMockQueryService(ctrl)
+	synthesis := mock_services.NewMockSynthesisService(ctrl)
 	svc := transport.Services{
 		Query:  query,
 		Trace:  mock_services.NewMockTraceService(ctrl),
@@ -129,7 +131,15 @@ func newMutualTLSFixture(t *testing.T) mutualTLSFixture {
 
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, listener, svc, slog.New(slog.DiscardHandler), serverTLS) }()
+	go func() {
+		served <- Serve(ctx, Config{
+			Listener:  listener,
+			Services:  svc,
+			Synthesis: synthesis,
+			Log:       slog.New(slog.DiscardHandler),
+			TLS:       serverTLS,
+		})
+	}()
 	t.Cleanup(func() {
 		stop()
 		if err := <-served; err != nil {
@@ -137,7 +147,7 @@ func newMutualTLSFixture(t *testing.T) mutualTLSFixture {
 		}
 	})
 
-	return mutualTLSFixture{addr: listener.Addr().String(), ca: ca, query: query}
+	return mutualTLSFixture{addr: listener.Addr().String(), ca: ca, query: query, synthesis: synthesis}
 }
 
 func (f mutualTLSFixture) trustedClientTLS(t *testing.T) *tls.Config {
@@ -178,6 +188,9 @@ func (f mutualTLSFixture) assertServesATrustedClient(t *testing.T) {
 	f.query.EXPECT().
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: rpcQuestion}).
 		Return(&entities.EvidenceBundle{Question: rpcQuestion}, nil)
+	f.synthesis.EXPECT().
+		Synthesize(gomock.Any(), rpcQuestion, gomock.Any()).
+		Return(rpcProse, nil)
 
 	res, err := f.findDecision(t, f.trustedClientTLS(t))
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 
 type impactFlags struct {
 	question string
-	raw      bool
+	out      evidenceOutput
 }
 
 func newImpactCommand(resolve Resolver, configPath *string) *cobra.Command {
@@ -20,7 +20,8 @@ func newImpactCommand(resolve Resolver, configPath *string) *cobra.Command {
 		Long: "Takes either a ref — a commit SHA, a PR or issue number, a ticket key, a\n" +
 			"document URL or a document id — or free text naming the decision, and prints\n" +
 			"the evidence that came after it in the order it happened, each entry with its\n" +
-			"source URL; --raw emits the evidence bundle as JSON for scripting.",
+			"source URL; --explain answers from the timeline in prose, and --raw emits the\n" +
+			"evidence bundle as JSON for scripting.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
@@ -32,13 +33,13 @@ func newImpactCommand(resolve Resolver, configPath *string) *cobra.Command {
 					return err
 				}
 
-				return emitBundle(cmd.OutOrStdout(), bundle, flags.raw, viewTimeline)
+				return flags.out.emit(cmd, rt.Synthesis, bundle)
 			})
 		},
 	}
 
 	f := cmd.Flags()
 	f.StringVar(&flags.question, "question", "", "narrow the timeline to the consequences this question asks about")
-	f.BoolVar(&flags.raw, "raw", false, "emit the evidence bundle as JSON instead of prose")
+	flags.out.flags(cmd)
 	return cmd
 }

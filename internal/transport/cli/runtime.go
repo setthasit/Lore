@@ -14,14 +14,15 @@ import (
 )
 
 type Runtime struct {
-	Config  *config.Config
-	Query   services.QueryService
-	Why     services.WhyService
-	Trace   services.TraceService
-	Impact  services.ImpactService
-	History services.HistoryService
-	Sync    services.SyncOrchestrator
-	Status  services.StatusService
+	Config    *config.Config
+	Query     services.QueryService
+	Why       services.WhyService
+	Trace     services.TraceService
+	Impact    services.ImpactService
+	History   services.HistoryService
+	Sync      services.SyncOrchestrator
+	Status    services.StatusService
+	Synthesis services.SynthesisService
 }
 
 // modules are fx options beyond the workspace: only `lore serve` adds the scheduler.
@@ -34,7 +35,8 @@ func resolveWithFX(ctx context.Context, configPath string, modules ...fx.Option)
 		append([]fx.Option{
 			fx.NopLogger,
 			di.Workspace(configPath),
-			fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status),
+			fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status,
+				&rt.Synthesis),
 		}, modules...)...,
 	)
 	if err := app.Err(); err != nil {

@@ -8,31 +8,53 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	lorev1 "lore/api/proto/lore/v1"
+	"lore/internal/entities"
 	"lore/internal/services"
 	"lore/internal/transport"
 )
 
 type queryServer struct {
 	lorev1.UnimplementedQueryServiceServer
-	query   services.QueryService
-	why     services.WhyService
-	trace   services.TraceService
-	impact  services.ImpactService
-	history services.HistoryService
-	log     *slog.Logger
+	query     services.QueryService
+	why       services.WhyService
+	trace     services.TraceService
+	impact    services.ImpactService
+	history   services.HistoryService
+	synthesis services.SynthesisService
+	log       *slog.Logger
 }
 
 var _ lorev1.QueryServiceServer = (*queryServer)(nil)
 
-func newQueryServer(svc transport.Services, log *slog.Logger) *queryServer {
+func newQueryServer(svc transport.Services, synthesis services.SynthesisService, log *slog.Logger) *queryServer {
 	return &queryServer{
-		query:   svc.Query,
-		why:     svc.Why,
-		trace:   svc.Trace,
-		impact:  svc.Impact,
-		history: svc.History,
-		log:     log,
+		query:     svc.Query,
+		why:       svc.Why,
+		trace:     svc.Trace,
+		impact:    svc.Impact,
+		history:   svc.History,
+		synthesis: synthesis,
+		log:       log,
 	}
+}
+
+// Unset means synthesize: gRPC is a non-AI surface.
+func (s *queryServer) synthesize(
+	ctx context.Context,
+	method string,
+	asked *bool,
+	bundle *entities.EvidenceBundle,
+) (string, error) {
+	if asked != nil && !*asked {
+		return "", nil
+	}
+
+	answer, err := s.synthesis.Synthesize(ctx, bundle.Question, bundle)
+	if err != nil {
+		return "", rpcError(s.log, method, err)
+	}
+
+	return answer, nil
 }
 
 func (s *queryServer) FindDecision(ctx context.Context, in *lorev1.FindDecisionRequest) (*lorev1.FindDecisionResponse, error) {
@@ -49,7 +71,12 @@ func (s *queryServer) FindDecision(ctx context.Context, in *lorev1.FindDecisionR
 		return nil, rpcError(s.log, "FindDecision", err)
 	}
 
-	return &lorev1.FindDecisionResponse{Bundle: newEvidenceBundle(bundle)}, nil
+	answer, err := s.synthesize(ctx, "FindDecision", in.Synthesize, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lorev1.FindDecisionResponse{Bundle: newEvidenceBundle(bundle), Synthesis: answer}, nil
 }
 
 func (s *queryServer) Why(ctx context.Context, in *lorev1.WhyRequest) (*lorev1.WhyResponse, error) {
@@ -64,7 +91,12 @@ func (s *queryServer) Why(ctx context.Context, in *lorev1.WhyRequest) (*lorev1.W
 		return nil, rpcError(s.log, "Why", err)
 	}
 
-	return &lorev1.WhyResponse{Bundle: newEvidenceBundle(bundle)}, nil
+	answer, err := s.synthesize(ctx, "Why", in.Synthesize, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lorev1.WhyResponse{Bundle: newEvidenceBundle(bundle), Synthesis: answer}, nil
 }
 
 func (s *queryServer) Trace(ctx context.Context, in *lorev1.TraceRequest) (*lorev1.TraceResponse, error) {
@@ -77,7 +109,12 @@ func (s *queryServer) Trace(ctx context.Context, in *lorev1.TraceRequest) (*lore
 		return nil, rpcError(s.log, "Trace", err)
 	}
 
-	return &lorev1.TraceResponse{Bundle: newEvidenceBundle(bundle)}, nil
+	answer, err := s.synthesize(ctx, "Trace", in.Synthesize, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lorev1.TraceResponse{Bundle: newEvidenceBundle(bundle), Synthesis: answer}, nil
 }
 
 func (s *queryServer) ImpactOf(ctx context.Context, in *lorev1.ImpactOfRequest) (*lorev1.ImpactOfResponse, error) {
@@ -89,7 +126,12 @@ func (s *queryServer) ImpactOf(ctx context.Context, in *lorev1.ImpactOfRequest) 
 		return nil, rpcError(s.log, "ImpactOf", err)
 	}
 
-	return &lorev1.ImpactOfResponse{Bundle: newEvidenceBundle(bundle)}, nil
+	answer, err := s.synthesize(ctx, "ImpactOf", in.Synthesize, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lorev1.ImpactOfResponse{Bundle: newEvidenceBundle(bundle), Synthesis: answer}, nil
 }
 
 func (s *queryServer) HistoryOf(ctx context.Context, in *lorev1.HistoryOfRequest) (*lorev1.HistoryOfResponse, error) {
@@ -103,7 +145,12 @@ func (s *queryServer) HistoryOf(ctx context.Context, in *lorev1.HistoryOfRequest
 		return nil, rpcError(s.log, "HistoryOf", err)
 	}
 
-	return &lorev1.HistoryOfResponse{Bundle: newEvidenceBundle(bundle)}, nil
+	answer, err := s.synthesize(ctx, "HistoryOf", in.Synthesize, bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lorev1.HistoryOfResponse{Bundle: newEvidenceBundle(bundle), Synthesis: answer}, nil
 }
 
 var traceDirections = map[lorev1.Direction]string{

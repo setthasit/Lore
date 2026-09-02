@@ -9,7 +9,6 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/services"
-	"lore/internal/transport/mcp"
 )
 
 const impactQuestion = "what followed Storage design?"
@@ -95,16 +94,13 @@ func TestImpactReportsAnEmptyTimelineWithItsGap(t *testing.T) {
 	}
 	for _, want := range []string{
 		"anchor: Storage design",
-		"no evidence found",
+		noEvidence,
 		"gaps:",
 		"no follow-up evidence after 2025-03-10",
 	} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("output is missing %q\n--- output ---\n%s", want, res.stdout)
 		}
-	}
-	if strings.Contains(res.stdout, "widen the filters") {
-		t.Errorf("the timeline suggests filters it does not have:\n%s", res.stdout)
 	}
 }
 
@@ -113,18 +109,26 @@ func TestImpactRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	bundle := timelineBundle(impactQuestion)
 	impact.EXPECT().ImpactOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
 
-	res := run(t, rt, "impact", "PROJ-4521", "--raw")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
+	wantBundleJSON(t, run(t, rt, "impact", "PROJ-4521", "--raw"), bundle)
+}
 
-	want, err := mcp.EncodeBundle(bundle)
-	if err != nil {
-		t.Fatalf("EncodeBundle: %v", err)
-	}
-	if res.stdout != string(want)+"\n" {
-		t.Errorf("stdout is not the canonical encoding alone\n got: %s\nwant: %s\n", res.stdout, want)
-	}
+func TestImpactExplainsTheTimelineInProse(t *testing.T) {
+	rt, impact := mockImpact(t)
+	synthesis := mockSynthesis(t, rt)
+	bundle := timelineBundle(impactQuestion)
+	impact.EXPECT().ImpactOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), bundle.Question, bundle).Return(proseAnswer, nil)
+
+	wantProse(t, run(t, rt, "impact", "PROJ-4521", "--explain"))
+}
+
+func TestImpactRawOutranksExplain(t *testing.T) {
+	rt, impact := mockImpact(t)
+	mockSynthesis(t, rt)
+	bundle := timelineBundle(impactQuestion)
+	impact.EXPECT().ImpactOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	wantBundleJSON(t, run(t, rt, "impact", "PROJ-4521", "--raw", "--explain"), bundle)
 }
 
 func TestImpactWithoutARefIsAUsageError(t *testing.T) {

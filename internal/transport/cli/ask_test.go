@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -11,7 +12,6 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/services"
-	"lore/internal/transport/mcp"
 )
 
 func bundleFixture() *entities.EvidenceBundle {
@@ -50,79 +50,72 @@ func bundleFixture() *entities.EvidenceBundle {
 	}
 }
 
-func TestAskPrettyPrintsEvidenceInRankedOrder(t *testing.T) {
+func TestAskAnswersInSynthesizedProse(t *testing.T) {
 	rt, query := mockQuery(t)
+	synthesis := mockSynthesis(t, rt)
 	bundle := bundleFixture()
 	query.EXPECT().
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: "why sqlite?"}).
 		Return(bundle, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), bundle.Question, bundle).Return(proseAnswer, nil)
 
 	res := run(t, rt, "ask", "why sqlite?")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
+	wantProse(t, res)
 	if !res.released {
 		t.Error("the workspace was not released")
 	}
-
-	out := res.stdout
-	for _, want := range []string{
-		"why did we pick sqlite?",
-		"2 documents",
-		"1. Index on SQLite, not Postgres",
-		"github pr · dev@example.test · 2025-03-12",
-		"https://github.com/acme/lore/pull/12",
-		"sqlite ships everywhere and needs no server",
-		"2. Storage design",
-		"notion page · arch@example.test · 2025-03-10 · follow_up",
-		"https://notion.so/design/storage",
-		"gaps:",
-		"trail ends at PROJ-4521; no linked follow-up",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output is missing %q\n--- output ---\n%s", want, out)
+	for _, unwanted := range []string{"2 documents", "gaps:", string(entities.RoleFollowUp)} {
+		if strings.Contains(res.stdout, unwanted) {
+			t.Errorf("stdout carries the pretty-printed bundle (%q):\n%s", unwanted, res.stdout)
 		}
 	}
+}
 
-	if strings.Index(out, "1. Index on SQLite") > strings.Index(out, "2. Storage design") {
-		t.Errorf("nodes are not in the order the service returned them:\n%s", out)
+func TestAskWithoutAnLLMSurfacesThePrecondition(t *testing.T) {
+	rt, query := mockQuery(t)
+	unconfigured := services.NewSynthesisService(nil)
+	rt.Synthesis = unconfigured
+	query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(bundleFixture(), nil)
+
+	_, refused := unconfigured.Synthesize(context.Background(), "why sqlite?", bundleFixture())
+	if !internalerror.IsPrecondition(refused) {
+		t.Fatalf("Synthesize() with no LLM = %v, want a precondition error", refused)
 	}
-	if strings.Contains(out, entities.RoleSeed) {
-		t.Errorf("output names the seed role, which every retrieval hit has:\n%s", out)
+
+	res := run(t, rt, "ask", "why sqlite?")
+	if res.exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitPrecondition, res.stderr)
+	}
+	if res.stderr != "lore: "+refused.Error()+"\n" {
+		t.Errorf("stderr = %q, want the precondition verbatim (%q)", res.stderr, refused)
+	}
+	if res.stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed", res.stdout)
+	}
+	if !res.released {
+		t.Error("the workspace was not released after a failure")
 	}
 }
 
 func TestAskEmptyBundleIsAnAnswerNotAnError(t *testing.T) {
 	rt, query := mockQuery(t)
-	query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).
-		Return(&entities.EvidenceBundle{Question: "why sqlite?"}, nil)
+	synthesis := mockSynthesis(t, rt)
+	empty := &entities.EvidenceBundle{Question: "why sqlite?"}
+	query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(empty, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), empty.Question, empty).Return(proseAnswer, nil)
 
 	res := run(t, rt, "ask", "why sqlite?")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, want %d (an empty index is an answer)", res.exitCode, exitOK)
-	}
-	if !strings.Contains(res.stdout, "no evidence found") || !strings.Contains(res.stdout, "widen the filters") {
-		t.Errorf("stdout = %q, want it to say the index holds nothing and how to broaden the search", res.stdout)
-	}
+	wantProse(t, res)
 }
 
 func TestAskRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	rt, query := mockQuery(t)
+	mockSynthesis(t, rt)
 	bundle := bundleFixture()
 	query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(bundle, nil)
 
 	res := run(t, rt, "ask", "why sqlite?", "--raw")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	want, err := mcp.EncodeBundle(bundle)
-	if err != nil {
-		t.Fatalf("EncodeBundle: %v", err)
-	}
-	if res.stdout != string(want)+"\n" {
-		t.Errorf("stdout is not the canonical encoding\n got: %s\nwant: %s\n", res.stdout, want)
-	}
+	wantBundleJSON(t, res, bundle)
 
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(res.stdout), &decoded); err != nil {
@@ -144,6 +137,7 @@ func TestAskRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 
 func TestAskPassesFiltersThrough(t *testing.T) {
 	rt, query := mockQuery(t)
+	mockSynthesis(t, rt).EXPECT().Synthesize(gomock.Any(), gomock.Any(), gomock.Any()).Return(proseAnswer, nil)
 	query.EXPECT().FindDecision(gomock.Any(), services.FindDecisionRequest{
 		Question: "why sqlite?",
 		Around:   "incident X",
@@ -152,7 +146,7 @@ func TestAskPassesFiltersThrough(t *testing.T) {
 		DocType:  "pr",
 		Since:    time.Date(2025, time.March, 1, 0, 0, 0, 0, time.UTC),
 		Until:    time.Date(2025, time.March, 31, 23, 59, 59, 0, time.UTC),
-	}).Return(&entities.EvidenceBundle{}, nil)
+	}).Return(&entities.EvidenceBundle{Question: "why sqlite?"}, nil)
 
 	res := run(t, rt, "ask", "why sqlite?",
 		"--around", "incident X",
@@ -168,11 +162,12 @@ func TestAskPassesFiltersThrough(t *testing.T) {
 
 func TestAskBareDatesCoverWholeDays(t *testing.T) {
 	rt, query := mockQuery(t)
+	mockSynthesis(t, rt).EXPECT().Synthesize(gomock.Any(), gomock.Any(), gomock.Any()).Return(proseAnswer, nil)
 	query.EXPECT().FindDecision(gomock.Any(), services.FindDecisionRequest{
 		Question: "why sqlite?",
 		Since:    time.Date(2025, time.March, 1, 0, 0, 0, 0, time.UTC),
 		Until:    time.Date(2025, time.March, 31, 23, 59, 59, 0, time.UTC),
-	}).Return(&entities.EvidenceBundle{}, nil)
+	}).Return(&entities.EvidenceBundle{Question: "why sqlite?"}, nil)
 
 	res := run(t, rt, "ask", "why sqlite?", "--since", "2025-03-01", "--until", "2025-03-31")
 	if res.exitCode != exitOK {
@@ -221,6 +216,7 @@ func TestAskMapsServiceErrorsToExitCodes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rt, query := mockQuery(t)
+			mockSynthesis(t, rt)
 			query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(nil, c.err)
 
 			res := run(t, rt, "ask", "why sqlite?")
