@@ -2,6 +2,7 @@ package di
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -59,6 +60,73 @@ var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewSyncOrchestrator,
 	services.NewStatusService,
 ))
+
+var SchedulerModule = fx.Module("scheduler",
+	fx.Provide(newDiagnosticLogger, newScheduler),
+	fx.Invoke(func(*services.Scheduler) {}),
+)
+
+const schedulerStopReserve = time.Second
+
+// Stdout carries the MCP JSON-RPC stream, so diagnostics belong on stderr.
+func newDiagnosticLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, nil))
+}
+
+func newScheduler(
+	lc fx.Lifecycle,
+	orchestrator services.SyncOrchestrator,
+	cfg *config.Config,
+	log *slog.Logger,
+) *services.Scheduler {
+	scheduler := services.NewScheduler(orchestrator, time.Duration(cfg.Scheduler.Interval), log)
+
+	var (
+		stop context.CancelFunc
+		done chan struct{}
+	)
+	lc.Append(fx.Hook{
+		// The start context is cancelled once startup finishes, so the loop runs on its own.
+		OnStart: func(context.Context) error {
+			var loop context.Context
+			loop, stop = context.WithCancel(context.Background())
+			done = make(chan struct{})
+
+			go func() {
+				defer close(done)
+				scheduler.Run(loop)
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			stop()
+
+			wait, giveUp := schedulerStopBudget(ctx)
+			defer giveUp()
+
+			select {
+			case <-done:
+				return nil
+			case <-wait.Done():
+				return internalerror.NewInternalError("the sync scheduler did not stop before the shutdown deadline", wait.Err())
+			}
+		},
+	})
+
+	return scheduler
+}
+
+// fx abandons the stop hooks below this one once the shutdown context expires, so the
+// loop is given every part of the budget except the tail that closing the index needs.
+func schedulerStopBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	remaining := time.Until(deadline)
+	if !ok || remaining <= 0 {
+		return context.WithCancel(ctx)
+	}
+
+	return context.WithDeadline(ctx, deadline.Add(-min(schedulerStopReserve, remaining/2)))
+}
 
 func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repositories.IndexStore, error) {
 	path := cfg.IndexPath

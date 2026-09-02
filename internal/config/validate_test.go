@@ -282,6 +282,9 @@ repos:
 				if cfg.Query.TopK != DefaultTopK {
 					t.Errorf("TopK = %d, want %d", cfg.Query.TopK, DefaultTopK)
 				}
+				if cfg.Scheduler.Interval != DefaultSchedulerInterval {
+					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, DefaultSchedulerInterval)
+				}
 			},
 		},
 		{
@@ -295,6 +298,8 @@ query:
   event_window: 12h
   walk_depth: 5
   top_k: 40
+scheduler:
+  interval: 5m
 `,
 			check: func(t *testing.T, cfg *Config) {
 				if cfg.IndexPath != "/srv/lore/tuned.db" {
@@ -306,7 +311,36 @@ query:
 				if cfg.Query.WalkDepth != 5 || cfg.Query.TopK != 40 {
 					t.Errorf("WalkDepth/TopK = %d/%d, want 5/40", cfg.Query.WalkDepth, cfg.Query.TopK)
 				}
+				if want := Duration(5 * time.Minute); cfg.Scheduler.Interval != want {
+					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, want)
+				}
 			},
+		},
+		{
+			name: "a zero scheduler interval reads as absent and takes the default",
+			yaml: `
+workspace: zerointerval
+repos:
+  - path: {{REPO}}
+scheduler:
+  interval: 0s
+`,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Scheduler.Interval != DefaultSchedulerInterval {
+					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, DefaultSchedulerInterval)
+				}
+			},
+		},
+		{
+			name: "a negative scheduler interval is rejected",
+			yaml: `
+workspace: negativeinterval
+repos:
+  - path: {{REPO}}
+scheduler:
+  interval: -5m
+`,
+			wantErr: "scheduler.interval must not be negative",
 		},
 		{
 			name: "negative tuning is rejected",

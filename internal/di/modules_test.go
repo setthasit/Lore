@@ -2,16 +2,21 @@ package di
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/fx"
 
+	"lore/internal/config"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
+	"lore/internal/repositories"
 	"lore/internal/services"
 )
 
@@ -251,5 +256,161 @@ repos: []
 		if want := "no repositories registered"; !strings.Contains(err.Error(), want) {
 			t.Errorf("%s error = %q, want it to name %q", verb, err, want)
 		}
+	}
+}
+
+const (
+	schedulerTick = "5ms"
+
+	schedulerStall = 5 * time.Second
+
+	schedulerQuiet = 250 * time.Millisecond
+
+	schedulerStopTimeout = 200 * time.Millisecond
+)
+
+// A round parks until the test releases it, so a graph can be stopped mid-round.
+type scheduledSync struct {
+	rounds   chan struct{}
+	released chan struct{}
+}
+
+var _ services.SyncOrchestrator = (*scheduledSync)(nil)
+
+func newScheduledSync() *scheduledSync {
+	orchestrator := newParkedSync()
+	close(orchestrator.released)
+
+	return orchestrator
+}
+
+func newParkedSync() *scheduledSync {
+	return &scheduledSync{rounds: make(chan struct{}, 1), released: make(chan struct{})}
+}
+
+func (o *scheduledSync) Sync(context.Context, services.SyncOptions) (services.SyncResult, error) {
+	select {
+	case o.rounds <- struct{}{}:
+	default:
+	}
+	<-o.released
+
+	return services.SyncResult{}, nil
+}
+
+func (o *scheduledSync) awaitRound(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-o.rounds:
+	case <-time.After(schedulerStall):
+		t.Fatalf("no sync round ran within %s", schedulerStall)
+	}
+}
+
+// Mirrors the set every CLI command populates in internal/transport/cli/runtime.go.
+type commandRuntime struct {
+	config  *config.Config
+	query   services.QueryService
+	why     services.WhyService
+	trace   services.TraceService
+	impact  services.ImpactService
+	history services.HistoryService
+	sync    services.SyncOrchestrator
+	status  services.StatusService
+	store   repositories.IndexStore
+}
+
+type startedGraph struct {
+	app     *fx.App
+	runtime commandRuntime
+	stopped bool
+}
+
+func startGraph(t *testing.T, orchestrator services.SyncOrchestrator, extra fx.Option) *startedGraph {
+	t.Helper()
+
+	t.Setenv(EmbedderKeyEnv, "sk-example")
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+scheduler:
+  interval: `+schedulerTick+`
+`)
+
+	graph := new(startedGraph)
+	rt := &graph.runtime
+	graph.app = fx.New(
+		fx.NopLogger,
+		Workspace(path),
+		extra,
+		fx.Decorate(func(services.SyncOrchestrator) services.SyncOrchestrator { return orchestrator }),
+		fx.Populate(&rt.config, &rt.query, &rt.why, &rt.trace, &rt.impact, &rt.history, &rt.sync, &rt.status, &rt.store),
+	)
+	if err := graph.app.Err(); err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+	if err := graph.app.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		if graph.stopped {
+			return
+		}
+		if err := graph.app.Stop(context.Background()); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
+
+	return graph
+}
+
+func (g *startedGraph) stop(t *testing.T, timeout time.Duration) error {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	g.stopped = true
+
+	return g.app.Stop(ctx)
+}
+
+func schedulerWithQuietLogger() fx.Option {
+	return fx.Options(
+		SchedulerModule,
+		fx.Decorate(func(*slog.Logger) *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }),
+	)
+}
+
+func TestWorkspaceAloneNeverSchedulesASyncRound(t *testing.T) {
+	orchestrator := newScheduledSync()
+	startGraph(t, orchestrator, fx.Options())
+
+	select {
+	case <-orchestrator.rounds:
+		t.Fatal("a sync round ran behind a one-shot command: the scheduler must not be part of Workspace")
+	case <-time.After(schedulerQuiet):
+	}
+}
+
+func TestSchedulerModuleSchedulesSyncRounds(t *testing.T) {
+	orchestrator := newScheduledSync()
+	startGraph(t, orchestrator, schedulerWithQuietLogger())
+
+	orchestrator.awaitRound(t)
+}
+
+func TestStoppingMidRoundStillClosesTheIndex(t *testing.T) {
+	orchestrator := newParkedSync()
+	t.Cleanup(func() { close(orchestrator.released) })
+
+	graph := startGraph(t, orchestrator, schedulerWithQuietLogger())
+	orchestrator.awaitRound(t)
+
+	if err := graph.stop(t, schedulerStopTimeout); err == nil {
+		t.Fatal("Stop reported success while a round was still in flight")
+	}
+	if _, err := graph.runtime.store.Stats(context.Background()); err == nil {
+		t.Error("the index store still answers queries after Stop: its hook never ran")
 	}
 }
