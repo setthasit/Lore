@@ -3,12 +3,12 @@ package services_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -18,7 +18,6 @@ import (
 	mock_entities "lore/internal/mocks/entities"
 	mock_repositories "lore/internal/mocks/repositories"
 	mock_services "lore/internal/mocks/services"
-	"lore/internal/repositories"
 	"lore/internal/services"
 )
 
@@ -52,7 +51,21 @@ func newSyncMocks(t *testing.T) syncMocks {
 	}
 }
 
-func (m syncMocks) heldLease() {
+func (m syncMocks) freeLease() {
+	m.store.EXPECT().Lease(gomock.Any()).Return(nil, nil)
+}
+
+func syncHolder() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown-host"
+	}
+
+	return host + "/" + strconv.Itoa(os.Getpid())
+}
+
+func (m syncMocks) acquiredLease() {
+	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 }
@@ -156,7 +169,7 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.matchingIdentity()
 
 	doc := syncDoc("github:pr:1")
@@ -178,11 +191,10 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, stored).Return(nil),
 		m.links.EXPECT().Link(gomock.Any(), []entities.Document{doc}).Return(nil),
 		m.store.EXPECT().SetCursor(gomock.Any(), "github", next).Return(nil),
-		m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil),
 		m.links.EXPECT().LinkPending(gomock.Any()).Return(nil),
 	)
 
-	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -192,7 +204,6 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 
 	doc := syncDoc("github:pr:1")
 	committed := entities.Cursor{"updated_at": "1"}
-	chunks := syncChunks(doc.ID, "only chunk")
 
 	tests := []struct {
 		name      string
@@ -233,7 +244,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
-				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "only chunk"))
 				m.emb.EXPECT().Embed(gomock.Any(), []string{"only chunk"}).Return(nil, errSyncStore)
 			},
 			want:      internalerror.KindInternal,
@@ -257,7 +268,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
-				m.chunker.EXPECT().Chunk(doc).Return(chunks)
+				m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "only chunk"))
 				m.emb.EXPECT().Embed(gomock.Any(), gomock.Any()).Return([][]float32{{0.1}}, nil)
 				m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, gomock.Any()).Return(errSyncStore)
 			},
@@ -271,14 +282,14 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 			t.Parallel()
 
 			m := newSyncMocks(t)
-			m.heldLease()
+			m.acquiredLease()
 			m.matchingIdentity()
 
 			conn := m.connector("github")
 			// No SetCursor is declared: the strict controller fails any checkpoint of an uncommitted batch.
 			tt.setup(m, conn)
 
-			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 			assertSyncKind(t, err, tt.want)
 			if tt.wantCause != nil && !errors.Is(err, tt.wantCause) {
 				t.Errorf("Sync() error = %v, want it to wrap %v", err, tt.wantCause)
@@ -291,7 +302,7 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.matchingIdentity()
 
 	first := entities.Cursor{"page": "1"}
@@ -307,10 +318,9 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.linkedBatches(1)
 
-	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 	assertSyncKind(t, err, internalerror.KindInternal)
 
 	if stream.yields != 2 {
@@ -318,23 +328,29 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	}
 }
 
-func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
+func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
 	t.Parallel()
+
+	const holder = "host-9/1234"
 
 	tests := []struct {
 		name      string
-		heartbeat error
-		want      internalerror.Kind
+		lease     *entities.LeaseState
+		leaseErr  error
+		want      string
+		wantExact string
 	}{
 		{
-			name:      "the lease was taken over",
-			heartbeat: fmt.Errorf("sqlite: sync lease is not held by %q: %w", "daemon/1", repositories.ErrLeaseLost),
-			want:      internalerror.KindPrecondition,
+			name:  "names the holder and its heartbeat",
+			lease: &entities.LeaseState{Holder: holder, HeartbeatAt: time.Now().Add(-90 * time.Second)},
+			want:  holder + " (last heartbeat 1m",
 		},
 		{
-			name:      "the store could not be reached",
-			heartbeat: errSyncStore,
-			want:      internalerror.KindInternal,
+			name:     "an unreadable lease still refuses the round",
+			leaseErr: errSyncStore,
+			want:     "another process",
+			wantExact: "cannot run a sync round: sync lease held — another process is already writing this index; " +
+				"retry later, or wait out the 60s lease TTL if that holder crashed",
 		},
 	}
 
@@ -343,44 +359,71 @@ func TestSyncClassifiesHeartbeatFailures(t *testing.T) {
 			t.Parallel()
 
 			m := newSyncMocks(t)
-			m.heldLease()
-			m.matchingIdentity()
+			m.store.EXPECT().Lease(gomock.Any()).Return(tt.lease, tt.leaseErr).AnyTimes()
+			m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(false, nil)
 
-			first := entities.Cursor{"page": "1"}
-			stream := newSyncStream(syncBatch(first), syncBatch(entities.Cursor{"page": "2"}))
+			_, err := m.orchestrator(m.connector("github")).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, internalerror.KindPrecondition)
 
-			conn := m.connector("github")
-			conn.EXPECT().Changes(gomock.Any(), nil).Return(stream.seq())
-
-			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
-			m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
-			m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
-			m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(tt.heartbeat)
-			m.linkedBatches(1)
-
-			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-			assertSyncKind(t, err, tt.want)
-
-			if stream.yields != 1 {
-				t.Errorf("connector yielded %d items, want 1 — a round whose heartbeat failed must stop", stream.yields)
+			if !errors.Is(err, services.ErrSyncLocked) {
+				t.Errorf("Sync() error = %v, want it to wrap ErrSyncLocked", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Sync() error = %q, want it to name %q", err, tt.want)
+			}
+			if tt.wantExact != "" && err.Error() != tt.wantExact {
+				t.Errorf("Sync() error = %q, want exactly %q", err, tt.wantExact)
 			}
 		})
 	}
 }
 
-func TestSyncSkipsWhenAnotherProcessHoldsTheLease(t *testing.T) {
+func TestSyncReportsTheDeadLeaseItTookOver(t *testing.T) {
 	t.Parallel()
 
-	m := newSyncMocks(t)
-	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(false, nil)
+	dead := &entities.LeaseState{
+		Holder:      "host-9/1234",
+		AcquiredAt:  time.Now().Add(-5 * time.Minute),
+		HeartbeatAt: time.Now().Add(-3 * time.Minute),
+	}
+	own := &entities.LeaseState{Holder: syncHolder(), HeartbeatAt: time.Now().Add(-3 * time.Minute)}
 
-	conn := m.connector("github")
+	tests := []struct {
+		name     string
+		previous *entities.LeaseState
+		leaseErr error
+		want     *entities.LeaseState
+	}{
+		{name: "another holder's dead lease is reported", previous: dead, want: dead},
+		{name: "a free lease is no takeover", previous: nil, want: nil},
+		{name: "this process' own lapsed lease is no takeover", previous: own, want: nil},
+		{
+			name:     "a still-live holder's lease is no takeover",
+			previous: &entities.LeaseState{Holder: "host-9/1234", HeartbeatAt: time.Now().Add(-5 * time.Second)},
+			want:     nil,
+		},
+		{name: "an unreadable lease does not fail the round", leaseErr: errSyncStore, want: nil},
+	}
 
-	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-	assertSyncKind(t, err, internalerror.KindPrecondition)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if !strings.Contains(err.Error(), "lease") {
-		t.Errorf("Sync() error = %q, want it to name the lease", err)
+			m := newSyncMocks(t)
+			m.store.EXPECT().Lease(gomock.Any()).Return(tt.previous, tt.leaseErr)
+			m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
+			m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
+			m.matchingIdentity()
+			m.linkedPending()
+
+			res, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{})
+			if err != nil {
+				t.Fatalf("Sync() = %v, want nil", err)
+			}
+			if res.TookOverFrom != tt.want {
+				t.Errorf("Sync() TookOverFrom = %v, want %v", res.TookOverFrom, tt.want)
+			}
+		})
 	}
 }
 
@@ -388,13 +431,13 @@ func TestSyncRefusesAnEmbedderIdentityMismatch(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
 
 	conn := m.connector("github")
 
-	err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 	assertSyncKind(t, err, internalerror.KindPrecondition)
 
 	for _, want := range []string{"lore sync --reembed", previousIdentity, currentIdentity} {
@@ -408,7 +451,7 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 
 	conn := m.connector("github")
@@ -422,7 +465,7 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 
 	m.linkedPending()
 
-	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -444,7 +487,7 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 			t.Parallel()
 
 			m := newSyncMocks(t)
-			m.heldLease()
+			m.acquiredLease()
 			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(tt.stored, nil)
 
@@ -463,7 +506,7 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 
 			m.linkedPending()
 
-			err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{Reembed: true})
+			_, err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{Reembed: true})
 			if err != nil {
 				t.Fatalf("Sync(Reembed) = %v, want nil", err)
 			}
@@ -498,7 +541,7 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 			t.Parallel()
 
 			m := newSyncMocks(t)
-			m.heldLease()
+			m.acquiredLease()
 			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
 			// No SetMeta is declared: a half-finished rebuild must not claim the new identity.
@@ -506,7 +549,7 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 
 			conn := m.connector("github")
 
-			err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{Reembed: true})
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{Reembed: true})
 			assertSyncKind(t, err, internalerror.KindInternal)
 		})
 	}
@@ -516,7 +559,7 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.matchingIdentity()
 
 	ghDoc := syncDoc("github:pr:1")
@@ -542,11 +585,10 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	}
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", ghCursor).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "notion", noCursor).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Times(2).Return(nil)
 	m.linkedBatches(2)
 	m.linkedPending()
 
-	if err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator(github, notion).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -555,7 +597,7 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.matchingIdentity()
 
 	doc := syncDoc("github:pr:1")
@@ -571,11 +613,10 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 	// No Embed is declared: an empty chunk set must not cost an embedding call.
 	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.linkedBatches(1)
 	m.linkedPending()
 
-	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -583,16 +624,12 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	t.Parallel()
 
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = "unknown-host"
-	}
-	want := host + "/" + strconv.Itoa(os.Getpid())
+	want := syncHolder()
 
 	m := newSyncMocks(t)
 	m.matchingIdentity()
+	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), want).Return(true, nil)
-	m.store.EXPECT().HeartbeatLease(gomock.Any(), want).Return(nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
 
 	conn := m.connector("github")
@@ -604,7 +641,7 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	m.linkedBatches(1)
 	m.linkedPending()
 
-	if err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -613,11 +650,11 @@ func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.heldLease()
+	m.acquiredLease()
 	m.matchingIdentity()
 	m.linkedPending()
 
-	if err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
+	if _, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
 		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
@@ -631,6 +668,7 @@ func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(released context.Context, _ string) error {
@@ -645,5 +683,6 @@ func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
 	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(context.Canceled)).seq())
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 
-	assertSyncKind(t, m.orchestrator(conn).Sync(ctx, services.SyncOptions{}), internalerror.KindInternal)
+	_, err := m.orchestrator(conn).Sync(ctx, services.SyncOptions{})
+	assertSyncKind(t, err, internalerror.KindInternal)
 }

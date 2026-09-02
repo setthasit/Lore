@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"time"
 
 	"lore/internal/entities"
 )
@@ -10,6 +11,8 @@ import (
 // Another process took the lease over; implementations wrap it so a caller can
 // tell it apart from a store that could not be reached.
 var ErrLeaseLost = errors.New("sync lease lost to another holder")
+
+const LeaseTTL = 60 * time.Second
 
 // Errors are returned raw with context; classifying them is the service layer's
 // job.
@@ -69,8 +72,8 @@ type IndexStore interface {
 	// Keys naming the index's own identity are refused, not overwritten.
 	SetMeta(ctx context.Context, key, value string) error
 
-	// Never blocks. The lease expires 60s after its last heartbeat, after which
-	// any caller may take it over; re-acquiring one already held restarts it.
+	// Never blocks. The lease expires LeaseTTL after its last heartbeat, after
+	// which any caller may take it over; re-acquiring one already held restarts it.
 	TryAcquireLease(ctx context.Context, holder string) (bool, error)
 
 	// A non-holder fails with an error wrapping ErrLeaseLost.
@@ -78,6 +81,9 @@ type IndexStore interface {
 
 	// No-op when the lease was already taken over or released.
 	ReleaseLease(ctx context.Context, holder string) error
+
+	// Nil means the lease is free; a lease lapsed past LeaseTTL is still reported.
+	Lease(ctx context.Context) (*entities.LeaseState, error)
 
 	// An empty index reports zeros and no rows, not an error.
 	Stats(ctx context.Context) (entities.IndexStats, error)

@@ -128,6 +128,21 @@ func (mr *MockIndexStoreMockRecorder) HeartbeatLease(ctx, holder any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeartbeatLease", reflect.TypeOf((*MockIndexStore)(nil).HeartbeatLease), ctx, holder)
 }
 
+// Lease mocks base method.
+func (m *MockIndexStore) Lease(ctx context.Context) (*entities.LeaseState, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Lease", ctx)
+	ret0, _ := ret[0].(*entities.LeaseState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Lease indicates an expected call of Lease.
+func (mr *MockIndexStoreMockRecorder) Lease(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Lease", reflect.TypeOf((*MockIndexStore)(nil).Lease), ctx)
+}
+
 // Meta mocks base method.
 func (m *MockIndexStore) Meta(ctx context.Context, key string) (string, error) {
 	m.ctrl.T.Helper()

@@ -42,11 +42,12 @@ func (m *MockSyncOrchestrator) EXPECT() *MockSyncOrchestratorMockRecorder {
 }
 
 // Sync mocks base method.
-func (m *MockSyncOrchestrator) Sync(ctx context.Context, opts services.SyncOptions) error {
+func (m *MockSyncOrchestrator) Sync(ctx context.Context, opts services.SyncOptions) (services.SyncResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Sync", ctx, opts)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(services.SyncResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Sync indicates an expected call of Sync.

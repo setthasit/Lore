@@ -15,10 +15,10 @@ import (
 
 const testDims = 3
 
-func openTestStore(t *testing.T) *Store {
+func openTestStore(t *testing.T, opts ...Option) *Store {
 	t.Helper()
 
-	s, err := Open(filepath.Join(t.TempDir(), "workspace.db"), testDims)
+	s, err := Open(filepath.Join(t.TempDir(), "workspace.db"), testDims, opts...)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -258,7 +258,7 @@ func newIndexedWorkspace(
 func (w *workspace) sync(ctx context.Context, t *testing.T, what string) {
 	t.Helper()
 
-	if err := w.round.Sync(ctx, services.SyncOptions{}); err != nil {
+	if _, err := w.round.Sync(ctx, services.SyncOptions{}); err != nil {
 		t.Fatalf("%s sync: %v", what, err)
 	}
 }

@@ -35,7 +35,7 @@ func (s *Store) Stats(ctx context.Context) (entities.IndexStats, error) {
 	}
 	stats.Cursors = ages
 
-	lease, err := s.lease(ctx)
+	lease, err := s.Lease(ctx)
 	if err != nil {
 		return entities.IndexStats{}, err
 	}
@@ -72,8 +72,7 @@ func (s *Store) cursorAges(ctx context.Context) ([]entities.CursorAge, error) {
 	return ages, nil
 }
 
-// A lapsed heartbeat is reported, not filtered: it evidences a crashed round.
-func (s *Store) lease(ctx context.Context) (*entities.LeaseState, error) {
+func (s *Store) Lease(ctx context.Context) (*entities.LeaseState, error) {
 	var (
 		holder      string
 		acquiredAt  string
