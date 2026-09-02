@@ -43,6 +43,7 @@ type syncOrchestrator struct {
 	links      LinkResolver
 	holder     string
 	heartbeat  time.Duration
+	now        func() time.Time
 }
 
 var _ SyncOrchestrator = (*syncOrchestrator)(nil)
@@ -62,6 +63,7 @@ func NewSyncOrchestrator(
 		links:      links,
 		holder:     leaseHolder(),
 		heartbeat:  heartbeatInterval,
+		now:        time.Now,
 	}
 }
 
@@ -169,7 +171,7 @@ func (s *syncOrchestrator) tookOver(previous *entities.LeaseState) *entities.Lea
 	if previous == nil || previous.Holder == s.holder {
 		return nil
 	}
-	if time.Since(previous.HeartbeatAt) <= repositories.LeaseTTL {
+	if s.now().Sub(previous.HeartbeatAt) <= repositories.LeaseTTL {
 		return nil
 	}
 
@@ -179,7 +181,8 @@ func (s *syncOrchestrator) tookOver(previous *entities.LeaseState) *entities.Lea
 func (s *syncOrchestrator) leaseHeldError(ctx context.Context) error {
 	who := "another process"
 	if held, err := s.store.Lease(ctx); err == nil && held != nil {
-		who = fmt.Sprintf("%s (last heartbeat %s ago)", held.Holder, time.Since(held.HeartbeatAt).Round(time.Second))
+		age := s.now().Sub(held.HeartbeatAt).Round(time.Second)
+		who = fmt.Sprintf("%s (last heartbeat %s ago)", held.Holder, age)
 	}
 
 	return internalerror.NewPreconditionError("cannot run a sync round", fmt.Errorf(

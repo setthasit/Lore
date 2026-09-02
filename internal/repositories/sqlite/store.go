@@ -48,10 +48,16 @@ type Store struct {
 	now func() time.Time
 }
 
+type Option func(*Store)
+
+func WithClock(now func() time.Time) Option {
+	return func(s *Store) { s.now = now }
+}
+
 // path must already be resolved; no "~" expansion happens here. vectorDims
 // sizes chunk_vectors on a fresh file and is then fixed: reopening with a
 // different width fails, because the vec0 table keeps its original dimensions.
-func Open(path string, vectorDims int) (*Store, error) {
+func Open(path string, vectorDims int, opts ...Option) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("sqlite: database path is empty")
 	}
@@ -65,6 +71,9 @@ func Open(path string, vectorDims int) (*Store, error) {
 	}
 
 	s := &Store{db: db, vectorDims: vectorDims, now: time.Now}
+	for _, opt := range opts {
+		opt(s)
+	}
 	if err := s.bootstrap(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: %s: %w", path, err)

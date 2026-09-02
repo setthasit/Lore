@@ -116,12 +116,10 @@ func TestMetaRoundTripAndReservedKeys(t *testing.T) {
 }
 
 func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-
 	start := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	clock := start
-	s.now = func() time.Time { return clock }
+	s := openTestStore(t, WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
 
 	acquired, err := s.TryAcquireLease(ctx, "daemon")
 	if err != nil {
@@ -203,12 +201,10 @@ func TestSyncLeaseExcludesUntilTTLExpires(t *testing.T) {
 }
 
 func TestLeaseReportsTheCurrentHolder(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-
 	start := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	clock := start
-	s.now = func() time.Time { return clock }
+	s := openTestStore(t, WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
 
 	got, err := s.Lease(ctx)
 	if err != nil {
@@ -247,9 +243,9 @@ func TestLeaseReportsTheCurrentHolder(t *testing.T) {
 // The failure mode this guards: with a read followed by a write, every racing
 // caller reads "free" and every one of them writes itself in.
 func TestSyncLeaseAdmitsOneWinnerUnderRace(t *testing.T) {
-	s := openTestStore(t)
+	frozen := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	s := openTestStore(t, WithClock(func() time.Time { return frozen }))
 	ctx := context.Background()
-	s.now = func() time.Time { return time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC) }
 
 	if err := s.ReleaseLease(ctx, "nobody"); err != nil {
 		t.Fatalf("ReleaseLease on a free lease: %v", err)

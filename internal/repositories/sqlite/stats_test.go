@@ -27,12 +27,10 @@ func TestStatsEmptyStoreIsZeros(t *testing.T) {
 }
 
 func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
-	s := openTestStore(t)
-	ctx := context.Background()
-
 	// A fixed clock makes the cursor stamp and the lease timestamps assertable.
 	stamp := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
-	s.now = func() time.Time { return stamp }
+	s := openTestStore(t, WithClock(func() time.Time { return stamp }))
+	ctx := context.Background()
 
 	seedSearchCorpus(t, s)
 
@@ -98,17 +96,17 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 }
 
 func TestStatsCursorAgeAdvancesWithEveryCheckpoint(t *testing.T) {
-	s := openTestStore(t)
+	first := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
+	clock := first
+	s := openTestStore(t, WithClock(func() time.Time { return clock }))
 	ctx := context.Background()
 
-	first := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
-	s.now = func() time.Time { return first }
 	if err := s.SetCursor(ctx, "github", entities.Cursor{"since": "a"}); err != nil {
 		t.Fatalf("SetCursor: %v", err)
 	}
 
 	second := first.Add(90 * time.Minute)
-	s.now = func() time.Time { return second }
+	clock = second
 	if err := s.SetCursor(ctx, "github", entities.Cursor{"since": "b"}); err != nil {
 		t.Fatalf("SetCursor (update): %v", err)
 	}

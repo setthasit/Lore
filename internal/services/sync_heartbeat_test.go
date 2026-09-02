@@ -122,6 +122,7 @@ func newHeartbeatRound(t *testing.T, connectors ...entities.Connector) (*syncOrc
 		links:      m.links,
 		holder:     heartbeatHolder,
 		heartbeat:  testHeartbeat,
+		now:        time.Now,
 	}, m
 }
 
