@@ -16,15 +16,7 @@ func newMCPCommand(resolve Resolver, configPath *string) *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
-				return mcp.Serve(cmd.Context(), mcp.Services{
-					Query:   rt.Query,
-					Why:     rt.Why,
-					Trace:   rt.Trace,
-					Impact:  rt.Impact,
-					History: rt.History,
-					Sync:    rt.Sync,
-					Status:  rt.Status,
-				})
+				return mcp.Serve(cmd.Context(), rt.mcpServices())
 			})
 		},
 	}

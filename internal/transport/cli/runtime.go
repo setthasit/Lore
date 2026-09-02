@@ -10,6 +10,7 @@ import (
 	"lore/internal/config"
 	"lore/internal/di"
 	"lore/internal/services"
+	"lore/internal/transport/mcp"
 )
 
 type Runtime struct {
@@ -23,15 +24,18 @@ type Runtime struct {
 	Status  services.StatusService
 }
 
-type Resolver func(ctx context.Context, configPath string) (*Runtime, func() error, error)
+// modules are fx options beyond the workspace: only `lore serve` adds the scheduler.
+type Resolver func(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error)
 
-func resolveWithFX(ctx context.Context, configPath string) (*Runtime, func() error, error) {
+func resolveWithFX(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error) {
 	rt := new(Runtime)
 
 	app := fx.New(
-		fx.NopLogger,
-		di.Workspace(configPath),
-		fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status),
+		append([]fx.Option{
+			fx.NopLogger,
+			di.Workspace(configPath),
+			fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status),
+		}, modules...)...,
 	)
 	if err := app.Err(); err != nil {
 		return nil, nil, err
@@ -44,8 +48,26 @@ func resolveWithFX(ctx context.Context, configPath string) (*Runtime, func() err
 	return rt, func() error { return app.Stop(context.WithoutCancel(ctx)) }, nil
 }
 
-func withRuntime(cmd *cobra.Command, resolve Resolver, configPath string, run func(*Runtime) error) error {
-	rt, stop, err := resolve(cmd.Context(), configPath)
+func (rt *Runtime) mcpServices() mcp.Services {
+	return mcp.Services{
+		Query:   rt.Query,
+		Why:     rt.Why,
+		Trace:   rt.Trace,
+		Impact:  rt.Impact,
+		History: rt.History,
+		Sync:    rt.Sync,
+		Status:  rt.Status,
+	}
+}
+
+func withRuntime(
+	cmd *cobra.Command,
+	resolve Resolver,
+	configPath string,
+	run func(*Runtime) error,
+	modules ...fx.Option,
+) error {
+	rt, stop, err := resolve(cmd.Context(), configPath, modules...)
 	if err != nil {
 		return err
 	}

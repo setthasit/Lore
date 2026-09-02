@@ -36,27 +36,10 @@ func newToolFixture(t *testing.T) toolFixture {
 	t.Helper()
 
 	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	query := mock_services.NewMockQueryService(ctrl)
-	why := mock_services.NewMockWhyService(ctrl)
-	trace := mock_services.NewMockTraceService(ctrl)
-	impact := mock_services.NewMockImpactService(ctrl)
-	history := mock_services.NewMockHistoryService(ctrl)
-	sync := mock_services.NewMockSyncOrchestrator(ctrl)
-	status := mock_services.NewMockStatusService(ctrl)
-	logs := &bytes.Buffer{}
+	f := newMockedTools(t)
 
-	svc := Services{
-		Query:   query,
-		Why:     why,
-		Trace:   trace,
-		Impact:  impact,
-		History: history,
-		Sync:    sync,
-		Status:  status,
-	}
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
-	serverSession, err := newServer(svc, slog.New(slog.NewTextHandler(logs, nil))).Connect(ctx, serverTransport, nil)
+	serverSession, err := newServer(f.services(), slog.New(slog.NewTextHandler(f.logs, nil))).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -75,16 +58,35 @@ func newToolFixture(t *testing.T) toolFixture {
 		}
 	})
 
+	f.session = clientSession
+	return f
+}
+
+func newMockedTools(t *testing.T) toolFixture {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
 	return toolFixture{
-		query:   query,
-		why:     why,
-		trace:   trace,
-		impact:  impact,
-		history: history,
-		sync:    sync,
-		status:  status,
-		session: clientSession,
-		logs:    logs,
+		query:   mock_services.NewMockQueryService(ctrl),
+		why:     mock_services.NewMockWhyService(ctrl),
+		trace:   mock_services.NewMockTraceService(ctrl),
+		impact:  mock_services.NewMockImpactService(ctrl),
+		history: mock_services.NewMockHistoryService(ctrl),
+		sync:    mock_services.NewMockSyncOrchestrator(ctrl),
+		status:  mock_services.NewMockStatusService(ctrl),
+		logs:    &bytes.Buffer{},
+	}
+}
+
+func (f toolFixture) services() Services {
+	return Services{
+		Query:   f.query,
+		Why:     f.why,
+		Trace:   f.trace,
+		Impact:  f.impact,
+		History: f.history,
+		Sync:    f.sync,
+		Status:  f.status,
 	}
 }
 
