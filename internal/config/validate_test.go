@@ -44,6 +44,7 @@ query:
 embedder:
   provider: openai
   model: text-embedding-3-small
+  base_url: https://api.openai.com
 
 llm:
   provider: anthropic
@@ -263,6 +264,41 @@ query:
 			wantErr: "tp_k",
 		},
 		{
+			name: "an unknown embedder key is rejected",
+			yaml: `
+workspace: typo
+repos:
+  - path: ~/dev/myproject
+embedder:
+  dimension: 768
+`,
+			wantErr: "dimension",
+		},
+		{
+			name: "the embedder block carries a base url and an explicit vector width",
+			yaml: `
+workspace: local
+repos:
+  - path: {{REPO}}
+embedder:
+  provider: ollama
+  model: nomic-embed-text
+  base_url: http://gpu-box.internal:11434
+  dimensions: 768
+`,
+			check: func(t *testing.T, cfg *Config) {
+				want := Embedder{
+					Provider:   "ollama",
+					Model:      "nomic-embed-text",
+					BaseURL:    "http://gpu-box.internal:11434",
+					Dimensions: 768,
+				}
+				if cfg.Embedder != want {
+					t.Errorf("embedder = %+v, want %+v", cfg.Embedder, want)
+				}
+			},
+		},
+		{
 			name: "defaults are applied",
 			yaml: `
 workspace: demo
@@ -284,6 +320,9 @@ repos:
 				}
 				if cfg.Scheduler.Interval != DefaultSchedulerInterval {
 					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, DefaultSchedulerInterval)
+				}
+				if cfg.Embedder.BaseURL != "" || cfg.Embedder.Dimensions != 0 {
+					t.Errorf("embedder = %+v, want an unset base_url and width", cfg.Embedder)
 				}
 			},
 		},
@@ -402,7 +441,8 @@ repos:
 				if cfg.Query.EventWindow != DefaultEventWindow {
 					t.Errorf("event_window = %s, want %s", cfg.Query.EventWindow, DefaultEventWindow)
 				}
-				if cfg.Embedder.Provider != "openai" || cfg.Embedder.Model != "text-embedding-3-small" {
+				if cfg.Embedder.Provider != "openai" || cfg.Embedder.Model != "text-embedding-3-small" ||
+					cfg.Embedder.BaseURL != "https://api.openai.com" {
 					t.Errorf("embedder = %+v", cfg.Embedder)
 				}
 				if cfg.LLM.Provider != "anthropic" || cfg.LLM.APIKeyEnv != "LORE_LLM_KEY" {
