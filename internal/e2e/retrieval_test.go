@@ -18,6 +18,7 @@ import (
 	"lore/internal/connectors/embedder"
 	"lore/internal/connectors/github"
 	"lore/internal/entities"
+	"lore/internal/repositories"
 	"lore/internal/repositories/sqlite"
 	"lore/internal/services"
 )
@@ -103,6 +104,9 @@ const (
 
 	restSHAChars = 7
 )
+
+// Every call a full github round makes against the fixture API.
+var githubFixtureOps = []string{"LoreCommits", "LorePullRequests", "LoreIssues", restCommitOp}
 
 type fixtureAPI struct {
 	t      *testing.T
@@ -204,13 +208,15 @@ func (a *fixtureAPI) callCount(op string) int {
 }
 
 type workspace struct {
-	api    *fixtureAPI
-	round  services.SyncOrchestrator
-	query  services.QueryService
-	trace  services.TraceService
-	impact services.ImpactService
-	status services.StatusService
-	why    services.WhyService
+	api     *fixtureAPI
+	store   repositories.IndexStore
+	round   services.SyncOrchestrator
+	query   services.QueryService
+	trace   services.TraceService
+	impact  services.ImpactService
+	status  services.StatusService
+	why     services.WhyService
+	history services.HistoryService
 }
 
 func newWorkspace(t *testing.T, fixtures string) *workspace {
@@ -245,13 +251,15 @@ func newIndexedWorkspace(
 	emb := fakeEmbedder{}
 
 	return &workspace{
-		api:    api,
-		round:  services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store, repos)),
-		query:  services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
-		trace:  services.NewTraceService(store),
-		impact: services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
-		status: services.NewStatusService(store),
-		why:    services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
+		api:     api,
+		store:   store,
+		round:   services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store, repos)),
+		query:   services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
+		trace:   services.NewTraceService(store),
+		impact:  services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
+		status:  services.NewStatusService(store),
+		why:     services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
+		history: services.NewHistoryService(store, repos),
 	}
 }
 
@@ -292,7 +300,7 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 
 	w.sync(ctx, t, "first")
 
-	for _, op := range []string{"LoreCommits", "LorePullRequests", "LoreIssues", restCommitOp} {
+	for _, op := range githubFixtureOps {
 		if w.api.callCount(op) == 0 {
 			t.Errorf("the fixture API was never asked for %s", op)
 		}
