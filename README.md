@@ -1,0 +1,235 @@
+# Lore
+
+**A decision-provenance engine for engineering teams.** Ask *why* a decision was
+made — and what happened afterwards — and get back evidence where every claim
+carries a source URL.
+
+> ### 🚧 Work in progress
+>
+> Lore is under active development and has not been released. The retrieval core,
+> provenance engine, GitHub/Notion/Jira connectors, code anchoring, background sync
+> and both MCP transports are implemented and covered by tests. The gRPC API and LLM
+> synthesis are designed but **not built**. See [Status](#status) for the exact line.
+
+---
+
+## The problem
+
+Teams lose their *why*. Decisions happen in incident channels, Jira tickets, Notion
+pages and PR reviews; then people rotate and six months later nobody can answer
+*"why did we choose B over A when incident X happened?"* The answer exists — scattered
+across a trail nobody reads manually. A commit that says only `PROJ-4521` carries no
+reasoning: the reasoning is in the ticket, and the *consequences* are in a postmortem
+written weeks later.
+
+Codebase RAG tools answer **what** the code is. Lore answers **why it was decided and
+what happened next**.
+
+## How it works
+
+1. **Ingest** — connectors stream documents from GitHub, Notion and Jira into one
+   normalized `Document` model. Every source is optional.
+2. **Link** — a resolver turns raw references (ticket keys, URLs, commit SHAs, file
+   paths) into a typed, directional **edge graph**: ticket → design doc → PR → review
+   thread → commit.
+3. **Answer** — one pipeline, four seed modes: `resolve anchor → seed → graph walk →
+   hybrid retrieval → rank → EvidenceBundle`. Retrieval is BM25 (FTS5) + vector KNN
+   (sqlite-vec) fused with Reciprocal Rank Fusion.
+
+Two design choices set it apart:
+
+- **Code is one anchor among several, not the center.** A Jira + Notion workspace with
+  no repository at all is a first-class configuration; `git blame` anchoring is an
+  optional enrichment.
+- **Honesty is a feature.** Every answer reports its `gaps` — *"trail ends at
+  PROJ-4521; no linked follow-up"* — instead of fabricating a chain. No URL means no
+  evidence, so the node is not returned.
+
+## Quickstart
+
+**Requirements:** Go 1.25+, `git`, and an OpenAI API key for embeddings.
+No cgo, no Docker, no database server — SQLite ships inside the binary as pure-Go WASM
+([ncruces/go-sqlite3](https://github.com/ncruces/go-sqlite3) + sqlite-vec), so the index
+is a single portable file and queries work offline after a sync.
+
+```bash
+git clone https://github.com/setthasit/Lore.git && cd Lore
+go build -o bin/lore ./cmd/lore
+
+export OPENAI_API_KEY=...          # embeddings
+export LORE_GITHUB_TOKEN=...       # fine-grained, read-only PAT
+
+bin/lore init                      # writes a commented lore.yaml scaffold
+$EDITOR lore.yaml                  # name the repos/pages/projects to ingest
+bin/lore sync                      # first run creates ~/.lore/<workspace>.db
+bin/lore status                    # index counts, cursor ages, sync lock
+bin/lore ask "why did we pick sqlite?"
+```
+
+`lore init` writes credential **variable names**, never credentials. Add more sources
+interactively with `lore source add notion` or `lore source add jira`.
+
+### What an answer looks like
+
+```
+why did we pick sqlite?
+
+2 documents
+
+1. Index on SQLite, not Postgres
+   github pr · dev@example.test · 2025-03-12
+   https://github.com/acme/lore/pull/12
+      sqlite ships everywhere and needs no server
+      so the workspace file is the whole deployment
+
+2. Storage design
+   notion page · arch@example.test · 2025-03-10 · follow_up
+   https://notion.so/design/storage
+      postgres with pgvector was the alternative
+
+gaps:
+  trail ends at PROJ-4521; no linked follow-up
+```
+
+Pass `--raw` to any query command to get the `EvidenceBundle` as JSON for scripting.
+
+## Running the services
+
+Lore is a single binary; the subcommand picks the transport.
+
+```bash
+bin/lore mcp                              # MCP over stdio, for a local agent harness
+bin/lore serve --http 127.0.0.1:8080      # MCP streamable HTTP at /mcp + background sync
+```
+
+`serve` also runs the sync scheduler, so the index stays fresh while the endpoint is up.
+A bind address that is not *provably* loopback is refused unless `server.mtls.cert` and
+`server.mtls.key` are configured — `:8080` and `localhost:8080` do not qualify, because
+a bare port reaches every interface and a host name is not proof.
+
+Register the stdio server with an MCP host (Claude Code, Cursor, …):
+
+```json
+{
+  "mcpServers": {
+    "lore": {
+      "command": "/absolute/path/to/bin/lore",
+      "args": ["mcp", "--config", "/absolute/path/to/lore.yaml"]
+    }
+  }
+}
+```
+
+MCP tools return the structured `EvidenceBundle`, never prose: the host model is already
+an LLM, so it synthesizes in its own context and can immediately call another tool. That
+is why **no LLM key is needed on the server** — only an embedding key.
+
+| MCP tool | Answers |
+|---|---|
+| `find_decision` | "why B over A, around incident X?" — retrieval-seeded, works with zero repos |
+| `why` | "why does `auth.go:40-55` look like this?" — blame-seeded |
+| `trace` | everything linked to one commit / PR / ticket / page, in order |
+| `impact_of` | what followed a decision, as a chronological timeline |
+| `history_of` | how one file evolved, commit by commit |
+| `sync_now` / `sync_status` | trigger a sync round; report cursors, counts and the lock |
+
+## CLI surface
+
+| Command | Purpose |
+|---|---|
+| `lore init` · `lore source add <notion\|jira>` | scaffold and grow `lore.yaml` |
+| `lore sync [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
+| `lore status` | index counts, per-source cursor ages, sync lock state |
+| `lore ask <question>` | `--around --source --repo --doc-type --since --until --raw` |
+| `lore why <file>:<L1>-<L2>` | blame-anchored trail; `--repo --raw` |
+| `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both` |
+| `lore impact <ref \| "query">` | consequences timeline; `--question` |
+| `lore history <path>` | file timeline; `--limit --before` pagination |
+| `lore mcp` · `lore serve` | MCP stdio · MCP streamable HTTP + scheduler |
+
+Every command takes `--config` (default `./lore.yaml`).
+
+## Architecture
+
+Strict unidirectional layering, wired with [Uber FX](https://github.com/uber-go/fx).
+Transports never touch the store or a connector — including the MCP path.
+
+```mermaid
+flowchart TB
+    T["Transport — MCP stdio · MCP HTTP · CLI"]
+    S["Service — Query · Why · Trace · Impact · History · SyncOrchestrator · LinkResolver"]
+    R["Repository — IndexStore (SQLite: FTS5 + sqlite-vec)"]
+    C["Connectors — GitHub · Notion · Jira · local git · embedder"]
+    T --> S
+    S --> R
+    S --> C
+```
+
+One SQLite file per workspace holds `documents`, `chunks`, `chunks_fts` (BM25),
+`chunk_vectors` (sqlite-vec), `edges`, `pending_refs`, `cursors`, `sync_lock` and
+`meta`. The index is **derived data**: sources are ground truth, so deleting it is safe
+and the next sync rebuilds it.
+
+Sync is crash-safe by construction: connectors yield `Batch{Docs, Cursor}`, and the
+orchestrator commits the batch *then* persists that batch's cursor. A single-row lease
+with a heartbeat and TTL takeover keeps a manual `lore sync`, the background scheduler
+and a `lore serve` daemon from colliding — and a crashed run never wedges the scheduler.
+
+The design documents in [`docs/v3/`](docs/v3/) are the source of truth:
+
+| Doc | Contents |
+|---|---|
+| [01 — Overview](docs/v3/01-overview.md) | problem, concept, differentiators, goals / non-goals |
+| [02 — Architecture](docs/v3/02-architecture.md) | layers, transports, request flows, key decisions |
+| [03 — Data Model](docs/v3/03-data-model.md) | Document / Edge model, schema, chunking, hybrid retrieval |
+| [04 — Connectors & Sync](docs/v3/04-connectors-and-sync.md) | connector contract, scheduler, lease, link resolver |
+| [05 — Query Engine](docs/v3/05-query-engine.md) | pipeline, anchors, tool algorithms, EvidenceBundle |
+| [06 — Interfaces & Config](docs/v3/06-interfaces-and-config.md) | MCP tools, CLI, gRPC API, `lore.yaml` reference |
+| [07 — Roadmap & Risks](docs/v3/07-roadmap.md) | milestones, named risks, open questions |
+
+## Status
+
+| Area | State |
+|---|---|
+| Config loading, validation, FX wiring | ✅ implemented |
+| SQLite IndexStore — FTS5 + sqlite-vec, RRF fusion in Go | ✅ implemented |
+| GitHub, Notion, Jira connectors + shared conformance suite | ✅ implemented |
+| Link resolver, edge graph, `pending_refs` retry | ✅ implemented |
+| `find_decision`, `trace`, `impact_of` + event resolution | ✅ implemented |
+| Code anchoring — `why`, `history_of` via local-clone blame/log | ✅ implemented |
+| Sync lease, background scheduler, `sync_now` / `sync_status` | ✅ implemented |
+| MCP stdio + MCP streamable HTTP (`lore serve`) | ✅ implemented |
+| Embedder providers | ⚠️ OpenAI only — any other provider is refused at startup |
+| gRPC API (`lore.v1`) + mTLS | ❌ designed, not built |
+| LLM synthesis (`--explain`, prose answers) | ❌ designed, not built; `lore.yaml`'s `llm:` block is inert |
+| Ollama fully-local pipeline | ❌ designed, not built |
+
+Until synthesis lands, every surface prints or returns the evidence bundle itself.
+
+## Development
+
+```bash
+make build      # go build ./...
+make test       # go test ./...        — 66 test files
+make lint       # golangci-lint run    — errcheck, govet, staticcheck
+make gen.mock   # go generate ./...    — gomock doubles under internal/mocks
+```
+
+Tests need no external service: connectors run against `httptest` fixture servers, the
+store against a temp SQLite file, and the end-to-end suite drives the real MCP transports
+over a live DI graph — an MCP client session over streamable HTTP on a real socket,
+against fixture GitHub/Notion/Jira servers. It includes an **ask-only** workspace with
+zero repositories, which asserts that code-anchored tools refuse with a precondition
+error rather than degrading.
+
+Contributions follow the branch → PR workflow in [`AGENTS.md`](AGENTS.md): no direct
+commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
+
+## Security posture
+
+- **Read-only toward every source.** Lore never writes to GitHub, Notion or Jira.
+- **Secrets live in environment variables named by config.** They are never written to
+  `lore.yaml`, the index, or logs; least-privilege tokens are the documented default.
+- **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.
+- **Private data leaves the machine only toward the configured embedder** — stated
+  loudly because it is the one privacy trade-off in the current build.
