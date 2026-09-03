@@ -25,11 +25,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
-          # Deliberately not go.mod's directive: it still declares 1.25, which
-          # is out of support and carries stdlib advisories, so building and
-          # testing here would certify a toolchain nobody should ship.
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
           cache: true
       - run: make build
       - name: test
@@ -46,8 +42,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
           cache: true
       # The runner has no golangci-lint binary, so this replaces `make lint`.
       # Keep the version in step with the one used locally.

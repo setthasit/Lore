@@ -61,7 +61,7 @@ the second column is the first plus one extra anchor type. Walk through either o
 
 ## Quickstart
 
-**Requirements:** Go 1.25+, `git`, and an OpenAI API key for embeddings — or a local
+**Requirements:** Go 1.27+, `git`, and an OpenAI API key for embeddings — or a local
 Ollama daemon instead, with `embedder.provider: ollama`.
 No cgo, no Docker, no database server — SQLite ships inside the binary as pure-Go WASM
 ([ncruces/go-sqlite3](https://github.com/ncruces/go-sqlite3) + sqlite-vec), so the index
