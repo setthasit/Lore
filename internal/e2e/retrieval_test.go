@@ -257,7 +257,7 @@ func newIndexedWorkspace(
 		query:   services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
 		trace:   services.NewTraceService(store),
 		impact:  services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
-		status:  services.NewStatusService(store),
+		status:  services.NewStatusService(store, emb),
 		why:     services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
 		history: services.NewHistoryService(store, repos),
 	}

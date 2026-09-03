@@ -51,6 +51,14 @@ type LeaseState struct {
 	HeartbeatAt time.Time
 }
 
+// EmbedderIdentity pairs the vector space the workspace is configured for with
+// the one its index was built with. They diverge only when the configuration
+// changed after the last sync — the condition a re-embed repairs.
+type EmbedderIdentity struct {
+	Configured string
+	Indexed    string // empty until a sync records one
+}
+
 type SyncPhase string
 
 const (

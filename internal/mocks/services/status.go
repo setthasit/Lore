@@ -41,6 +41,21 @@ func (m *MockStatusService) EXPECT() *MockStatusServiceMockRecorder {
 	return m.recorder
 }
 
+// EmbedderIdentity mocks base method.
+func (m *MockStatusService) EmbedderIdentity(ctx context.Context) (entities.EmbedderIdentity, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EmbedderIdentity", ctx)
+	ret0, _ := ret[0].(entities.EmbedderIdentity)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EmbedderIdentity indicates an expected call of EmbedderIdentity.
+func (mr *MockStatusServiceMockRecorder) EmbedderIdentity(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EmbedderIdentity", reflect.TypeOf((*MockStatusService)(nil).EmbedderIdentity), ctx)
+}
+
 // Status mocks base method.
 func (m *MockStatusService) Status(ctx context.Context) (entities.IndexStats, error) {
 	m.ctrl.T.Helper()
