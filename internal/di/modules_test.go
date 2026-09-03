@@ -15,6 +15,7 @@ import (
 	"go.uber.org/fx"
 
 	"lore/internal/config"
+	"lore/internal/connectors/embedder"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/repositories"
@@ -156,6 +157,116 @@ func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), EmbedderKeyEnv) {
 		t.Errorf("error %q does not name %s", err, EmbedderKeyEnv)
+	}
+}
+
+func resolveEmbedder(t *testing.T, path string) (embedder.Embedder, error) {
+	t.Helper()
+
+	var emb embedder.Embedder
+	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&emb))
+	if err := app.Err(); err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	if err := app.Start(ctx); err != nil {
+		return nil, err
+	}
+	if err := app.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	return emb, nil
+}
+
+func TestWorkspaceGraphResolvesTheOllamaEmbedder(t *testing.T) {
+	// The local daemon is unauthenticated: no key variable is consulted.
+	t.Setenv(EmbedderKeyEnv, "")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+embedder:
+  provider: ollama
+  model: nomic-embed-text
+  base_url: http://127.0.0.1:11434
+  dimensions: 768
+`)
+
+	emb, err := resolveEmbedder(t, path)
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if want := "ollama/nomic-embed-text/768"; emb.Identity() != want {
+		t.Errorf("Identity = %q, want %q", emb.Identity(), want)
+	}
+}
+
+func TestWorkspaceGraphRejectsOllamaWithoutDimensions(t *testing.T) {
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+embedder:
+  provider: ollama
+  model: nomic-embed-text
+`)
+
+	_, err := resolveEmbedder(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error naming embedder.dimensions")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+	want := "embedder.dimensions must be set to the vector width of nomic-embed-text for the ollama provider; `ollama show nomic-embed-text` reports it"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not contain %q", err, want)
+	}
+}
+
+func TestWorkspaceGraphRejectsUnknownEmbedderProvider(t *testing.T) {
+	t.Setenv(EmbedderKeyEnv, "sk-example")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+embedder:
+  provider: cohere
+  model: embed-english-v3
+  dimensions: 1024
+`)
+
+	_, err := resolveEmbedder(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error naming the provider")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindPrecondition)
+	}
+	for _, want := range []string{"cohere", providerOpenAI, providerOllama} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestWorkspaceGraphRejectsDimensionsForOpenAI(t *testing.T) {
+	t.Setenv(EmbedderKeyEnv, "sk-example")
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  dimensions: 512
+`)
+
+	_, err := resolveEmbedder(t, path)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error rejecting a width openai derives itself")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+	if want := "embedder.dimensions must not be set"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not contain %q", err, want)
 	}
 }
 
