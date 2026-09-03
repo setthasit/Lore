@@ -10,7 +10,7 @@ type historyFlags struct {
 	repo   string
 	limit  int
 	before string
-	raw    bool
+	out    evidenceOutput
 }
 
 func newHistoryCommand(resolve Resolver, configPath *string) *cobra.Command {
@@ -28,8 +28,8 @@ func newHistoryCommand(resolve Resolver, configPath *string) *cobra.Command {
 			"line to --before; when a page blames nothing, the history is exhausted.\n" +
 			"\n" +
 			"A workspace that registers no clone cannot anchor on code at all: ask\n" +
-			"`lore ask` there instead; --raw emits the evidence bundle as JSON for\n" +
-			"scripting.",
+			"`lore ask` there instead; --explain answers from the timeline in prose, and\n" +
+			"--raw emits the evidence bundle as JSON for scripting.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
@@ -43,7 +43,7 @@ func newHistoryCommand(resolve Resolver, configPath *string) *cobra.Command {
 					return err
 				}
 
-				return emitBundle(cmd.OutOrStdout(), bundle, flags.raw, viewTimeline)
+				return flags.out.emit(cmd, rt.Synthesis, bundle)
 			})
 		},
 	}
@@ -53,6 +53,6 @@ func newHistoryCommand(resolve Resolver, configPath *string) *cobra.Command {
 		"the registered clone the file belongs to, by remote (github:owner/repo) or by path; omit it when only one is registered")
 	f.IntVar(&flags.limit, "limit", 0, "how many commits the page holds; omit it for the server default, which the server also caps")
 	f.StringVar(&flags.before, "before", "", "commit SHA to page backwards from: the page holds the commits older than it")
-	f.BoolVar(&flags.raw, "raw", false, "emit the evidence bundle as JSON instead of prose")
+	flags.out.flags(cmd)
 	return cmd
 }

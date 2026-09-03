@@ -14,7 +14,7 @@ import (
 
 type whyFlags struct {
 	repo string
-	raw  bool
+	out  evidenceOutput
 }
 
 func newWhyCommand(resolve Resolver, configPath *string) *cobra.Command {
@@ -28,7 +28,8 @@ func newWhyCommand(resolve Resolver, configPath *string) *cobra.Command {
 			"source URL. Write a single line as <file>:<L1>, and name the clone with\n" +
 			"--repo when the workspace registers more than one. A workspace that\n" +
 			"registers no clone cannot anchor on code at all: ask `lore ask` there\n" +
-			"instead; --raw emits the evidence bundle as JSON for scripting.",
+			"instead; --explain answers from the trail in prose, and --raw emits the\n" +
+			"evidence bundle as JSON for scripting.",
 		Args: usageArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			span, err := parseLineSpan(args[0])
@@ -53,7 +54,7 @@ func newWhyCommand(resolve Resolver, configPath *string) *cobra.Command {
 					return err
 				}
 
-				return emitBundle(cmd.OutOrStdout(), bundle, flags.raw, viewTimeline)
+				return flags.out.emit(cmd, rt.Synthesis, bundle)
 			})
 		},
 	}
@@ -61,7 +62,7 @@ func newWhyCommand(resolve Resolver, configPath *string) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&flags.repo, "repo", "",
 		"the registered clone the file belongs to, by remote (github:owner/repo) or by path; omit it when only one is registered")
-	f.BoolVar(&flags.raw, "raw", false, "emit the evidence bundle as JSON instead of prose")
+	flags.out.flags(cmd)
 	return cmd
 }
 

@@ -177,3 +177,22 @@ func TestWhyRefusesAnAskOnlyWorkspace(t *testing.T) {
 		t.Error("the workspace was not released")
 	}
 }
+
+func TestWhyExplainsTheTrailInProse(t *testing.T) {
+	rt, why := mockWhy(t)
+	synthesis := mockSynthesis(t, rt)
+	bundle := timelineBundle("why " + whyFile)
+	why.EXPECT().Why(gomock.Any(), gomock.Any()).Return(bundle, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), bundle.Question, bundle).Return(proseAnswer, nil)
+
+	wantProse(t, run(t, rt, "why", whyFile+":10-20", "--explain"))
+}
+
+func TestWhyRawOutranksExplain(t *testing.T) {
+	rt, why := mockWhy(t)
+	mockSynthesis(t, rt)
+	bundle := timelineBundle("why " + whyFile)
+	why.EXPECT().Why(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	wantBundleJSON(t, run(t, rt, "why", whyFile+":10-20", "--raw", "--explain"), bundle)
+}

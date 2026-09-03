@@ -95,6 +95,12 @@ embedder:
   provider: openai                         # the API key comes from OPENAI_API_KEY
   model: text-embedding-3-small            # changing the model needs: lore sync --reembed
 
+# Synthesis: lore ask and --explain answer in prose only with this block.
+# llm:
+#   provider: anthropic                    # openai | anthropic | zai | ollama
+#   model: claude-sonnet-4-5
+#   api_key_env: LORE_LLM_KEY              # provider: ollama needs only a model
+
 # scheduler:
 #   interval: 30m
 `, "{{WORKSPACE}}", workspace)

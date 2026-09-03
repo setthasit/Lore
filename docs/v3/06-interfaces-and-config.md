@@ -51,8 +51,8 @@ lore serve [--http=:8080] [--grpc=:9090] [--mtls]
 
 Human-facing defaults: `why`/`trace`/`impact`/`history` pretty-print the
 evidence chain (tree/timeline with URLs); `lore ask` and `--explain` invoke
-SynthesisService (requires LLM config; until synthesis ships, and always with
-`--raw`, they emit the bundle — pretty-printed or as JSON for scripting).
+SynthesisService (requires LLM config); `--raw` emits the bundle as JSON for
+scripting.
 
 ## gRPC — programmatic API (`lore.v1`)
 
@@ -146,6 +146,7 @@ llm:                                        # OPTIONAL — synthesis for CLI/gRP
   provider: anthropic                       # openai | anthropic | zai | ollama
   model: claude-sonnet-4-5
   api_key_env: LORE_LLM_KEY
+  base_url: https://api.anthropic.com       # OPTIONAL — default: the provider's endpoint
 
 scheduler:
   interval: 30m

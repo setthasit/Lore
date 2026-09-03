@@ -7,9 +7,9 @@ carries a source URL.
 > ### 🚧 Work in progress
 >
 > Lore is under active development and has not been released. The retrieval core,
-> provenance engine, GitHub/Notion/Jira connectors, code anchoring, background sync
-> and both MCP transports are implemented and covered by tests. The gRPC API and LLM
-> synthesis are designed but **not built**. See [Status](#status) for the exact line.
+> provenance engine, GitHub/Notion/Jira connectors, code anchoring, background sync,
+> both MCP transports, the `lore.v1` gRPC API and LLM synthesis are implemented and
+> covered by tests. See [Status](#status) for the exact line.
 
 ---
 
@@ -47,7 +47,8 @@ Two design choices set it apart:
 
 ## Quickstart
 
-**Requirements:** Go 1.25+, `git`, and an OpenAI API key for embeddings.
+**Requirements:** Go 1.25+, `git`, and an OpenAI API key for embeddings — or a local
+Ollama daemon instead, with `embedder.provider: ollama`.
 No cgo, no Docker, no database server — SQLite ships inside the binary as pure-Go WASM
 ([ncruces/go-sqlite3](https://github.com/ncruces/go-sqlite3) + sqlite-vec), so the index
 is a single portable file and queries work offline after a sync.
@@ -63,7 +64,7 @@ bin/lore init                      # writes a commented lore.yaml scaffold
 $EDITOR lore.yaml                  # name the repos/pages/projects to ingest
 bin/lore sync                      # first run creates ~/.lore/<workspace>.db
 bin/lore status                    # index counts, cursor ages, sync lock
-bin/lore ask "why did we pick sqlite?"
+bin/lore ask "why did we pick sqlite?"   # prose answer; needs an llm: block
 ```
 
 `lore init` writes credential **variable names**, never credentials. Add more sources
@@ -71,27 +72,49 @@ interactively with `lore source add notion` or `lore source add jira`.
 
 ### What an answer looks like
 
+`lore ask` answers in prose, citing the documents it used — it needs the `llm:` block
+in `lore.yaml`:
+
 ```
-why did we pick sqlite?
+SQLite carries the index because it ships everywhere and needs no server [1].
+Postgres with pgvector was the alternative the storage design weighed [2].
+
+**Sources**
+
+1. Index on SQLite, not Postgres — https://github.com/acme/lore/pull/12
+2. Storage design — https://notion.so/design/storage
+```
+
+`why`, `trace`, `impact` and `history` print the evidence itself as a timeline:
+
+```
+provenance of Storage design
+
+anchor: Storage design
+        https://notion.so/design/storage
 
 2 documents
 
-1. Index on SQLite, not Postgres
-   github pr · dev@example.test · 2025-03-12
-   https://github.com/acme/lore/pull/12
-      sqlite ships everywhere and needs no server
-      so the workspace file is the whole deployment
-
-2. Storage design
-   notion page · arch@example.test · 2025-03-10 · follow_up
+2025-03-10 Storage design
+   notion page · arch@example.test · 2025-03-10
    https://notion.so/design/storage
       postgres with pgvector was the alternative
+
+2025-03-12 Index on SQLite, not Postgres
+   github pr · dev@example.test · 2025-03-12 · follow_up
+   https://github.com/acme/lore/pull/12
+      sqlite ships everywhere and needs no server
+
+chains:
+  notion:page:design/storage → github:pr:12
 
 gaps:
   trail ends at PROJ-4521; no linked follow-up
 ```
 
-Pass `--raw` to any query command to get the `EvidenceBundle` as JSON for scripting.
+Pass `--explain` to any of those four to get prose instead of the timeline, and `--raw`
+to any query command to get the `EvidenceBundle` as JSON for scripting. `--raw` wins
+when both are given.
 
 ## Running the services
 
@@ -99,10 +122,14 @@ Lore is a single binary; the subcommand picks the transport.
 
 ```bash
 bin/lore mcp                              # MCP over stdio, for a local agent harness
-bin/lore serve --http 127.0.0.1:8080      # MCP streamable HTTP at /mcp + background sync
+bin/lore serve --http 127.0.0.1:8080      # MCP streamable HTTP at /mcp + lore.v1 gRPC + background sync
 ```
 
-`serve` also runs the sync scheduler, so the index stays fresh while the endpoint is up.
+`serve` also runs the sync scheduler, so the index stays fresh while the endpoints are
+up. gRPC listens on `127.0.0.1:9090` unless `--grpc` or `server.grpc_addr` says
+otherwise, and `--mtls` makes it require a client certificate signed by
+`server.mtls.client_ca`.
+
 A bind address that is not *provably* loopback is refused unless `server.mtls.cert` and
 `server.mtls.key` are configured — `:8080` and `localhost:8080` do not qualify, because
 a bare port reaches every interface and a host name is not proof.
@@ -122,7 +149,7 @@ Register the stdio server with an MCP host (Claude Code, Cursor, …):
 
 MCP tools return the structured `EvidenceBundle`, never prose: the host model is already
 an LLM, so it synthesizes in its own context and can immediately call another tool. That
-is why **no LLM key is needed on the server** — only an embedding key.
+is why **no LLM key is needed for MCP usage** — only an embedding key.
 
 | MCP tool | Answers |
 |---|---|
@@ -140,12 +167,12 @@ is why **no LLM key is needed on the server** — only an embedding key.
 | `lore init` · `lore source add <notion\|jira>` | scaffold and grow `lore.yaml` |
 | `lore sync [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
 | `lore status` | index counts, per-source cursor ages, sync lock state |
-| `lore ask <question>` | `--around --source --repo --doc-type --since --until --raw` |
-| `lore why <file>:<L1>-<L2>` | blame-anchored trail; `--repo --raw` |
-| `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both` |
-| `lore impact <ref \| "query">` | consequences timeline; `--question` |
-| `lore history <path>` | file timeline; `--limit --before` pagination |
-| `lore mcp` · `lore serve` | MCP stdio · MCP streamable HTTP + scheduler |
+| `lore ask <question>` | synthesized prose; `--around --source --repo --doc-type --since --until --raw` |
+| `lore why <file>:<L1>-<L2>` | blame-anchored trail; `--repo --explain --raw` |
+| `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both --explain --raw` |
+| `lore impact <ref \| "query">` | consequences timeline; `--question --explain --raw` |
+| `lore history <path>` | file timeline; `--limit --before` pagination; `--explain --raw` |
+| `lore mcp` · `lore serve` | MCP stdio · MCP streamable HTTP + `lore.v1` gRPC + scheduler |
 
 Every command takes `--config` (default `./lore.yaml`).
 
@@ -156,10 +183,10 @@ Transports never touch the store or a connector — including the MCP path.
 
 ```mermaid
 flowchart TB
-    T["Transport — MCP stdio · MCP HTTP · CLI"]
-    S["Service — Query · Why · Trace · Impact · History · SyncOrchestrator · LinkResolver"]
+    T["Transport — MCP stdio · MCP HTTP · gRPC · CLI"]
+    S["Service — Query · Why · Trace · Impact · History · Synthesis · SyncOrchestrator · LinkResolver"]
     R["Repository — IndexStore (SQLite: FTS5 + sqlite-vec)"]
-    C["Connectors — GitHub · Notion · Jira · local git · embedder"]
+    C["Connectors — GitHub · Notion · Jira · local git · embedder · LLM"]
     T --> S
     S --> R
     S --> C
@@ -199,12 +226,14 @@ The design documents in [`docs/v3/`](docs/v3/) are the source of truth:
 | Code anchoring — `why`, `history_of` via local-clone blame/log | ✅ implemented |
 | Sync lease, background scheduler, `sync_now` / `sync_status` | ✅ implemented |
 | MCP stdio + MCP streamable HTTP (`lore serve`) | ✅ implemented |
-| Embedder providers | ⚠️ OpenAI only — any other provider is refused at startup |
-| gRPC API (`lore.v1`) + mTLS | ❌ designed, not built |
-| LLM synthesis (`--explain`, prose answers) | ❌ designed, not built; `lore.yaml`'s `llm:` block is inert |
-| Ollama fully-local pipeline | ❌ designed, not built |
+| Embedder providers | ✅ OpenAI and Ollama — Ollama also needs `embedder.dimensions`, the model's native width (`ollama show <model>` reports it); an unimplemented provider is refused at startup |
+| gRPC API (`lore.v1`) + mTLS | ✅ implemented |
+| LLM synthesis — `lore ask`, `--explain`, gRPC `synthesize` | ✅ implemented; needs the `llm:` block in `lore.yaml` |
+| Ollama fully-local pipeline | ✅ implemented — set `embedder.provider: ollama` (with `dimensions`) and `llm.provider: ollama`; both default to `http://127.0.0.1:11434` and take no API key |
 
-Until synthesis lands, every surface prints or returns the evidence bundle itself.
+The CLI synthesizes for `lore ask` and `--explain`; gRPC synthesizes unless a request
+sets `synthesize: false`. MCP always returns the evidence bundle itself — the host model
+is already an LLM. A workspace with no `llm:` block says so instead of guessing.
 
 ## Development
 
@@ -231,5 +260,5 @@ commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
 - **Secrets live in environment variables named by config.** They are never written to
   `lore.yaml`, the index, or logs; least-privilege tokens are the documented default.
 - **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.
-- **Private data leaves the machine only toward the configured embedder** — stated
-  loudly because it is the one privacy trade-off in the current build.
+- **Private data leaves the machine only toward the configured embedder and, once `llm:`
+  is set, the configured LLM.** With `provider: ollama` on both, nothing leaves at all.

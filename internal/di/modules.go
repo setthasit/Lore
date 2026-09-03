@@ -19,6 +19,11 @@ import (
 	"lore/internal/connectors/github"
 	"lore/internal/connectors/gitrepo"
 	"lore/internal/connectors/jira"
+	"lore/internal/connectors/llm"
+	llmanthropic "lore/internal/connectors/llm/anthropic"
+	llmollama "lore/internal/connectors/llm/ollama"
+	llmopenai "lore/internal/connectors/llm/openai"
+	llmzai "lore/internal/connectors/llm/zai"
 	"lore/internal/connectors/notion"
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
@@ -31,6 +36,7 @@ func Workspace(configPath string) fx.Option {
 	return fx.Options(
 		ConfigModule(configPath),
 		EmbedderModule,
+		LLMModule,
 		RepositoryModule,
 		ConnectorModule,
 		ServiceModule,
@@ -49,6 +55,8 @@ var ConnectorModule = fx.Module("connectors", fx.Provide(newConnectors))
 
 var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedder))
 
+var LLMModule = fx.Module("llm", fx.Provide(newLLM))
+
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
 	newCodeRepos,
@@ -60,6 +68,7 @@ var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewLinkResolver,
 	services.NewSyncOrchestrator,
 	services.NewStatusService,
+	services.NewSynthesisService,
 ))
 
 var SchedulerModule = fx.Module("scheduler",
@@ -284,6 +293,64 @@ func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
 
 func unconfigurableEmbedder(provider string, err error) error {
 	return internalerror.NewBadRequestError("cannot configure the "+provider+" embedder: "+err.Error(), err)
+}
+
+const (
+	providerAnthropic = "anthropic"
+	providerZAI       = "zai"
+
+	defaultLLMProvider = providerOpenAI
+)
+
+var llmProviders = map[string]func(key, model, baseURL string) (llm.LLM, error){
+	providerOpenAI:    func(key, model, baseURL string) (llm.LLM, error) { return llmopenai.New(key, model, baseURL) },
+	providerAnthropic: func(key, model, baseURL string) (llm.LLM, error) { return llmanthropic.New(key, model, baseURL) },
+	providerZAI:       func(key, model, baseURL string) (llm.LLM, error) { return llmzai.New(key, model, baseURL) },
+	providerOllama:    func(_, model, baseURL string) (llm.LLM, error) { return llmollama.New(model, baseURL) },
+}
+
+// A workspace with no llm: block resolves to a nil LLM: only synthesis then fails, and it says why.
+func newLLM(cfg *config.Config) (llm.LLM, error) {
+	if cfg.LLM == nil {
+		return nil, nil
+	}
+
+	provider := cfg.LLM.Provider
+	if provider == "" {
+		provider = defaultLLMProvider
+	}
+	build, known := llmProviders[provider]
+	if !known {
+		return nil, internalerror.NewPreconditionError("llm.provider "+provider+
+			" is configured, but this build only implements "+strings.Join(knownLLMProviders(), ", "), nil)
+	}
+
+	var key string
+	if provider != providerOllama {
+		apiKey, err := llmAPIKey(provider, cfg.LLM.APIKeyEnv)
+		if err != nil {
+			return nil, err
+		}
+		key = apiKey
+	}
+
+	client, err := build(key, cfg.LLM.Model, cfg.LLM.BaseURL)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("cannot configure the "+provider+" LLM: "+err.Error(), err)
+	}
+	return client, nil
+}
+
+func llmAPIKey(provider, name string) (string, error) {
+	if name == "" {
+		return "", internalerror.NewBadRequestError("llm.api_key_env must name the environment variable holding the "+
+			provider+" API key", nil)
+	}
+	return envValue("llm.api_key_env", name)
+}
+
+func knownLLMProviders() []string {
+	return slices.Sorted(maps.Keys(llmProviders))
 }
 
 func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {

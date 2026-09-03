@@ -10,7 +10,6 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/services"
-	"lore/internal/transport/mcp"
 )
 
 const traceQuestion = "provenance of Storage design"
@@ -120,18 +119,26 @@ func TestTraceRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	bundle := timelineBundle(traceQuestion)
 	trace.EXPECT().Trace(gomock.Any(), gomock.Any()).Return(bundle, nil)
 
-	res := run(t, rt, "trace", "9fceb02", "--raw")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
+	wantBundleJSON(t, run(t, rt, "trace", "9fceb02", "--raw"), bundle)
+}
 
-	want, err := mcp.EncodeBundle(bundle)
-	if err != nil {
-		t.Fatalf("EncodeBundle: %v", err)
-	}
-	if res.stdout != string(want)+"\n" {
-		t.Errorf("stdout is not the canonical encoding alone\n got: %s\nwant: %s\n", res.stdout, want)
-	}
+func TestTraceExplainsTheTimelineInProse(t *testing.T) {
+	rt, trace := mockTrace(t)
+	synthesis := mockSynthesis(t, rt)
+	bundle := timelineBundle(traceQuestion)
+	trace.EXPECT().Trace(gomock.Any(), gomock.Any()).Return(bundle, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), bundle.Question, bundle).Return(proseAnswer, nil)
+
+	wantProse(t, run(t, rt, "trace", "9fceb02", "--explain"))
+}
+
+func TestTraceRawOutranksExplain(t *testing.T) {
+	rt, trace := mockTrace(t)
+	mockSynthesis(t, rt)
+	bundle := timelineBundle(traceQuestion)
+	trace.EXPECT().Trace(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	wantBundleJSON(t, run(t, rt, "trace", "9fceb02", "--raw", "--explain"), bundle)
 }
 
 func TestTraceWithoutARefIsAUsageError(t *testing.T) {

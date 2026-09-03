@@ -29,24 +29,30 @@ import (
 )
 
 const (
-	rpcQuestion  = "why postgres over mysql"
-	rpcCause     = "dial 10.1.2.3:5432: connection refused"
-	traceTestRef = "abc1234"
-	rpcTimeout   = 10 * time.Second
-	rpcBuffer    = 1024 * 1024
+	rpcQuestion   = "why postgres over mysql"
+	rpcProse      = "Postgres won because the team needed row-level locking [1]."
+	rpcCause      = "dial 10.1.2.3:5432: connection refused"
+	traceTestRef  = "abc1234"
+	traceRestated = "provenance of Widen the lease TTL"
+	rpcTimeout    = 10 * time.Second
+	rpcBuffer     = 1024 * 1024
 )
 
 var rpcCreatedAt = time.Date(2025, 3, 12, 9, 30, 0, 0, time.UTC)
 
 type rpcFixture struct {
-	query   *mock_services.MockQueryService
-	trace   *mock_services.MockTraceService
-	sync    *mock_services.MockSyncOrchestrator
-	status  *mock_services.MockStatusService
-	queries lorev1.QueryServiceClient
-	syncs   lorev1.SyncServiceClient
-	logs    *bytes.Buffer
-	stop    context.CancelFunc
+	query     *mock_services.MockQueryService
+	why       *mock_services.MockWhyService
+	trace     *mock_services.MockTraceService
+	impact    *mock_services.MockImpactService
+	history   *mock_services.MockHistoryService
+	sync      *mock_services.MockSyncOrchestrator
+	status    *mock_services.MockStatusService
+	synthesis *mock_services.MockSynthesisService
+	queries   lorev1.QueryServiceClient
+	syncs     lorev1.SyncServiceClient
+	logs      *bytes.Buffer
+	stop      context.CancelFunc
 }
 
 func newRPCFixture(t *testing.T) rpcFixture {
@@ -54,18 +60,27 @@ func newRPCFixture(t *testing.T) rpcFixture {
 
 	ctrl := gomock.NewController(t)
 	f := rpcFixture{
-		query:  mock_services.NewMockQueryService(ctrl),
-		trace:  mock_services.NewMockTraceService(ctrl),
-		sync:   mock_services.NewMockSyncOrchestrator(ctrl),
-		status: mock_services.NewMockStatusService(ctrl),
-		logs:   &bytes.Buffer{},
+		query:     mock_services.NewMockQueryService(ctrl),
+		why:       mock_services.NewMockWhyService(ctrl),
+		trace:     mock_services.NewMockTraceService(ctrl),
+		impact:    mock_services.NewMockImpactService(ctrl),
+		history:   mock_services.NewMockHistoryService(ctrl),
+		sync:      mock_services.NewMockSyncOrchestrator(ctrl),
+		status:    mock_services.NewMockStatusService(ctrl),
+		synthesis: mock_services.NewMockSynthesisService(ctrl),
+		logs:      &bytes.Buffer{},
 	}
 
-	svc, log := f.services(), slog.New(slog.NewTextHandler(f.logs, nil))
 	listener := bufconn.Listen(rpcBuffer)
+	cfg := Config{
+		Listener:  listener,
+		Services:  f.services(),
+		Synthesis: f.synthesis,
+		Log:       slog.New(slog.NewTextHandler(f.logs, nil)),
+	}
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, listener, svc, log, nil) }()
+	go func() { served <- Serve(ctx, cfg) }()
 
 	conn, err := grpclib.NewClient("passthrough:///bufnet",
 		grpclib.WithTransportCredentials(insecure.NewCredentials()),
@@ -95,7 +110,19 @@ func newRPCFixture(t *testing.T) rpcFixture {
 }
 
 func (f rpcFixture) services() transport.Services {
-	return transport.Services{Query: f.query, Trace: f.trace, Sync: f.sync, Status: f.status}
+	return transport.Services{
+		Query:   f.query,
+		Why:     f.why,
+		Trace:   f.trace,
+		Impact:  f.impact,
+		History: f.history,
+		Sync:    f.sync,
+		Status:  f.status,
+	}
+}
+
+func (f rpcFixture) expectSynthesis(question string) {
+	f.synthesis.EXPECT().Synthesize(gomock.Any(), question, gomock.Any()).Return(rpcProse, nil)
 }
 
 func (f rpcFixture) findDecision(t *testing.T, in *lorev1.FindDecisionRequest) (*lorev1.FindDecisionResponse, error) {
@@ -292,6 +319,7 @@ func TestFindDecisionRoundTripsEveryBundleField(t *testing.T) {
 			Until:    rpcCreatedAt,
 		}).
 		Return(rpcBundle(), nil)
+	f.expectSynthesis(rpcQuestion)
 
 	res, err := f.findDecision(t, &lorev1.FindDecisionRequest{
 		Question: rpcQuestion,
@@ -317,6 +345,7 @@ func TestFindDecisionOmitsAnUnsetTimeWindow(t *testing.T) {
 	f.query.EXPECT().
 		FindDecision(gomock.Any(), services.FindDecisionRequest{Question: rpcQuestion}).
 		Return(&entities.EvidenceBundle{Question: rpcQuestion}, nil)
+	f.expectSynthesis(rpcQuestion)
 
 	res, err := f.findDecision(t, &lorev1.FindDecisionRequest{Question: rpcQuestion})
 	if err != nil {
@@ -425,7 +454,8 @@ func TestTraceSendsTheDirectionTheServiceUnderstands(t *testing.T) {
 			f := newRPCFixture(t)
 			f.trace.EXPECT().
 				Trace(gomock.Any(), services.TraceRequest{Ref: traceTestRef, Direction: tt.want, Depth: 2}).
-				Return(&entities.EvidenceBundle{}, nil)
+				Return(&entities.EvidenceBundle{Question: traceRestated}, nil)
+			f.expectSynthesis(traceRestated)
 
 			if _, err := f.traceRef(t, tt.direction); err != nil {
 				t.Fatalf("Trace() = %v, want a bundle", err)
@@ -488,6 +518,178 @@ func TestTraceKeepsTheCandidatesOfAnAmbiguousRef(t *testing.T) {
 			if !strings.Contains(st.Message(), part) {
 				t.Errorf("message = %q, want candidate %s identified by %q", st.Message(), candidate.ID, part)
 			}
+		}
+	}
+}
+
+func TestFindDecisionSynthesizesUnlessTheCallerOptsOut(t *testing.T) {
+	tests := []struct {
+		name       string
+		synthesize *bool
+		want       string
+	}{
+		{name: "unset synthesizes on this surface", synthesize: nil, want: rpcProse},
+		{name: "true synthesizes", synthesize: proto.Bool(true), want: rpcProse},
+		{name: "false returns the bundle alone", synthesize: proto.Bool(false), want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRPCFixture(t)
+			f.query.EXPECT().
+				FindDecision(gomock.Any(), services.FindDecisionRequest{Question: rpcQuestion}).
+				Return(rpcBundle(), nil)
+			if tt.want != "" {
+				f.expectSynthesis(rpcQuestion)
+			}
+
+			res, err := f.findDecision(t,
+				&lorev1.FindDecisionRequest{Question: rpcQuestion, Synthesize: tt.synthesize})
+			if err != nil {
+				t.Fatalf("FindDecision() = %v, want a bundle", err)
+			}
+
+			if res.GetSynthesis() != tt.want {
+				t.Errorf("synthesis = %q, want %q", res.GetSynthesis(), tt.want)
+			}
+			assertSameProto(t, res.GetBundle(), rpcBundleProto())
+		})
+	}
+}
+
+func TestFindDecisionSendsAnUnconfiguredLLMAsFailedPrecondition(t *testing.T) {
+	_, unconfigured := services.NewSynthesisService(nil).Synthesize(context.Background(), rpcQuestion, rpcBundle())
+	if !internalerror.IsPrecondition(unconfigured) {
+		t.Fatalf("Synthesize() with no LLM = %v, want a precondition error", unconfigured)
+	}
+
+	f := newRPCFixture(t)
+	f.query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(rpcBundle(), nil)
+	f.synthesis.EXPECT().Synthesize(gomock.Any(), gomock.Any(), gomock.Any()).Return("", unconfigured)
+
+	_, err := f.findDecision(t, &lorev1.FindDecisionRequest{Question: rpcQuestion})
+
+	st := rpcStatus(t, err)
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("code = %v, want %v", st.Code(), codes.FailedPrecondition)
+	}
+	if st.Message() != unconfigured.Error() {
+		t.Errorf("message = %q, want %q", st.Message(), unconfigured.Error())
+	}
+}
+
+func TestTraceSynthesizesTheRestatedQuestionOfAQuestionlessRequest(t *testing.T) {
+	bundle := &entities.EvidenceBundle{Question: traceRestated}
+
+	f := newRPCFixture(t)
+	f.trace.EXPECT().Trace(gomock.Any(), gomock.Any()).Return(bundle, nil)
+	f.synthesis.EXPECT().Synthesize(gomock.Any(), traceRestated, bundle).Return(rpcProse, nil)
+
+	res, err := f.traceRef(t, lorev1.Direction_DIRECTION_BOTH)
+	if err != nil {
+		t.Fatalf("Trace() = %v, want a bundle", err)
+	}
+
+	if res.GetSynthesis() != rpcProse {
+		t.Errorf("synthesis = %q, want %q", res.GetSynthesis(), rpcProse)
+	}
+}
+
+func TestWhyImpactAndHistorySynthesizeUnlessTheCallerOptsOut(t *testing.T) {
+	const whyFile = "internal/store/sqlite.go"
+
+	verbs := []struct {
+		name     string
+		restated string
+		expect   func(rpcFixture, *entities.EvidenceBundle)
+		call     func(context.Context, rpcFixture, *bool) (string, error)
+	}{
+		{
+			name:     "Why",
+			restated: "why does " + whyFile + ":10-40 exist in its current form",
+			expect: func(f rpcFixture, bundle *entities.EvidenceBundle) {
+				f.why.EXPECT().
+					Why(gomock.Any(), services.WhyRequest{File: whyFile, LineStart: 10, LineEnd: 40}).
+					Return(bundle, nil)
+			},
+			call: func(ctx context.Context, f rpcFixture, synthesize *bool) (string, error) {
+				res, err := f.queries.Why(ctx, &lorev1.WhyRequest{
+					File:       whyFile,
+					LineStart:  10,
+					LineEnd:    40,
+					Synthesize: synthesize,
+				})
+
+				return res.GetSynthesis(), err
+			},
+		},
+		{
+			name:     "ImpactOf",
+			restated: "consequences, follow-ups, incidents related to Widen the lease TTL",
+			expect: func(f rpcFixture, bundle *entities.EvidenceBundle) {
+				f.impact.EXPECT().
+					ImpactOf(gomock.Any(), services.ImpactRequest{Ref: traceTestRef}).
+					Return(bundle, nil)
+			},
+			call: func(ctx context.Context, f rpcFixture, synthesize *bool) (string, error) {
+				res, err := f.queries.ImpactOf(ctx, &lorev1.ImpactOfRequest{
+					RefOrQuery: traceTestRef,
+					Synthesize: synthesize,
+				})
+
+				return res.GetSynthesis(), err
+			},
+		},
+		{
+			name:     "HistoryOf",
+			restated: "history of " + whyFile + " in acme/lore",
+			expect: func(f rpcFixture, bundle *entities.EvidenceBundle) {
+				f.history.EXPECT().
+					HistoryOf(gomock.Any(), services.HistoryRequest{Repo: "acme/lore", File: whyFile, Limit: 5}).
+					Return(bundle, nil)
+			},
+			call: func(ctx context.Context, f rpcFixture, synthesize *bool) (string, error) {
+				res, err := f.queries.HistoryOf(ctx, &lorev1.HistoryOfRequest{
+					Repo:       "acme/lore",
+					Path:       whyFile,
+					Limit:      5,
+					Synthesize: synthesize,
+				})
+
+				return res.GetSynthesis(), err
+			},
+		},
+	}
+
+	choices := []struct {
+		name       string
+		synthesize *bool
+		want       string
+	}{
+		{name: "unset synthesizes on this surface", want: rpcProse},
+		{name: "false returns the bundle alone", synthesize: proto.Bool(false)},
+	}
+
+	for _, verb := range verbs {
+		for _, choice := range choices {
+			t.Run(verb.name+"/"+choice.name, func(t *testing.T) {
+				f := newRPCFixture(t)
+				verb.expect(f, &entities.EvidenceBundle{Question: verb.restated})
+				if choice.want != "" {
+					f.expectSynthesis(verb.restated)
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+				defer cancel()
+
+				got, err := verb.call(ctx, f, choice.synthesize)
+				if err != nil {
+					t.Fatalf("%s() = %v, want a bundle", verb.name, err)
+				}
+				if got != choice.want {
+					t.Errorf("synthesis = %q, want %q", got, choice.want)
+				}
+			})
 		}
 	}
 }

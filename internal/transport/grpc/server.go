@@ -12,25 +12,28 @@ import (
 
 	lorev1 "lore/api/proto/lore/v1"
 	"lore/internal/errors/internalerror"
+	"lore/internal/services"
 	"lore/internal/transport"
 )
 
 const shutdownGrace = 5 * time.Second
 
-// Blocks until ctx is done. A nil tlsConfig serves in the clear.
-func Serve(
-	ctx context.Context,
-	listener net.Listener,
-	svc transport.Services,
-	log *slog.Logger,
-	tlsConfig *tls.Config,
-) error {
-	server := grpclib.NewServer(transportCredentials(tlsConfig)...)
-	lorev1.RegisterQueryServiceServer(server, newQueryServer(svc, log))
-	lorev1.RegisterSyncServiceServer(server, newSyncServer(svc, ctx.Done(), log))
+type Config struct {
+	Listener  net.Listener
+	Services  transport.Services
+	Synthesis services.SynthesisService
+	Log       *slog.Logger
+	TLS       *tls.Config
+}
+
+// Blocks until ctx is done. A nil Config.TLS serves in the clear.
+func Serve(ctx context.Context, cfg Config) error {
+	server := grpclib.NewServer(transportCredentials(cfg.TLS)...)
+	lorev1.RegisterQueryServiceServer(server, newQueryServer(cfg.Services, cfg.Synthesis, cfg.Log))
+	lorev1.RegisterSyncServiceServer(server, newSyncServer(cfg.Services, ctx.Done(), cfg.Log))
 
 	stopped := make(chan error, 1)
-	go func() { stopped <- server.Serve(listener) }()
+	go func() { stopped <- server.Serve(cfg.Listener) }()
 
 	select {
 	case err := <-stopped:
