@@ -17,6 +17,7 @@ import (
 	"github.com/setthasit/Lore/internal/connectors/embedder/ollama"
 	"github.com/setthasit/Lore/internal/connectors/embedder/openai"
 	"github.com/setthasit/Lore/internal/connectors/github"
+	"github.com/setthasit/Lore/internal/connectors/gitlab"
 	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/connectors/jira"
 	"github.com/setthasit/Lore/internal/connectors/llm"
@@ -163,6 +164,14 @@ func newConnectors(cfg *config.Config) ([]entities.Connector, error) {
 			return nil, err
 		}
 		connectors = append(connectors, github.NewConnector(token, gh.Repos, ""))
+	}
+
+	if gl := cfg.Sources.GitLab; gl != nil {
+		token, err := envValue("sources.gitlab.token_env", gl.TokenEnv)
+		if err != nil {
+			return nil, err
+		}
+		connectors = append(connectors, gitlab.NewConnector(token, gl.Projects, gl.BaseURL))
 	}
 
 	if n := cfg.Sources.Notion; n != nil {

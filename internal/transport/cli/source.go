@@ -22,6 +22,10 @@ import (
 
 var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// gitlabDefaultBaseURL is offered as the prompt's default and written out, so a
+// self-managed instance is a visible edit rather than an invisible assumption.
+const gitlabDefaultBaseURL = "https://gitlab.com"
+
 type sourceSpec struct {
 	name       string
 	configured func(config.Sources) bool
@@ -31,6 +35,7 @@ type sourceSpec struct {
 var sourceSpecs = []sourceSpec{
 	{name: "notion", configured: func(s config.Sources) bool { return s.Notion != nil }, prompt: promptNotion},
 	{name: "jira", configured: func(s config.Sources) bool { return s.Jira != nil }, prompt: promptJira},
+	{name: "gitlab", configured: func(s config.Sources) bool { return s.GitLab != nil }, prompt: promptGitLab},
 }
 
 func newSourceCommand(configPath *string) *cobra.Command {
@@ -190,6 +195,19 @@ func (p *prompter) list(question string) ([]string, error) {
 	return items, nil
 }
 
+// requiredList refuses an empty answer: a source that names no project would
+// pass `source add` and then fail every later `lore` invocation at config load.
+func (p *prompter) requiredList(field, question string) ([]string, error) {
+	items, err := p.list(question)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, internalerror.NewBadRequestError(field+" must list at least one entry", nil)
+	}
+	return items, nil
+}
+
 type notionBlock struct {
 	TokenEnv  string   `yaml:"token_env"`
 	RootPages []string `yaml:"root_pages,omitempty"`
@@ -200,6 +218,12 @@ type jiraBlock struct {
 	EmailEnv string   `yaml:"email_env"`
 	TokenEnv string   `yaml:"token_env"`
 	Projects []string `yaml:"projects,omitempty"`
+}
+
+type gitlabBlock struct {
+	BaseURL  string   `yaml:"base_url"`
+	TokenEnv string   `yaml:"token_env"`
+	Projects []string `yaml:"projects"`
 }
 
 func promptNotion(p *prompter) (string, []string, error) {
@@ -224,7 +248,7 @@ func promptJira(p *prompter) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if err := validateBaseURL(baseURL); err != nil {
+	if err := validateBaseURL("sources.jira.base_url", baseURL, "https://acme.atlassian.net"); err != nil {
 		return "", nil, err
 	}
 	emailEnv, err := p.envName("sources.jira.email_env", "Jira account email", "LORE_JIRA_EMAIL")
@@ -252,13 +276,43 @@ func promptJira(p *prompter) (string, []string, error) {
 	return block, []string{emailEnv, tokenEnv}, nil
 }
 
-func validateBaseURL(raw string) error {
+func promptGitLab(p *prompter) (string, []string, error) {
+	// Unlike Jira there is a canonical instance, so the default answer is a real one.
+	baseURL, err := p.ask("GitLab base URL", gitlabDefaultBaseURL)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := validateBaseURL("sources.gitlab.base_url", baseURL, gitlabDefaultBaseURL); err != nil {
+		return "", nil, err
+	}
+	tokenEnv, err := p.envName("sources.gitlab.token_env", "GitLab access token", "LORE_GITLAB_TOKEN")
+	if err != nil {
+		return "", nil, err
+	}
+	projects, err := p.requiredList("sources.gitlab.projects",
+		"GitLab projects to sync, comma-separated, e.g. acme/myproject or acme/platform/myproject")
+	if err != nil {
+		return "", nil, err
+	}
+
+	block, err := encodeBlock("gitlab", gitlabBlock{
+		BaseURL:  baseURL,
+		TokenEnv: tokenEnv,
+		Projects: projects,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return block, []string{tokenEnv}, nil
+}
+
+func validateBaseURL(field, raw, example string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return internalerror.NewBadRequestError("sources.jira.base_url is not a URL: "+raw, err)
+		return internalerror.NewBadRequestError(field+" is not a URL: "+raw, err)
 	}
 	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return internalerror.NewBadRequestError("sources.jira.base_url must be an absolute http(s) URL like https://acme.atlassian.net, got "+raw, nil)
+		return internalerror.NewBadRequestError(field+" must be an absolute http(s) URL like "+example+", got "+raw, nil)
 	}
 	return nil
 }

@@ -40,6 +40,7 @@ type Config struct {
 // is never synced and never required.
 type Sources struct {
 	GitHub *GitHubSource `yaml:"github"`
+	GitLab *GitLabSource `yaml:"gitlab"`
 	Notion *NotionSource `yaml:"notion"`
 	Jira   *JiraSource   `yaml:"jira"`
 }
@@ -49,6 +50,15 @@ type Sources struct {
 type GitHubSource struct {
 	TokenEnv string   `yaml:"token_env"`
 	Repos    []string `yaml:"repos"` // "acme/myproject"
+}
+
+// GitLabSource ingests commits, merge requests, discussion threads, issues and
+// notes for Projects. BaseURL is optional: absent means gitlab.com, and a
+// self-managed instance names its own root.
+type GitLabSource struct {
+	BaseURL  string   `yaml:"base_url"`
+	TokenEnv string   `yaml:"token_env"`
+	Projects []string `yaml:"projects"` // "acme/myproject", "acme/platform/myproject"
 }
 
 type NotionSource struct {

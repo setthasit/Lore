@@ -240,6 +240,90 @@ sources:
 			wantErr: "sources.notion.token_env names LORE_NOTION_TOKEN, but that environment variable is not set",
 		},
 		{
+			name: "a gitlab source without base_url defaults to gitlab.com",
+			yaml: `
+workspace: gitlabdefault
+sources:
+  gitlab:
+    token_env: LORE_GITLAB_TOKEN
+    projects: [acme/myproject, acme/platform/infra]
+`,
+			env: map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
+			check: func(t *testing.T, cfg *Config) {
+				gitlab := cfg.Sources.GitLab
+				if gitlab == nil {
+					t.Fatalf("sources = %+v, want gitlab", cfg.Sources)
+				}
+				if gitlab.BaseURL != "" {
+					t.Errorf("gitlab base_url = %q, want it left to the connector default", gitlab.BaseURL)
+				}
+				if got := gitlab.Projects; len(got) != 2 || got[1] != "acme/platform/infra" {
+					t.Errorf("gitlab projects = %v, want both namespaced paths", got)
+				}
+			},
+		},
+		{
+			name: "gitlab with a blank token_env is rejected",
+			yaml: `
+workspace: blankgitlabtoken
+sources:
+  gitlab:
+    token_env: ""
+    projects: [acme/myproject]
+`,
+			wantErr: "sources.gitlab.token_env must name an environment variable",
+		},
+		{
+			name: "gitlab token_env naming an unset variable is rejected by name",
+			yaml: `
+workspace: unsetgitlab
+sources:
+  gitlab:
+    token_env: LORE_GITLAB_TOKEN
+    projects: [acme/myproject]
+`,
+			env:     map[string]string{"LORE_GITLAB_TOKEN": ""},
+			wantErr: "sources.gitlab.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set",
+		},
+		{
+			name: "gitlab without a project is rejected",
+			yaml: `
+workspace: noprojects
+sources:
+  gitlab:
+    token_env: LORE_GITLAB_TOKEN
+    projects: []
+`,
+			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
+			wantErr: `sources.gitlab.projects must list at least one "group/project" path`,
+		},
+		{
+			name: "a gitlab base_url that is not absolute is rejected",
+			yaml: `
+workspace: relativegitlab
+sources:
+  gitlab:
+    base_url: gitlab.acme.dev
+    token_env: LORE_GITLAB_TOKEN
+    projects: [acme/myproject]
+`,
+			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
+			wantErr: "sources.gitlab.base_url must be an absolute http(s) URL like https://gitlab.com, got gitlab.acme.dev",
+		},
+		{
+			name: "a gitlab base_url with a foreign scheme is rejected",
+			yaml: `
+workspace: ftpgitlab
+sources:
+  gitlab:
+    base_url: ftp://gitlab.acme.dev
+    token_env: LORE_GITLAB_TOKEN
+    projects: [acme/myproject]
+`,
+			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
+			wantErr: "sources.gitlab.base_url must be an absolute http(s) URL",
+		},
+		{
 			name: "llm api key env must exist when named",
 			yaml: `
 workspace: withllm

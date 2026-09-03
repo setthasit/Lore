@@ -101,6 +101,69 @@ func TestSourceAddJira(t *testing.T) {
 	assertPromptsAskForNamesOnly(t, res.stdout)
 }
 
+func TestSourceAddGitLabTakesTheGitLabComDefault(t *testing.T) {
+	path := scaffolded(t)
+	before := readConfigFile(t, path)
+
+	res := runWithInput(t, nil, "\n\nacme/myproject, acme/platform/infra\n", "source", "add", "gitlab", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	after := readConfigFile(t, path)
+	// base_url is written even when defaulted: a later move to a self-managed
+	// instance is then an edit rather than a new key nobody knows about.
+	assertInserted(t, before, after, "  gitlab:\n"+
+		"    base_url: https://gitlab.com\n"+
+		"    token_env: LORE_GITLAB_TOKEN\n"+
+		"    projects:\n"+
+		"      - acme/myproject\n"+
+		"      - acme/platform/infra\n")
+
+	gitlab := decodeConfigFile(t, after).Sources.GitLab
+	if gitlab == nil || gitlab.BaseURL != "https://gitlab.com" {
+		t.Fatalf("sources.gitlab = %+v", gitlab)
+	}
+	if gitlab.TokenEnv != "LORE_GITLAB_TOKEN" {
+		t.Errorf("gitlab token_env = %q, want the default", gitlab.TokenEnv)
+	}
+	if len(gitlab.Projects) != 2 || gitlab.Projects[1] != "acme/platform/infra" {
+		t.Errorf("projects = %v, want both namespaced paths", gitlab.Projects)
+	}
+	if !strings.Contains(res.stdout, "export LORE_GITLAB_TOKEN") {
+		t.Errorf("stdout = %q, want the variable to export", res.stdout)
+	}
+	assertPromptsAskForNamesOnly(t, res.stdout)
+}
+
+func TestSourceAddGitLabAcceptsASelfManagedRoot(t *testing.T) {
+	path := scaffolded(t)
+	before := readConfigFile(t, path)
+
+	res := runWithInput(t, nil, "https://gitlab.acme.dev/\nACME_GITLAB_PAT\nacme/widgets\n",
+		"source", "add", "gitlab", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	after := readConfigFile(t, path)
+	assertInserted(t, before, after, "  gitlab:\n"+
+		"    base_url: https://gitlab.acme.dev/\n"+
+		"    token_env: ACME_GITLAB_PAT\n"+
+		"    projects:\n"+
+		"      - acme/widgets\n")
+
+	t.Setenv("LORE_GITHUB_TOKEN", "github-fake-value")
+	t.Setenv("ACME_GITLAB_PAT", "gitlab-fake-value")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("the file no longer loads: %v", err)
+	}
+	if cfg.Sources.GitLab == nil || cfg.Sources.GitLab.TokenEnv != "ACME_GITLAB_PAT" {
+		t.Errorf("sources.gitlab = %+v", cfg.Sources.GitLab)
+	}
+}
+
 func TestSourceAddBothSourcesStillLoads(t *testing.T) {
 	path := scaffolded(t)
 	before := readConfigFile(t, path)
@@ -255,9 +318,23 @@ func TestSourceAddRejectsBadInput(t *testing.T) {
 			wantExit: exitBadRequest,
 		},
 		{
-			name:     "an unknown source",
+			name:     "a gitlab base url that is not http",
 			args:     []string{"gitlab"},
-			wantErr:  "unknown source gitlab",
+			answers:  "ftp://gitlab.acme.dev\n",
+			wantErr:  "sources.gitlab.base_url must be an absolute http(s) URL like https://gitlab.com",
+			wantExit: exitBadRequest,
+		},
+		{
+			name:     "a gitlab source that names no project",
+			args:     []string{"gitlab"},
+			answers:  "\n\n\n",
+			wantErr:  "sources.gitlab.projects must list at least one entry",
+			wantExit: exitBadRequest,
+		},
+		{
+			name:     "an unknown source",
+			args:     []string{"bitbucket"},
+			wantErr:  "unknown source bitbucket",
 			wantExit: exitBadRequest,
 		},
 		{

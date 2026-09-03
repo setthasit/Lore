@@ -1,0 +1,17 @@
+[
+  {
+    "id": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+    "short_id": "1a2b3c4d",
+    "created_at": "2024-05-01T09:00:00.000Z",
+    "title": "Add the auth client",
+    "message": "Add the auth client\n\nOpens #12.\n",
+    "author_name": "Dana Lin",
+    "author_email": "dana@example.invalid",
+    "committer_name": "Dana Lin",
+    "committer_email": "dana@example.invalid",
+    "authored_date": "2024-05-01T08:59:00.000Z",
+    "committed_date": "2024-05-01T09:00:00.000Z",
+    "parent_ids": [],
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/commit/1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+  }
+]

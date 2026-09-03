@@ -1,0 +1,50 @@
+[
+  {
+    "id": 4001,
+    "iid": 7,
+    "project_id": 55,
+    "title": "Cap auth retries",
+    "description": "Fixes #12. Spec: https://www.notion.so/acme/Auth-spec-abc123\nRollout tracked in PROJ-123.",
+    "state": "merged",
+    "created_at": "2024-05-01T08:00:00.000Z",
+    "updated_at": "2024-05-01T09:30:00.000Z",
+    "author": {
+      "id": 11,
+      "username": "dana",
+      "name": "Dana Lin",
+      "state": "active",
+      "web_url": "https://gitlab.example.invalid/dana"
+    },
+    "source_branch": "feature/PROJ-123-retry-cap",
+    "target_branch": "main",
+    "sha": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+    "merge_commit_sha": "bb44cc55dd66ee77ff8899aabbccddeeff001122",
+    "squash_commit_sha": null,
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/merge_requests/7",
+    "draft": false
+  },
+  {
+    "id": 4002,
+    "iid": 8,
+    "project_id": 55,
+    "title": "Add retry metrics",
+    "description": "Follows !7.",
+    "state": "opened",
+    "created_at": "2024-05-03T11:00:00.000Z",
+    "updated_at": "2024-05-03T12:00:00.000Z",
+    "author": {
+      "id": 13,
+      "username": "ravi",
+      "name": "Ravi Shah",
+      "state": "active",
+      "web_url": "https://gitlab.example.invalid/ravi"
+    },
+    "source_branch": "metrics",
+    "target_branch": "main",
+    "sha": "bb44cc55dd66ee77ff8899aabbccddeeff001122",
+    "merge_commit_sha": null,
+    "squash_commit_sha": null,
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/merge_requests/8",
+    "draft": false
+  }
+]

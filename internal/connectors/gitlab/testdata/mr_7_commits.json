@@ -1,0 +1,22 @@
+[
+  {
+    "id": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+    "short_id": "1a2b3c4d",
+    "title": "Add the auth client",
+    "message": "Add the auth client\n",
+    "author_name": "Dana Lin",
+    "authored_date": "2024-05-01T08:59:00.000Z",
+    "committed_date": "2024-05-01T09:00:00.000Z",
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/commit/1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+  },
+  {
+    "id": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+    "short_id": "9f8e7d6c",
+    "title": "Cap the auth retry loop at five attempts",
+    "message": "Cap the auth retry loop at five attempts\n",
+    "author_name": "Dana Lin",
+    "authored_date": "2024-05-02T09:55:00.000Z",
+    "committed_date": "2024-05-02T10:00:00.000Z",
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/commit/9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c"
+  }
+]
