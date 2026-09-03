@@ -1,0 +1,247 @@
+syntax = "proto3";
+
+package lore.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "lore/api/proto/lore/v1;lorev1";
+
+service QueryService {
+  rpc FindDecision(FindDecisionRequest) returns (FindDecisionResponse);
+  rpc Why(WhyRequest) returns (WhyResponse);
+  rpc Trace(TraceRequest) returns (TraceResponse);
+  rpc ImpactOf(ImpactOfRequest) returns (ImpactOfResponse);
+  rpc HistoryOf(HistoryOfRequest) returns (HistoryOfResponse);
+}
+
+service SyncService {
+  rpc Trigger(TriggerRequest) returns (TriggerResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Watch(WatchRequest) returns (stream SyncEvent);
+}
+
+message FindDecisionRequest {
+  string question = 1;
+  string around = 2;
+  string source = 3;
+  string repo = 4;
+  string doc_type = 5;
+  google.protobuf.Timestamp since = 6;
+  google.protobuf.Timestamp until = 7;
+  optional bool synthesize = 8;
+}
+
+message FindDecisionResponse {
+  EvidenceBundle bundle = 1;
+  string synthesis = 2;
+}
+
+message WhyRequest {
+  string repo = 1;
+  string file = 2;
+  int32 line_start = 3;
+  int32 line_end = 4;
+  string question = 5;
+  optional bool synthesize = 6;
+}
+
+message WhyResponse {
+  EvidenceBundle bundle = 1;
+  string synthesis = 2;
+}
+
+message TraceRequest {
+  string ref = 1;
+  Direction direction = 2;
+  int32 depth = 3;
+  optional bool synthesize = 4;
+}
+
+message TraceResponse {
+  EvidenceBundle bundle = 1;
+  string synthesis = 2;
+}
+
+message ImpactOfRequest {
+  string ref_or_query = 1;
+  string question = 2;
+  optional bool synthesize = 3;
+}
+
+message ImpactOfResponse {
+  EvidenceBundle bundle = 1;
+  string synthesis = 2;
+}
+
+message HistoryOfRequest {
+  string path = 1;
+  string repo = 2;
+  int32 limit = 3;
+  string before = 4;
+  optional bool synthesize = 5;
+}
+
+message HistoryOfResponse {
+  EvidenceBundle bundle = 1;
+  string synthesis = 2;
+}
+
+message TriggerRequest {
+  string source = 1;
+  bool reembed = 2;
+}
+
+message TriggerResponse {
+  string synced = 1;
+  LeaseState took_over_from = 2;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  int64 documents = 1;
+  int64 chunks = 2;
+  int64 edges = 3;
+  repeated CursorAge cursors = 4;
+  LeaseState lease = 5;
+}
+
+message WatchRequest {}
+
+message SyncEvent {
+  string source = 1;
+  SyncPhase phase = 2;
+  // Cumulative round totals known at emit time, monotonic within a round, never per-event deltas.
+  int64 documents = 3;
+  int64 chunks = 4;
+  string error = 5;
+  google.protobuf.Timestamp at = 6;
+}
+
+message CursorAge {
+  string source = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message LeaseState {
+  string holder = 1;
+  google.protobuf.Timestamp acquired_at = 2;
+  google.protobuf.Timestamp heartbeat_at = 3;
+}
+
+message EvidenceBundle {
+  string question = 1;
+  Anchor anchor = 2;
+  repeated EvidenceNode nodes = 3;
+  repeated Chain chains = 4;
+  repeated string gaps = 5;
+}
+
+message Chain {
+  repeated string doc_ids = 1;
+}
+
+message Anchor {
+  repeated AnchorKind kinds = 1;
+  string query = 2;
+  CodeAnchor code = 3;
+  DocRef doc = 4;
+  TimeWindow window = 5;
+}
+
+// Line numbers are 1-based, so an omitted line_start/line_end means a whole-file anchor.
+message CodeAnchor {
+  string repo = 1;
+  string file = 2;
+  int32 line_start = 3;
+  int32 line_end = 4;
+  repeated string blamed_shas = 5;
+}
+
+message DocRef {
+  string id = 1;
+  string title = 2;
+  string url = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message TimeWindow {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  string derivation = 3;
+  string anchored_by = 4;
+}
+
+message EvidenceNode {
+  DocumentMeta doc = 1;
+  string excerpt = 2;
+  NodeRole role = 3;
+  float score = 4;
+  repeated Edge via = 5;
+}
+
+message DocumentMeta {
+  string id = 1;
+  string source = 2;
+  string type = 3;
+  string title = 4;
+  string author = 5;
+  string url = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message Edge {
+  string src = 1;
+  string dst = 2;
+  EdgeKind kind = 3;
+  float confidence = 4;
+}
+
+enum AnchorKind {
+  ANCHOR_KIND_UNSPECIFIED = 0;
+  ANCHOR_KIND_QUERY = 1;
+  ANCHOR_KIND_CODE_SPAN = 2;
+  ANCHOR_KIND_DOCUMENT = 3;
+  ANCHOR_KIND_TIME_WINDOW = 4;
+}
+
+enum NodeRole {
+  NODE_ROLE_UNSPECIFIED = 0;
+  NODE_ROLE_SEED = 1;
+  NODE_ROLE_BLAMED_COMMIT = 2;
+  NODE_ROLE_REVIEW_THREAD = 3;
+  NODE_ROLE_LINKED_TICKET = 4;
+  NODE_ROLE_DESIGN_DOC = 5;
+  NODE_ROLE_FOLLOW_UP = 6;
+  NODE_ROLE_SEMANTIC_MATCH = 7;
+  NODE_ROLE_LINKED_CHANGE = 8;
+}
+
+enum EdgeKind {
+  EDGE_KIND_UNSPECIFIED = 0;
+  EDGE_KIND_COMMIT_IN_PR = 1;
+  EDGE_KIND_PR_CLOSES_ISSUE = 2;
+  EDGE_KIND_REFERENCES_DOC = 3;
+  EDGE_KIND_MENTIONS_COMMIT = 4;
+  EDGE_KIND_MENTIONS_PATH = 5;
+  EDGE_KIND_SUPERSEDES = 6;
+}
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_OUT = 1;
+  DIRECTION_IN = 2;
+  DIRECTION_BOTH = 3;
+}
+
+enum SyncPhase {
+  SYNC_PHASE_UNSPECIFIED = 0;
+  SYNC_PHASE_ROUND_STARTED = 1;
+  SYNC_PHASE_BATCH_STORED = 2;
+  SYNC_PHASE_CHUNKS_INDEXED = 3;
+  SYNC_PHASE_CONNECTOR_FINISHED = 4;
+  SYNC_PHASE_PENDING_LINKED = 5;
+  SYNC_PHASE_ROUND_FINISHED = 6;
+  SYNC_PHASE_FAILED = 7;
+}
