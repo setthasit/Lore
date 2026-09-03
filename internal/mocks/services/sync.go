@@ -11,6 +11,7 @@ package mock_services
 
 import (
 	context "context"
+	entities "lore/internal/entities"
 	services "lore/internal/services"
 	reflect "reflect"
 
@@ -39,6 +40,21 @@ func NewMockSyncOrchestrator(ctrl *gomock.Controller) *MockSyncOrchestrator {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockSyncOrchestrator) EXPECT() *MockSyncOrchestratorMockRecorder {
 	return m.recorder
+}
+
+// Subscribe mocks base method.
+func (m *MockSyncOrchestrator) Subscribe() (<-chan entities.SyncEvent, func()) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Subscribe")
+	ret0, _ := ret[0].(<-chan entities.SyncEvent)
+	ret1, _ := ret[1].(func())
+	return ret0, ret1
+}
+
+// Subscribe indicates an expected call of Subscribe.
+func (mr *MockSyncOrchestratorMockRecorder) Subscribe() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Subscribe", reflect.TypeOf((*MockSyncOrchestrator)(nil).Subscribe))
 }
 
 // Sync mocks base method.

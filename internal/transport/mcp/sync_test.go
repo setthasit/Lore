@@ -13,6 +13,7 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/services"
+	"lore/internal/transport"
 )
 
 var syncToolNames = []string{syncNowName, syncStatusName}
@@ -204,8 +205,8 @@ func TestSyncStatusHidesAStoreFailure(t *testing.T) {
 
 	got := errorText(t, f.callTool(t, syncStatusName, map[string]any{}))
 
-	if got != internalErrorMessage {
-		t.Errorf("error = %q, want %q", got, internalErrorMessage)
+	if got != transport.InternalErrorMessage {
+		t.Errorf("error = %q, want %q", got, transport.InternalErrorMessage)
 	}
 	if logged := f.logs.String(); !strings.Contains(logged, testCause) {
 		t.Errorf("log %q does not record the cause", logged)

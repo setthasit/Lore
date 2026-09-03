@@ -37,6 +37,10 @@ type SyncOrchestrator interface {
 	// Cursors advance only past durably stored documents, so a failed round is
 	// consistent up to its last committed batch and re-running resumes without gaps.
 	Sync(ctx context.Context, opts SyncOptions) (SyncResult, error)
+
+	// The returned func unsubscribes and is safe to call twice. A subscriber that
+	// stops reading loses its oldest queued events; it never stalls a round.
+	Subscribe() (<-chan entities.SyncEvent, func())
 }
 
 type syncOrchestrator struct {
@@ -48,6 +52,7 @@ type syncOrchestrator struct {
 	holder     string
 	heartbeat  time.Duration
 	now        func() time.Time
+	events     syncEventBus
 }
 
 var _ SyncOrchestrator = (*syncOrchestrator)(nil)
@@ -78,6 +83,10 @@ func leaseHolder() string {
 	}
 
 	return host + "/" + strconv.Itoa(os.Getpid())
+}
+
+func (s *syncOrchestrator) Subscribe() (<-chan entities.SyncEvent, func()) {
+	return s.events.subscribe()
 }
 
 func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
@@ -116,21 +125,43 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 		}
 	}()
 
+	progress := &syncProgress{bus: &s.events, now: s.now}
+	progress.emit("", entities.SyncPhaseRoundStarted, nil)
+
+	if err := s.runRound(round, opts, selected, progress); err != nil {
+		progress.emit("", entities.SyncPhaseFailed, err)
+
+		return SyncResult{}, err
+	}
+
+	progress.emit("", entities.SyncPhaseRoundFinished, nil)
+
+	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+}
+
+func (s *syncOrchestrator) runRound(
+	round context.Context,
+	opts SyncOptions,
+	selected []entities.Connector,
+	progress *syncProgress,
+) error {
 	if err := s.reconcileIdentity(round, opts); err != nil {
-		return SyncResult{}, roundFailure(round, err)
+		return roundFailure(round, err)
 	}
 
 	for _, conn := range selected {
-		if err := s.syncConnector(round, conn); err != nil {
-			return SyncResult{}, roundFailure(round, err)
+		if err := s.syncConnector(round, conn, progress); err != nil {
+			return roundFailure(round, err)
 		}
 	}
 
 	if err := s.links.LinkPending(round); err != nil {
-		return SyncResult{}, roundFailure(round, err)
+		return roundFailure(round, err)
 	}
 
-	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+	progress.emit("", entities.SyncPhasePendingLinked, nil)
+
+	return nil
 }
 
 func (s *syncOrchestrator) selectConnectors(source string) ([]entities.Connector, error) {
@@ -284,7 +315,7 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 	return nil
 }
 
-func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Connector) error {
+func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Connector, progress *syncProgress) error {
 	name := conn.Name()
 
 	cursor, err := s.store.Cursor(ctx, name)
@@ -299,7 +330,8 @@ func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Conn
 				fmt.Sprintf("connector %s could not read changes", name), err)
 		}
 
-		if err := s.commitBatch(ctx, name, batch); err != nil {
+		chunks, err := s.commitBatch(ctx, name, batch)
+		if err != nil {
 			return err
 		}
 
@@ -307,29 +339,41 @@ func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Conn
 			return internalerror.NewInternalError(
 				fmt.Sprintf("could not checkpoint the %s sync cursor", name), err)
 		}
+
+		progress.documents += int64(len(batch.Docs))
+		progress.emit(name, entities.SyncPhaseBatchStored, nil)
+
+		progress.chunks += int64(chunks)
+		progress.emit(name, entities.SyncPhaseChunksIndexed, nil)
 	}
+
+	progress.emit(name, entities.SyncPhaseConnectorFinished, nil)
 
 	return nil
 }
 
 // ReplaceChunks requires the parent document to exist, so documents commit first.
-func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch entities.Batch) error {
+func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch entities.Batch) (int, error) {
 	if err := s.store.UpsertDocuments(ctx, batch.Docs); err != nil {
-		return internalerror.NewInternalError(
+		return 0, internalerror.NewInternalError(
 			fmt.Sprintf("could not store %d documents from %s", len(batch.Docs), name), err)
 	}
 
+	chunks := 0
 	for _, doc := range batch.Docs {
-		if err := s.indexDocument(ctx, doc); err != nil {
-			return err
+		indexed, err := s.indexDocument(ctx, doc)
+		if err != nil {
+			return 0, err
 		}
+
+		chunks += indexed
 	}
 
-	return s.links.Link(ctx, batch.Docs)
+	return chunks, s.links.Link(ctx, batch.Docs)
 }
 
 // A document that chunks to nothing still calls ReplaceChunks, or the previous edit's chunks stay retrievable.
-func (s *syncOrchestrator) indexDocument(ctx context.Context, doc entities.Document) error {
+func (s *syncOrchestrator) indexDocument(ctx context.Context, doc entities.Document) (int, error) {
 	chunks := s.chunker.Chunk(doc)
 
 	if len(chunks) > 0 {
@@ -340,11 +384,11 @@ func (s *syncOrchestrator) indexDocument(ctx context.Context, doc entities.Docum
 
 		vectors, err := s.emb.Embed(ctx, texts)
 		if err != nil {
-			return internalerror.NewInternalError(
+			return 0, internalerror.NewInternalError(
 				fmt.Sprintf("could not embed the %d chunks of document %q", len(chunks), doc.ID), err)
 		}
 		if len(vectors) != len(chunks) {
-			return internalerror.NewInternalError(fmt.Sprintf(
+			return 0, internalerror.NewInternalError(fmt.Sprintf(
 				"embedder returned %d vectors for the %d chunks of document %q",
 				len(vectors), len(chunks), doc.ID), nil)
 		}
@@ -355,9 +399,9 @@ func (s *syncOrchestrator) indexDocument(ctx context.Context, doc entities.Docum
 	}
 
 	if err := s.store.ReplaceChunks(ctx, doc.ID, chunks); err != nil {
-		return internalerror.NewInternalError(
+		return 0, internalerror.NewInternalError(
 			fmt.Sprintf("could not store the chunks of document %q", doc.ID), err)
 	}
 
-	return nil
+	return len(chunks), nil
 }
