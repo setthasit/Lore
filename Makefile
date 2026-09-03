@@ -1,4 +1,4 @@
-.PHONY: build test lint gen.mock gen.proto
+.PHONY: build test lint gen.mock gen.proto certs.dev
 
 build:
 	go build ./...
@@ -18,3 +18,6 @@ gen.proto:
 		--go_out=api/proto --go_opt=paths=source_relative \
 		--go-grpc_out=api/proto --go-grpc_opt=paths=source_relative \
 		lore/v1/lore.proto
+
+certs.dev:
+	./scripts/certs-dev.sh

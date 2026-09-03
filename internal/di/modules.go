@@ -62,14 +62,14 @@ var ServiceModule = fx.Module("services", fx.Provide(
 ))
 
 var SchedulerModule = fx.Module("scheduler",
-	fx.Provide(newDiagnosticLogger, newScheduler),
+	fx.Provide(DiagnosticLogger, newScheduler),
 	fx.Invoke(func(*services.Scheduler) {}),
 )
 
 const schedulerStopReserve = time.Second
 
 // Stdout carries the MCP JSON-RPC stream, so diagnostics belong on stderr.
-func newDiagnosticLogger() *slog.Logger {
+func DiagnosticLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, nil))
 }
 
