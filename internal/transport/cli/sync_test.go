@@ -46,6 +46,34 @@ func TestSyncPassesReembedThrough(t *testing.T) {
 	}
 }
 
+// Scoping a round is what makes a freshly added source verifiable on its own.
+func TestSyncPassesTheSourceSelectorThrough(t *testing.T) {
+	rt, orchestrator := mockSync(t)
+	orchestrator.EXPECT().Sync(gomock.Any(), services.SyncOptions{Source: "jira"}).Return(services.SyncResult{}, nil)
+
+	res := run(t, rt, "sync", "--source", "jira")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+}
+
+// The refusal is the orchestrator's: a re-embed rewinds every cursor, so it
+// cannot be scoped to one source.
+func TestSyncRejectsAScopedReembed(t *testing.T) {
+	rt, orchestrator := mockSync(t)
+	refused := internalerror.NewBadRequestError("cannot re-embed a single source", nil)
+	orchestrator.EXPECT().Sync(gomock.Any(), services.SyncOptions{Source: "jira", Reembed: true}).
+		Return(services.SyncResult{}, refused)
+
+	res := run(t, rt, "sync", "--source", "jira", "--reembed")
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d", res.exitCode, exitBadRequest)
+	}
+	if !strings.Contains(res.stderr, "cannot re-embed a single source") {
+		t.Errorf("stderr = %q, want the refusal", res.stderr)
+	}
+}
+
 func TestSyncReportsAHeldLockAsAPrecondition(t *testing.T) {
 	rt, orchestrator := mockSync(t)
 	held := internalerror.NewPreconditionError("another process holds the sync lock", nil)
