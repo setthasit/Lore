@@ -7,7 +7,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/ncruces/go-sqlite3 v0.23.1
 	github.com/spf13/cobra v1.10.2
-	github.com/tetratelabs/wazero v1.11.0
+	github.com/tetratelabs/wazero v1.12.0
 	go.uber.org/fx v1.24.0
 	go.uber.org/mock v0.6.0
 	google.golang.org/grpc v1.83.2
