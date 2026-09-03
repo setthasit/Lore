@@ -61,7 +61,7 @@ the second column is the first plus one extra anchor type. Walk through either o
 
 ## Quickstart
 
-**Requirements:** Go 1.25+, `git`, and an OpenAI API key for embeddings — or a local
+**Requirements:** Go 1.27+, `git`, and an OpenAI API key for embeddings — or a local
 Ollama daemon instead, with `embedder.provider: ollama`.
 No cgo, no Docker, no database server — SQLite ships inside the binary as pure-Go WASM
 ([ncruces/go-sqlite3](https://github.com/ncruces/go-sqlite3) + sqlite-vec), so the index
@@ -280,7 +280,7 @@ make build         # go build ./...
 make bin           # stamped, static binary at bin/lore
 make build.matrix  # cross-compile every released platform with CGO_ENABLED=0
 make test          # go test ./...
-make lint          # golangci-lint run    — errcheck, govet, staticcheck
+make lint          # golangci-lint run    — errcheck, govet, gosec, staticcheck
 make gen.mock      # go generate ./...    — gomock doubles under internal/mocks
 ```
 
@@ -302,3 +302,8 @@ commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
 - **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.
 - **Private data leaves the machine only toward the configured embedder and, once `llm:`
   is set, the configured LLM.** With `provider: ollama` on both, nothing leaves at all.
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE). Contributions are accepted under the same
+terms.

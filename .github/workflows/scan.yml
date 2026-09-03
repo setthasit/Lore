@@ -1,0 +1,64 @@
+name: scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Newly published advisories affect unchanged code, so scan on a timer too.
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v4
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      # The action checks out the repository itself.
+      # Third-party actions are pinned by commit, because a tag can be moved
+      # onto new code; GitHub-owned actions above stay on tags.
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          # Stdlib advisories are reported against the toolchain in use, so
+          # the scan has to run on exactly the version the module declares.
+          go-version-file: go.mod
+          go-package: ./...
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: a secret removed in a later commit is still leaked.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No PR comments: findings surface in the job summary, the uploaded
+          # SARIF artifact, and the failing exit code, none of which need
+          # write permissions that fork pull requests never get.
+          GITLEAKS_ENABLE_COMMENTS: false

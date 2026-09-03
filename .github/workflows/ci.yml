@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Nothing here pushes or fetches again, so the token has no reason
+          # to stay in .git/config where a later step could read it.
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make build
+      - name: test
+        run: go test -race ./...
+      # Proof of the pure-Go claim: every shipped target builds with cgo off.
+      - run: make build.matrix
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The runner has no golangci-lint binary, so this replaces `make lint`.
+      # Keep the version in step with the one used locally.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
