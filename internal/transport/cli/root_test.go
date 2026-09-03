@@ -16,7 +16,14 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	mock_services "lore/internal/mocks/services"
+	"lore/internal/transport/mcp"
 )
+
+const proseAnswer = "SQLite won because it ships everywhere and needs no server [1]; " +
+	"postgres with pgvector was the alternative [2].\n\n" +
+	"**Sources**\n" +
+	"[1] https://github.com/acme/lore/pull/12\n" +
+	"[2] https://notion.so/design/storage"
 
 var errUnclassified = errors.New("the disk caught fire")
 
@@ -99,6 +106,40 @@ func mockHistory(t *testing.T) (*Runtime, *mock_services.MockHistoryService) {
 
 	history := mock_services.NewMockHistoryService(gomock.NewController(t))
 	return &Runtime{History: history}, history
+}
+
+func mockSynthesis(t *testing.T, rt *Runtime) *mock_services.MockSynthesisService {
+	t.Helper()
+
+	synthesis := mock_services.NewMockSynthesisService(gomock.NewController(t))
+	rt.Synthesis = synthesis
+	return synthesis
+}
+
+func wantProse(t *testing.T, res result) {
+	t.Helper()
+
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	if res.stdout != proseAnswer+"\n" {
+		t.Errorf("stdout = %q, want the synthesized answer alone", res.stdout)
+	}
+}
+
+func wantBundleJSON(t *testing.T, res result, bundle *entities.EvidenceBundle) {
+	t.Helper()
+
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	want, err := mcp.EncodeBundle(bundle)
+	if err != nil {
+		t.Fatalf("EncodeBundle: %v", err)
+	}
+	if res.stdout != string(want)+"\n" {
+		t.Errorf("stdout is not the canonical encoding alone\n got: %s\nwant: %s\n", res.stdout, want)
+	}
 }
 
 var (
@@ -233,6 +274,20 @@ func TestHelpSucceeds(t *testing.T) {
 		}
 		if res.stdout == "" {
 			t.Errorf("%v: printed no help", args)
+		}
+	}
+}
+
+func TestExplainableVerbsDocumentTheFlagAndItsLLMRequirement(t *testing.T) {
+	for _, verb := range []string{"why", "trace", "impact", "history"} {
+		res := run(t, nil, verb, "--help")
+		if res.exitCode != exitOK {
+			t.Fatalf("%s --help: exit = %d, stderr = %q", verb, res.exitCode, res.stderr)
+		}
+		for _, want := range []string{"--explain", "prose", "llm: block in lore.yaml"} {
+			if !strings.Contains(res.stdout, want) {
+				t.Errorf("%s --help does not mention %q\n--- help ---\n%s", verb, want, res.stdout)
+			}
 		}
 	}
 }

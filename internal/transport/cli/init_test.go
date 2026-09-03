@@ -39,6 +39,8 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 		"provider: openai",
 		"model: text-embedding-3-small",
 		"repos: []",
+		"# llm:",
+		"#   api_key_env: LORE_LLM_KEY",
 	} {
 		if !strings.Contains(scaffold, want) {
 			t.Errorf("scaffold is missing %q\n--- scaffold ---\n%s", want, scaffold)
@@ -69,6 +71,9 @@ func TestInitWritesALoadableScaffold(t *testing.T) {
 	}
 	if cfg.Embedder.Model != "text-embedding-3-small" {
 		t.Errorf("embedder.model = %q, want the default model", cfg.Embedder.Model)
+	}
+	if cfg.LLM != nil {
+		t.Errorf("llm = %+v, want the stanza to stay commented out so a fresh workspace loads unchanged", cfg.LLM)
 	}
 
 	var tree map[string]any

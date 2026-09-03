@@ -25,9 +25,10 @@ func newAskCommand(resolve Resolver, configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ask <question>",
 		Short: "Answer a question from the indexed decision trail, with citations",
-		Long: "Retrieves the documents that explain a decision and prints them with their\n" +
-			"source URLs. Every claim you can make from the output is traceable to one of\n" +
-			"the cited documents; --raw emits the evidence bundle as JSON for scripting.",
+		Long: "Retrieves the documents that explain a decision, then answers from them in\n" +
+			"prose that cites the documents it used and lists their source URLs. The\n" +
+			"answer needs the llm: block in lore.yaml; --raw emits the evidence bundle\n" +
+			"as JSON for scripting instead, and needs no LLM.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req, err := flags.request(args[0])
@@ -39,8 +40,11 @@ func newAskCommand(resolve Resolver, configPath *string) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if flags.raw {
+					return writeJSON(cmd.OutOrStdout(), bundle)
+				}
 
-				return emitBundle(cmd.OutOrStdout(), bundle, flags.raw, viewRelevance)
+				return emitProse(cmd, rt.Synthesis, bundle)
 			})
 		},
 	}

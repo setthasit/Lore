@@ -92,6 +92,7 @@ type LLM struct {
 	Provider  string `yaml:"provider"` // openai | anthropic | zai | ollama
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
+	BaseURL   string `yaml:"base_url"` // default: the provider's own endpoint
 }
 
 type Scheduler struct {

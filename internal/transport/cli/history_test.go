@@ -8,7 +8,6 @@ import (
 
 	"lore/internal/entities"
 	"lore/internal/services"
-	"lore/internal/transport/mcp"
 )
 
 const (
@@ -91,22 +90,32 @@ func TestHistoryRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	history.EXPECT().HistoryOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
 
 	res := run(t, rt, "history", historyPath, "--raw")
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
+	wantBundleJSON(t, res, bundle)
 
-	want, err := mcp.EncodeBundle(bundle)
-	if err != nil {
-		t.Fatalf("EncodeBundle: %v", err)
-	}
-	if res.stdout != string(want)+"\n" {
-		t.Errorf("stdout is not the canonical encoding alone\n got: %s\nwant: %s\n", res.stdout, want)
-	}
 	for _, field := range []string{"line_start", "line_end"} {
 		if strings.Contains(res.stdout, field) {
 			t.Errorf("the whole-file anchor encodes %q:\n%s", field, res.stdout)
 		}
 	}
+}
+
+func TestHistoryExplainsTheTimelineInProse(t *testing.T) {
+	rt, history := mockHistory(t)
+	synthesis := mockSynthesis(t, rt)
+	bundle := fileHistoryBundle()
+	history.EXPECT().HistoryOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
+	synthesis.EXPECT().Synthesize(gomock.Any(), bundle.Question, bundle).Return(proseAnswer, nil)
+
+	wantProse(t, run(t, rt, "history", historyPath, "--explain"))
+}
+
+func TestHistoryRawOutranksExplain(t *testing.T) {
+	rt, history := mockHistory(t)
+	mockSynthesis(t, rt)
+	bundle := fileHistoryBundle()
+	history.EXPECT().HistoryOf(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	wantBundleJSON(t, run(t, rt, "history", historyPath, "--raw", "--explain"), bundle)
 }
 
 func TestHistoryWithoutAPathIsAUsageError(t *testing.T) {
