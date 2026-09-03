@@ -10,6 +10,7 @@ import (
 	"lore/internal/entities"
 	"lore/internal/errors/internalerror"
 	"lore/internal/services"
+	"lore/internal/transport"
 )
 
 func impactArgs(refOrQuery string) map[string]any {
@@ -95,7 +96,7 @@ func TestImpactMapsServiceErrors(t *testing.T) {
 		{
 			name: "internal hides the cause",
 			err:  internalerror.NewInternalError("walking the provenance graph failed", errors.New(testCause)),
-			want: internalErrorMessage,
+			want: transport.InternalErrorMessage,
 		},
 	}
 

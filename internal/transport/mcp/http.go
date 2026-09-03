@@ -10,6 +10,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"lore/internal/errors/internalerror"
+	"lore/internal/transport"
 )
 
 const EndpointPath = "/mcp"
@@ -21,7 +22,7 @@ const (
 
 // Blocks until ctx is done, answering over streamable HTTP the tool calls Serve
 // answers over stdio.
-func ServeHTTP(ctx context.Context, listener net.Listener, svc Services, tlsConfig *tls.Config) error {
+func ServeHTTP(ctx context.Context, listener net.Listener, svc transport.Services, tlsConfig *tls.Config) error {
 	log := diagnosticLogger()
 	tools := newServer(svc, log)
 

@@ -13,6 +13,7 @@ import (
 
 	mock_services "lore/internal/mocks/services"
 	"lore/internal/services"
+	"lore/internal/transport"
 )
 
 const serveTimeout = 10 * time.Second
@@ -36,7 +37,7 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() {
-		served <- Serve(ctx, Services{
+		served <- Serve(ctx, transport.Services{
 			Query:  query,
 			Trace:  mock_services.NewMockTraceService(ctrl),
 			Impact: mock_services.NewMockImpactService(ctrl),
