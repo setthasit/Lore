@@ -14,9 +14,9 @@ anchoring remains fully supported as an optional enrichment.
 
 ## Status
 
-**Design phase — v3.** Supersedes [v1](../v1/); v2 was abandoned research and
-is not a basis for anything. Implementation planning starts after this set is
-approved.
+**Implemented.** This set is the source of truth for the shipped system and is
+kept in step with the code; it supersedes [v1](../v1/), and v2 was abandoned
+research that nothing builds on.
 
 ## Reading order
 
@@ -26,7 +26,7 @@ approved.
 | [01 — Overview](01-overview.md) | Problem, concept, differentiators, goals / non-goals, landscape |
 | [02 — Architecture](02-architecture.md) | Layers, transports, request flows, key design decisions, testing strategy |
 | [03 — Data Model & Storage](03-data-model.md) | Document / Edge model, SQLite schema, chunking, hybrid retrieval |
-| [04 — Connectors & Sync](04-connectors-and-sync.md) | Connector contract, GitHub / Notion / Jira connectors, scheduler, sync lock, link resolver |
+| [04 — Connectors & Sync](04-connectors-and-sync.md) | Connector contract, GitHub / GitLab / Notion / Jira connectors, scheduler, sync lock, link resolver |
 | [05 — Query Engine](05-query-engine.md) | Unified pipeline, anchors, `find_decision` / `why` / `trace` / `impact_of` / `history_of`, synthesis |
 | [06 — Interfaces & Config](06-interfaces-and-config.md) | MCP tools, CLI commands, gRPC API + mTLS, `lore.yaml` reference |
 | [07 — Roadmap & Risks](07-roadmap.md) | Build milestones (ask-first ordering), named risks, open questions |
@@ -40,9 +40,9 @@ approved.
   programmatic API (future web UI), *not* an MCP transport.
 - Query engine: **one pipeline, four seed modes** (retrieval / blame / ref / log).
   Every tool returns the same `EvidenceBundle` with `Chains` and `Gaps`.
-- v1 connectors: **GitHub + Notion + Jira**; connector contract keeps
-  GitLab / Confluence / ClickUp / Slack as drop-in additions. Every connector —
-  and the repository list itself — is optional per workspace.
+- Connectors: **GitHub + GitLab + Notion + Jira**; the contract keeps
+  Confluence / ClickUp / Slack as drop-in additions. Every connector — and the
+  repository list itself — is optional per workspace.
 - Embeddings: pluggable provider, **cloud default** (OpenAI), Ollama for fully-local operation.
 - LLM synthesis: pluggable and **optional** — MCP responses return structured evidence and never
   require an LLM key on the server.

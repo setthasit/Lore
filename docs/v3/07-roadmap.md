@@ -64,10 +64,10 @@ synthesized `lore ask`).
 
 ### M7 — Polish & showcase
 
-README with two recorded demos — ask-only (Jira/Notion) and code-anchored
+README with two demo walkthroughs — ask-only (Jira/Notion) and code-anchored
 (OSS repo) — quickstart for Claude Code/Cursor, Ollama fully-local guide,
-GitLab connector if time allows (strongest proof the connector abstraction
-holds).
+source setup guide, version stamping with a cross-compile matrix, and the
+GitLab connector as the proof that the connector abstraction holds.
 
 ## Named risks
 
@@ -82,9 +82,9 @@ holds).
 | Private data → cloud embedder/LLM | privacy concern | pluggable providers; Ollama = fully local; documented loudly |
 | WASM SQLite slower than cgo | query latency | M1 benchmark on realistic corpus; cgo pairing is a drop-in behind IndexStore if needed |
 | Embedding model change invalidates vectors | silent quality loss | embedder identity in `meta`; startup mismatch check; explicit `--reembed` |
-| `lore` name collision | rename cost | check registries/GitHub before first public release |
+| `lore` name collision | rename cost | checked before release: kept, module path `github.com/setthasit/Lore` — see [01 — Name](01-overview.md#name) |
 
-## Open questions (to settle during implementation planning)
+## Open questions
 
 1. Embedding batch size / concurrency defaults per provider.
 2. Graph-walk scoring constants (depth penalty, confidence floor 0.3, RRF
@@ -95,10 +95,11 @@ holds).
 4. Jira Data Center auth mode (PAT) — post-v1, same package.
 5. `lore ask` conversational follow-ups (thread context) — v1 is single-shot;
    revisit after web UI.
-6. Whether M7 includes the GitLab connector or it moves to post-v1.
+6. Whether M7 includes the GitLab connector or it moves to post-v1 — **settled:
+   included**, merge requests mapping onto the existing `pr` document types.
 
-## After design review
+## Status
 
-Next step: structured implementation plan (`implementation-plan-creator`
-format, phase documents with checkbox tasks) derived from these milestones,
-executable phase-by-phase.
+M1–M7 are implemented and covered by tests; the milestone list above is kept as
+the record of the build order, not as outstanding work. The named risks stay in
+force — they describe operating conditions, not open tasks.
