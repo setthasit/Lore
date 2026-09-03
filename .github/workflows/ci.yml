@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Nothing here pushes or fetches again, so the token has no reason
+          # to stay in .git/config where a later step could read it.
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           # Deliberately not go.mod's directive: it still declares 1.25, which
@@ -38,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version: stable
