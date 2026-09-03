@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          # Deliberately not go.mod's directive: it still declares 1.25, which
+          # is out of support and carries stdlib advisories, so building and
+          # testing here would certify a toolchain nobody should ship.
+          go-version: stable
+          check-latest: true
+          cache: true
+      - run: make build
+      - name: test
+        run: go test -race ./...
+      # Proof of the pure-Go claim: every shipped target builds with cgo off.
+      - run: make build.matrix
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+      # The runner has no golangci-lint binary, so this replaces `make lint`.
+      # Keep the version in step with the one used locally.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
