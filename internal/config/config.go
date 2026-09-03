@@ -79,6 +79,11 @@ type Query struct {
 type Embedder struct {
 	Provider string `yaml:"provider"` // openai | ollama
 	Model    string `yaml:"model"`
+	BaseURL  string `yaml:"base_url"` // default: the provider's own endpoint
+
+	// Dimensions is the vector width. Required for ollama, whose models do not
+	// imply one; `ollama show <model>` reports it.
+	Dimensions int `yaml:"dimensions"`
 }
 
 // LLM configures synthesis for the CLI and gRPC surfaces. Optional: MCP never

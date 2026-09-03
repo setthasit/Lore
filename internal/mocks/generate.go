@@ -3,6 +3,7 @@ package mocks
 //go:generate go tool mockgen -destination repositories/indexstore.go -package mock_repositories lore/internal/repositories IndexStore
 //go:generate go tool mockgen -destination entities/connector.go -package mock_entities lore/internal/entities Connector
 //go:generate go tool mockgen -destination embedder/embedder.go -package mock_embedder lore/internal/connectors/embedder Embedder
+//go:generate go tool mockgen -destination llm/llm.go -package mock_llm lore/internal/connectors/llm LLM
 //go:generate go tool mockgen -destination gitrepo/gitrepo.go -package mock_gitrepo lore/internal/connectors/gitrepo GitRepo
 //go:generate go tool mockgen -destination services/chunker.go -package mock_services lore/internal/services Chunker
 //go:generate go tool mockgen -destination services/linkresolver.go -package mock_services lore/internal/services LinkResolver

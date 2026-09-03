@@ -14,6 +14,7 @@ import (
 
 	"lore/internal/config"
 	"lore/internal/connectors/embedder"
+	"lore/internal/connectors/embedder/ollama"
 	"lore/internal/connectors/embedder/openai"
 	"lore/internal/connectors/github"
 	"lore/internal/connectors/gitrepo"
@@ -189,7 +190,10 @@ func envValue(field, name string) (string, error) {
 const EmbedderKeyEnv = "OPENAI_API_KEY"
 
 const (
-	defaultEmbedderProvider = "openai"
+	providerOpenAI = "openai"
+	providerOllama = "ollama"
+
+	defaultEmbedderProvider = providerOpenAI
 	defaultEmbedderModel    = "text-embedding-3-small"
 )
 
@@ -202,11 +206,17 @@ var openAIModelDims = map[string]int{
 type embedderSpec struct {
 	provider string
 	model    string
+	baseURL  string
 	dims     int
 }
 
 func newEmbedderSpec(cfg *config.Config) (embedderSpec, error) {
-	spec := embedderSpec{provider: cfg.Embedder.Provider, model: cfg.Embedder.Model}
+	spec := embedderSpec{
+		provider: cfg.Embedder.Provider,
+		model:    cfg.Embedder.Model,
+		baseURL:  cfg.Embedder.BaseURL,
+		dims:     cfg.Embedder.Dimensions,
+	}
 	if spec.provider == "" {
 		spec.provider = defaultEmbedderProvider
 	}
@@ -214,8 +224,21 @@ func newEmbedderSpec(cfg *config.Config) (embedderSpec, error) {
 		spec.model = defaultEmbedderModel
 	}
 
-	if spec.provider != defaultEmbedderProvider {
-		return embedderSpec{}, internalerror.NewPreconditionError("embedder.provider "+spec.provider+" is configured, but this build only implements "+defaultEmbedderProvider, nil)
+	switch spec.provider {
+	case providerOpenAI:
+		return openAISpec(spec)
+	case providerOllama:
+		return ollamaSpec(spec)
+	default:
+		return embedderSpec{}, internalerror.NewPreconditionError("embedder.provider "+spec.provider+
+			" is configured, but this build only implements "+providerOpenAI+" and "+providerOllama, nil)
+	}
+}
+
+func openAISpec(spec embedderSpec) (embedderSpec, error) {
+	if spec.dims != 0 {
+		return embedderSpec{}, internalerror.NewBadRequestError("embedder.dimensions must not be set for the "+
+			providerOpenAI+" provider: the vector width follows from embedder.model", nil)
 	}
 
 	dims, known := openAIModelDims[spec.model]
@@ -226,22 +249,41 @@ func newEmbedderSpec(cfg *config.Config) (embedderSpec, error) {
 	return spec, nil
 }
 
+func ollamaSpec(spec embedderSpec) (embedderSpec, error) {
+	if spec.dims <= 0 {
+		return embedderSpec{}, internalerror.NewBadRequestError("embedder.dimensions must be set to the vector width of "+
+			spec.model+" for the "+providerOllama+" provider; `ollama show "+spec.model+"` reports it", nil)
+	}
+	return spec, nil
+}
+
 func knownModels() []string {
 	return slices.Sorted(maps.Keys(openAIModelDims))
 }
 
 func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
+	if spec.provider == providerOllama {
+		emb, err := ollama.New(spec.model, spec.baseURL, spec.dims)
+		if err != nil {
+			return nil, unconfigurableEmbedder(spec.provider, err)
+		}
+		return emb, nil
+	}
+
 	key := os.Getenv(EmbedderKeyEnv)
 	if key == "" {
 		return nil, internalerror.NewBadRequestError("the "+spec.provider+" embedder needs an API key in "+EmbedderKeyEnv+", but that environment variable is not set", nil)
 	}
 
-	emb, err := openai.New(key, spec.model, "", spec.dims)
+	emb, err := openai.New(key, spec.model, spec.baseURL, spec.dims)
 	if err != nil {
-		return nil, internalerror.NewBadRequestError(
-			"cannot configure the "+spec.provider+" embedder: "+err.Error(), err)
+		return nil, unconfigurableEmbedder(spec.provider, err)
 	}
 	return emb, nil
+}
+
+func unconfigurableEmbedder(provider string, err error) error {
+	return internalerror.NewBadRequestError("cannot configure the "+provider+" embedder: "+err.Error(), err)
 }
 
 func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {

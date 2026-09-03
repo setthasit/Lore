@@ -139,6 +139,8 @@ query:                                      # optional tuning (server-capped)
 embedder:
   provider: openai                          # openai | ollama
   model: text-embedding-3-small
+  base_url: https://api.openai.com          # OPTIONAL — default: the provider's endpoint
+# dimensions: 768                           # REQUIRED for ollama; `ollama show <model>` reports it
 
 llm:                                        # OPTIONAL — synthesis for CLI/gRPC only
   provider: anthropic                       # openai | anthropic | zai | ollama
@@ -167,6 +169,11 @@ Validation at load:
   at the commit layer (surfaced as a startup warning, not an error).
 - Loopback/TLS rule enforced; embedder identity checked against the index
   `meta`.
+
+At startup, when the embedder is constructed: `embedder.dimensions` is required
+for the `ollama` provider — the width is configured, never probed, so the
+identity is known without the daemon — and rejected for `openai`, where the
+model implies it.
 
 ## Security posture
 
