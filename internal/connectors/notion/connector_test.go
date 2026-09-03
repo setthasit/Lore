@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/connectors/conformance"
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/connectors/conformance"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const fakeToken = "secret_test-token"

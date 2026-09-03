@@ -3,7 +3,7 @@ package transport
 import (
 	"errors"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // Causes name hosts, paths and queries, so they stay in the server log.

@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"lore/internal/config"
-	"lore/internal/di"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/di"
 )
 
 func TestInitWritesALoadableScaffold(t *testing.T) {

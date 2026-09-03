@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"lore/internal/connectors/embedder"
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const testDims = 3

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"lore/internal/connectors/refscan"
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/connectors/refscan"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const (

@@ -22,8 +22,8 @@ import (
 
 	"go.uber.org/fx"
 
-	"lore/internal/config"
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 type serveResult struct {

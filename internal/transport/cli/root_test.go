@@ -12,11 +12,11 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/config"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 const proseAnswer = "SQLite won because it ships everywhere and needs no server [1]; " +
@@ -28,7 +28,7 @@ const proseAnswer = "SQLite won because it ships everywhere and needs no server 
 var errUnclassified = errors.New("the disk caught fire")
 
 func fxLikeWrap(err error) error {
-	return fmt.Errorf(`could not build arguments for function "lore/internal/di".newIndexStore: %w`, err)
+	return fmt.Errorf(`could not build arguments for function "github.com/setthasit/Lore/internal/di".newIndexStore: %w`, err)
 }
 
 type result struct {

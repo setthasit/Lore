@@ -9,9 +9,9 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 func bundleFixture() *entities.EvidenceBundle {

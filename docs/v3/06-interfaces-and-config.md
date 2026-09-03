@@ -37,7 +37,7 @@ Transports:
 
 ```
 lore init                          # create workspace + lore.yaml scaffold
-lore source add github|notion|jira # append source config interactively
+lore source add gitlab|notion|jira # append source config interactively
 lore sync [--source=jira] [--reembed]
 lore status                        # sync state, doc/edge counts, lock state
 lore ask "<question>" [--around="incident X"] [--since --until] [--source --repo --type]   # → find_decision
@@ -125,6 +125,10 @@ sources:                                    # ALL optional — configure what ex
     email_env: LORE_JIRA_EMAIL
     token_env: LORE_JIRA_TOKEN
     projects: [PROJ, INFRA]
+  gitlab:
+    base_url: https://gitlab.com            # OPTIONAL — self-managed instances pass their root
+    token_env: LORE_GITLAB_TOKEN
+    projects: [acme/myproject]              # namespaced paths; merge requests map onto `pr`
 
 repos: []                                   # OPTIONAL — local clones, blame/log only.
 # repos:                                    # Zero repos = ask-only workspace;
@@ -179,8 +183,8 @@ model implies it.
 ## Security posture
 
 - Read-only against all external sources; least-privilege tokens documented
-  (GitHub fine-grained PAT read scopes, Notion integration scoped to subtree,
-  Jira API token with read-only project access).
+  (GitHub fine-grained PAT read scopes, GitLab token with `read_api`, Notion
+  integration scoped to subtree, Jira API token with read-only project access).
 - Secrets only via env vars; never written to `lore.yaml`, the index, or logs.
 - Private data leaves the machine only toward the configured embedder/LLM —
   documented loudly; Ollama provider = fully local pipeline.

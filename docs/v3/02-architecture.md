@@ -9,7 +9,7 @@ Transport (MCP stdio / MCP Streamable HTTP / gRPC+mTLS / CLI)
     ↓ calls
 Service (QueryService, SynthesisService, SyncOrchestrator, LinkResolver)
     ↓ calls
-Repository (IndexStore) + Connectors (GitHub, Notion, Jira, Git, Embedder, LLM)
+Repository (IndexStore) + Connectors (GitHub, GitLab, Notion, Jira, Git, Embedder, LLM)
 ```
 
 Rules (no exceptions):
@@ -41,6 +41,7 @@ flowchart TB
         ST[(IndexStore<br/>SQLite: FTS5 + sqlite-vec)]
         GIT[GitConnector<br/>blame on local clones — OPTIONAL]
         GHC[GitHubConnector]
+        GLC[GitLabConnector]
         NTC[NotionConnector]
         JRC[JiraConnector]
         EMB[EmbedderConnector<br/>OpenAI default / Ollama]
@@ -231,7 +232,7 @@ Central `internalerror`-style package: typed constructors
   functions where possible).
 - **Repository** — integration tests against a temp SQLite file (fast, no
   external infra).
-- **Connectors** — `httptest` servers replaying recorded GitHub/Notion/Jira
+- **Connectors** — `httptest` servers replaying recorded GitHub/GitLab/Notion/Jira
   fixtures; retry/pagination/batch-checkpoint logic covered explicitly — plus
   the shared connector conformance suite
   ([04](04-connectors-and-sync.md#plugin-readiness-deferred)).

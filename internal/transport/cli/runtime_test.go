@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"lore/internal/config"
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func configWithRemote(remote string, ingested ...string) *config.Config {

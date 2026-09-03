@@ -29,7 +29,7 @@ Contract rules:
 
 - **Optional by construction.** `lore.yaml` declares which sources exist for a
   workspace; the SyncOrchestrator only iterates configured connectors.
-  Jira-only, Notion-only, GitHub-only — all fully supported.
+  Jira-only, Notion-only, GitHub-only, GitLab-only — any subset is supported.
 - **No business logic.** Connectors fetch, paginate, retry, and normalize to
   `Document` + `RawRef`s. Ref *resolution* is the LinkResolver's job.
 - **Read-only.** No connector ever writes to its source.
@@ -57,6 +57,31 @@ Contract rules:
   paths in diffs' touched-file lists.
 - Explicit API relations (PR ↔ closing issue, PR ↔ commits) are emitted as
   ready-made high-confidence refs.
+
+### GitLabConnector
+
+- Auth: personal or project access token with `read_api` (`LORE_GITLAB_TOKEN`),
+  sent as the `PRIVATE-TOKEN` header; `base_url` is optional and defaults to
+  `https://gitlab.com`, so a self-managed instance only passes its root.
+- Ingest scope: `sources.gitlab.projects`, namespaced paths
+  (`group/project`, `group/subgroup/project`).
+- Ingests per project: commits (message + changed paths from the commit diff),
+  merge requests (description), discussion notes, issues and issue notes.
+- REST v4 (`/api/v4/projects/<url-encoded path>/…`) with page pagination.
+- **Merge requests reuse the existing document types.** An MR is a `pr`, its
+  discussion threads are `pr_review` / `review_comment`, and the external key
+  stays `<project>/pull/<iid>` so a `group/project#123` reference resolves the
+  same way whatever the forge — while `URL` is GitLab's own
+  `/-/merge_requests/<iid>`, because the citation must open the real page.
+- Cursor: per project, an `updated_at` watermark sent back as `updated_after`
+  (merge requests, issues) or `since` (commits), plus the last emitted document
+  id. The watermark is inclusive, so the tiebreak drops the replayed unit —
+  except for commits, whose committed date can long precede their push, and
+  which therefore replay on a tie rather than risk being skipped.
+- Emits `RawRef`s: file paths from commit diffs and note positions, commit SHAs
+  (MR commits, merge and squash SHAs, prose), qualified `group/project#123`
+  number references, plus ticket keys and URLs found in bodies and in source
+  branch names.
 
 ### NotionConnector (v1)
 
@@ -205,7 +230,7 @@ per-connector concurrency of 1 in v1 (simple, sufficient).
 
 Connectors are the natural extension point for a future plugin ecosystem
 (third-party Jira/Notion/… packages that never touch base code). v1 ships
-every connector **in-process** — with three sources, packages beat processes
+every connector **in-process** — with four sources, packages beat processes
 on type safety, testing, and distribution — but the seam is kept
 plugin-viable by three disciplines:
 

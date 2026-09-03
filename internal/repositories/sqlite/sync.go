@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"lore/internal/entities"
-	"lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/repositories"
 )
 
 const syncLockID = 1

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func newStatusCommand(resolve Resolver, configPath *string) *cobra.Command {

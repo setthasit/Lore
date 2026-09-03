@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 type Fixture struct {

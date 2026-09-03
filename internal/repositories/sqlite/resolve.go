@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 // Shortest abbreviation a SHA is quoted by in prose, and the full SHA-1 width.

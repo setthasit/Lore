@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 // A URL match and a ticket-key match produce the same edge at different confidences,

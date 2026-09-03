@@ -8,9 +8,9 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	mock_embedder "lore/internal/mocks/embedder"
-	mock_repositories "lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/internal/entities"
+	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 )
 
 const (

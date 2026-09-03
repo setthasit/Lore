@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
 )
 
 type chatBody struct {

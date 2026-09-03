@@ -1,0 +1,12 @@
+[
+  {
+    "old_path": "docs/auth.md",
+    "new_path": "docs/auth.md",
+    "a_mode": "0",
+    "b_mode": "100644",
+    "diff": "@@ -0,0 +1,3 @@\n+# Auth\n",
+    "new_file": true,
+    "renamed_file": false,
+    "deleted_file": false
+  }
+]

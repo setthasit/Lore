@@ -9,6 +9,10 @@ func githubRepos(repos ...string) Sources {
 	return Sources{GitHub: &GitHubSource{TokenEnv: "LORE_GITHUB_TOKEN", Repos: repos}}
 }
 
+func gitlabProjects(projects ...string) Sources {
+	return Sources{GitLab: &GitLabSource{TokenEnv: "LORE_GITLAB_TOKEN", Projects: projects}}
+}
+
 func TestStartupWarnings(t *testing.T) {
 	const clone = "/home/dev/myproject"
 
@@ -46,7 +50,23 @@ func TestStartupWarnings(t *testing.T) {
 			wantRemotes: []string{"acme/myproject"},
 		},
 		{
-			name:        "a remote naming a source lore cannot ingest code from warns",
+			name:    "a gitlab remote naming an ingested project is silent",
+			sources: gitlabProjects("acme/myproject"),
+			repos:   []Repo{{Path: clone, Remote: "gitlab:acme/myproject"}},
+		},
+		{
+			name:    "a gitlab remote may nest through subgroups",
+			sources: gitlabProjects("acme/platform/infra"),
+			repos:   []Repo{{Path: clone, Remote: "gitlab:acme/platform/infra"}},
+		},
+		{
+			name:        "a gitlab remote naming an uningested project warns",
+			sources:     gitlabProjects("acme/yes"),
+			repos:       []Repo{{Path: clone, Remote: "gitlab:acme/nope"}},
+			wantRemotes: []string{"gitlab:acme/nope"},
+		},
+		{
+			name:        "a gitlab remote without a gitlab source warns",
 			sources:     githubRepos("acme/myproject"),
 			repos:       []Repo{{Path: clone, Remote: "gitlab:acme/myproject"}},
 			wantRemotes: []string{"gitlab:acme/myproject"},

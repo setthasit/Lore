@@ -7,10 +7,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
 
-	"lore/internal/config"
-	"lore/internal/di"
-	"lore/internal/services"
-	"lore/internal/transport"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 type Runtime struct {

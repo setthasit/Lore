@@ -105,6 +105,22 @@ covered by any of them.
 
 ## Name
 
-Working name **`lore`** — short, meaningful ("accumulated tribal knowledge"),
-excellent CLI ergonomics (`lore ask`, `lore why`, `lore impact`). Check for
-name collisions (GitHub, package registries) before first public release.
+**`lore`** — short, meaningful ("accumulated tribal knowledge"), excellent CLI
+ergonomics (`lore ask`, `lore why`, `lore impact`). Kept after a collision
+check; the Go module path is `github.com/setthasit/Lore` and the binary is
+`lore`.
+
+The name is not exclusive, and the check said so before the decision was made:
+
+| Where | Holder | Overlap |
+|---|---|---|
+| GitHub | [EpicGames/lore](https://github.com/EpicGames/lore) — a version-control system | developer tooling, adjacent domain |
+| Web | `lore.kernel.org` — the kernel mailing-list archive | developer tooling, different shape |
+| PyPI | Instacart's `lore` ML framework | different ecosystem |
+| npm | `lore` React/Redux framework | different ecosystem |
+| crates.io | `lore` logic-programming crate | different ecosystem |
+| Homebrew | free | the CLI formula name is available |
+
+No package registry Lore ships to is taken, so the cost of the collision is
+search-result noise, not a blocked release. Revisit only if the project
+publishes to an ecosystem where the name is already occupied.

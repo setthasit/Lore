@@ -1,0 +1,12 @@
+[
+  {
+    "old_path": "internal/auth/auth.go",
+    "new_path": "internal/auth/auth.go",
+    "a_mode": "0",
+    "b_mode": "100644",
+    "diff": "@@ -0,0 +1,40 @@\n+package auth\n",
+    "new_file": true,
+    "renamed_file": false,
+    "deleted_file": false
+  }
+]

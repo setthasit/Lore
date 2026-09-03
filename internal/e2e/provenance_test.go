@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/entities"
-	"lore/internal/services"
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 const (

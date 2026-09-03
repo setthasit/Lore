@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"lore/internal/transport/cli"
+	"github.com/setthasit/Lore/internal/transport/cli"
 )
 
 func main() {

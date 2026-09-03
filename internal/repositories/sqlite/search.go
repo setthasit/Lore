@@ -9,7 +9,7 @@ import (
 
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const chunkHitColumns = `c.doc_id, c.ordinal, c.text, c.source, c.repo_ref, c.doc_type,

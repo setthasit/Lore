@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // The codes are stable: a script can branch on them instead of parsing stderr.
@@ -43,4 +43,14 @@ func report(w io.Writer, err error) int {
 
 	_, _ = fmt.Fprintln(w, "lore: "+message)
 	return code
+}
+
+// Diagnostic lines want the classified message alone: the fx wrapper that carries
+// it names constructors the reader has no use for.
+func actionableMessage(err error) string {
+	var classified *internalerror.Error
+	if errors.As(err, &classified) {
+		return classified.Message
+	}
+	return err.Error()
 }

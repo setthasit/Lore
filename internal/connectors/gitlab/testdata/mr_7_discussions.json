@@ -1,0 +1,115 @@
+[
+  {
+    "id": "6a9c1750b37d513a43987b574953fceb50b03ce7",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1001,
+        "type": "DiffNote",
+        "body": "This retry loop will hammer the provider. Cap it — see #12.",
+        "author": {
+          "id": 12,
+          "username": "sam",
+          "name": "Sam Ortiz",
+          "state": "active",
+          "web_url": "https://gitlab.example.invalid/sam"
+        },
+        "created_at": "2024-05-01T09:00:00.000Z",
+        "updated_at": "2024-05-01T09:05:00.000Z",
+        "system": false,
+        "noteable_id": 4001,
+        "noteable_type": "MergeRequest",
+        "noteable_iid": 7,
+        "resolvable": true,
+        "resolved": true,
+        "resolved_by": {
+          "id": 11,
+          "username": "dana",
+          "name": "Dana Lin",
+          "state": "active",
+          "web_url": "https://gitlab.example.invalid/dana"
+        },
+        "position": {
+          "base_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "start_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "head_sha": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+          "old_path": "internal/auth/auth.go",
+          "new_path": "internal/auth/auth.go",
+          "position_type": "text",
+          "old_line": 27,
+          "new_line": 27
+        }
+      },
+      {
+        "id": 1002,
+        "type": "DiscussionNote",
+        "body": "Capped at five in 9f8e7d6.",
+        "author": {
+          "id": 11,
+          "username": "dana",
+          "name": "Dana Lin",
+          "state": "active",
+          "web_url": "https://gitlab.example.invalid/dana"
+        },
+        "created_at": "2024-05-01T09:20:00.000Z",
+        "updated_at": "2024-05-01T09:20:00.000Z",
+        "system": false,
+        "noteable_id": 4001,
+        "noteable_type": "MergeRequest",
+        "noteable_iid": 7,
+        "resolvable": true,
+        "resolved": true
+      }
+    ]
+  },
+  {
+    "id": "87805b7c09016a7058e91bdbe7b29d1f284a39e6",
+    "individual_note": true,
+    "notes": [
+      {
+        "id": 1003,
+        "type": null,
+        "body": "LGTM once PROJ-123 is linked.",
+        "author": {
+          "id": 13,
+          "username": "ravi",
+          "name": "Ravi Shah",
+          "state": "active",
+          "web_url": "https://gitlab.example.invalid/ravi"
+        },
+        "created_at": "2024-05-01T09:25:00.000Z",
+        "updated_at": "2024-05-01T09:25:00.000Z",
+        "system": false,
+        "noteable_id": 4001,
+        "noteable_type": "MergeRequest",
+        "noteable_iid": 7,
+        "resolvable": false
+      }
+    ]
+  },
+  {
+    "id": "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00",
+    "individual_note": false,
+    "notes": [
+      {
+        "id": 1004,
+        "type": null,
+        "body": "changed the description",
+        "author": {
+          "id": 11,
+          "username": "dana",
+          "name": "Dana Lin",
+          "state": "active",
+          "web_url": "https://gitlab.example.invalid/dana"
+        },
+        "created_at": "2024-05-01T09:28:00.000Z",
+        "updated_at": "2024-05-01T09:28:00.000Z",
+        "system": true,
+        "noteable_id": 4001,
+        "noteable_type": "MergeRequest",
+        "noteable_iid": 7,
+        "resolvable": false
+      }
+    ]
+  }
+]

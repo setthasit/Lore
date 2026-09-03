@@ -9,10 +9,10 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_llm "lore/internal/mocks/llm"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_llm "github.com/setthasit/Lore/internal/mocks/llm"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const synthesisQuestion = "why did we choose option B instead of A?"

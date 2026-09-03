@@ -1,0 +1,36 @@
+[
+  {
+    "id": "bb44cc55dd66ee77ff8899aabbccddeeff001122",
+    "short_id": "bb44cc55",
+    "created_at": "2024-05-04T08:00:00.000Z",
+    "title": "Document the retry cap",
+    "message": "Document the retry cap\n\nFollow-up to 9f8e7d6.\n",
+    "author_name": "Ravi Shah",
+    "author_email": "ravi@example.invalid",
+    "committer_name": "Ravi Shah",
+    "committer_email": "ravi@example.invalid",
+    "authored_date": "2024-05-04T07:58:00.000Z",
+    "committed_date": "2024-05-04T08:00:00.000Z",
+    "parent_ids": [
+      "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c"
+    ],
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/commit/bb44cc55dd66ee77ff8899aabbccddeeff001122"
+  },
+  {
+    "id": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+    "short_id": "9f8e7d6c",
+    "created_at": "2024-05-02T10:00:00.000Z",
+    "title": "Cap the auth retry loop at five attempts",
+    "message": "Cap the auth retry loop at five attempts\n\nThe unbounded loop hammered the provider during PROJ-123.\nSee !7 and internal/auth/auth.go.\n",
+    "author_name": "Dana Lin",
+    "author_email": "dana@example.invalid",
+    "committer_name": "Dana Lin",
+    "committer_email": "dana@example.invalid",
+    "authored_date": "2024-05-02T09:55:00.000Z",
+    "committed_date": "2024-05-02T10:00:00.000Z",
+    "parent_ids": [
+      "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+    ],
+    "web_url": "https://gitlab.example.invalid/acme/widgets/-/commit/9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c"
+  }
+]

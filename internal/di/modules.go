@@ -12,24 +12,25 @@ import (
 
 	"go.uber.org/fx"
 
-	"lore/internal/config"
-	"lore/internal/connectors/embedder"
-	"lore/internal/connectors/embedder/ollama"
-	"lore/internal/connectors/embedder/openai"
-	"lore/internal/connectors/github"
-	"lore/internal/connectors/gitrepo"
-	"lore/internal/connectors/jira"
-	"lore/internal/connectors/llm"
-	llmanthropic "lore/internal/connectors/llm/anthropic"
-	llmollama "lore/internal/connectors/llm/ollama"
-	llmopenai "lore/internal/connectors/llm/openai"
-	llmzai "lore/internal/connectors/llm/zai"
-	"lore/internal/connectors/notion"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/repositories"
-	"lore/internal/repositories/sqlite"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/connectors/embedder/ollama"
+	"github.com/setthasit/Lore/internal/connectors/embedder/openai"
+	"github.com/setthasit/Lore/internal/connectors/github"
+	"github.com/setthasit/Lore/internal/connectors/gitlab"
+	"github.com/setthasit/Lore/internal/connectors/gitrepo"
+	"github.com/setthasit/Lore/internal/connectors/jira"
+	"github.com/setthasit/Lore/internal/connectors/llm"
+	llmanthropic "github.com/setthasit/Lore/internal/connectors/llm/anthropic"
+	llmollama "github.com/setthasit/Lore/internal/connectors/llm/ollama"
+	llmopenai "github.com/setthasit/Lore/internal/connectors/llm/openai"
+	llmzai "github.com/setthasit/Lore/internal/connectors/llm/zai"
+	"github.com/setthasit/Lore/internal/connectors/notion"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 func Workspace(configPath string) fx.Option {
@@ -163,6 +164,14 @@ func newConnectors(cfg *config.Config) ([]entities.Connector, error) {
 			return nil, err
 		}
 		connectors = append(connectors, github.NewConnector(token, gh.Repos, ""))
+	}
+
+	if gl := cfg.Sources.GitLab; gl != nil {
+		token, err := envValue("sources.gitlab.token_env", gl.TokenEnv)
+		if err != nil {
+			return nil, err
+		}
+		connectors = append(connectors, gitlab.NewConnector(token, gl.Projects, gl.BaseURL))
 	}
 
 	if n := cfg.Sources.Notion; n != nil {

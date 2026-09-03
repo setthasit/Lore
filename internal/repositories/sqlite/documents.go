@@ -9,7 +9,7 @@ import (
 
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 // Long enough to be unique in any real repository, short enough that

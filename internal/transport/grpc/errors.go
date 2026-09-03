@@ -6,8 +6,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"lore/internal/errors/internalerror"
-	"lore/internal/transport"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 var rpcCodes = map[internalerror.Kind]codes.Code{

@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 func newMCPCommand(resolve Resolver, configPath *string) *cobra.Command {

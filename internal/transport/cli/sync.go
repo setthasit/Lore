@@ -5,11 +5,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
-	var reembed bool
+	var (
+		reembed bool
+		source  string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -19,7 +22,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
-				res, err := rt.Sync.Sync(cmd.Context(), services.SyncOptions{Reembed: reembed})
+				res, err := rt.Sync.Sync(cmd.Context(), services.SyncOptions{Source: source, Reembed: reembed})
 				if err != nil {
 					return err
 				}
@@ -35,5 +38,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&reembed, "reembed", false,
 		"rebuild every chunk and vector against the configured embedder; needed after an embedder change")
+	cmd.Flags().StringVar(&source, "source", "",
+		"sync only this source, such as github or jira; omit it to sync every configured source")
 	return cmd
 }

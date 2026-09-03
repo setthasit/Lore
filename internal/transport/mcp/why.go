@@ -6,7 +6,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const whyName = "why"

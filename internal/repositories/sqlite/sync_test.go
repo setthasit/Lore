@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/entities"
-	"lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/repositories"
 )
 
 func TestCursorRoundTrip(t *testing.T) {

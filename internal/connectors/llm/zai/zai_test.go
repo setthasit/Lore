@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"lore/internal/connectors/httpretry/httpretrytest"
-	"lore/internal/connectors/llm/openai"
+	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/internal/connectors/llm/openai"
 )
 
 const (

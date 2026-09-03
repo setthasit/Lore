@@ -8,12 +8,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 const defaultConfigPath = "./lore.yaml"
 
 func newRootCommand(resolve Resolver) *cobra.Command {
+	var (
+		configPath  = new(string)
+		showVersion = new(bool)
+	)
+
 	root := &cobra.Command{
 		Use:           "lore",
 		Short:         "Provenance and decision archaeology for your codebase",
@@ -22,6 +27,9 @@ func newRootCommand(resolve Resolver) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if *showVersion {
+				return runVersion(cmd, resolve, *configPath)
+			}
 			return cmd.Help()
 		},
 	}
@@ -30,8 +38,9 @@ func newRootCommand(resolve Resolver) *cobra.Command {
 		return internalerror.NewBadRequestError(err.Error(), nil)
 	})
 
-	configPath := new(string)
 	root.PersistentFlags().StringVar(configPath, "config", defaultConfigPath, "path to lore.yaml")
+	root.Flags().BoolVar(showVersion, "version", false,
+		"print the build stamp and the workspace's embedder identity")
 
 	root.AddCommand(
 		newInitCommand(configPath),

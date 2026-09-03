@@ -12,13 +12,13 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_embedder "lore/internal/mocks/embedder"
-	mock_entities "lore/internal/mocks/entities"
-	mock_repositories "lore/internal/mocks/repositories"
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	mock_entities "github.com/setthasit/Lore/internal/mocks/entities"
+	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const (

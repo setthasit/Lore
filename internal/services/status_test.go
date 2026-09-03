@@ -8,23 +8,28 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_repositories "lore/internal/mocks/repositories"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/internal/services"
 )
+
+const statusIdentity = "openai/text-embedding-3-small/1536"
 
 var errStatusStore = errors.New("index is unreadable")
 
-func newStatusFixture(t *testing.T) (*mock_repositories.MockIndexStore, services.StatusService) {
+func newStatusFixture(t *testing.T) (*mock_repositories.MockIndexStore, *mock_embedder.MockEmbedder, services.StatusService) {
 	t.Helper()
 
-	store := mock_repositories.NewMockIndexStore(gomock.NewController(t))
-	return store, services.NewStatusService(store)
+	ctrl := gomock.NewController(t)
+	store := mock_repositories.NewMockIndexStore(ctrl)
+	emb := mock_embedder.NewMockEmbedder(ctrl)
+	return store, emb, services.NewStatusService(store, emb)
 }
 
 func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
-	store, svc := newStatusFixture(t)
+	store, _, svc := newStatusFixture(t)
 
 	at := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
 	want := entities.IndexStats{
@@ -53,7 +58,7 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 }
 
 func TestStatusClassifiesAStoreFailure(t *testing.T) {
-	store, svc := newStatusFixture(t)
+	store, _, svc := newStatusFixture(t)
 	store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errStatusStore)
 
 	got, err := svc.Status(context.Background())
@@ -68,5 +73,55 @@ func TestStatusClassifiesAStoreFailure(t *testing.T) {
 	}
 	if got.Documents != 0 || got.Chunks != 0 || got.Cursors != nil || got.Lease != nil {
 		t.Errorf("stats = %+v, want the zero report on failure", got)
+	}
+}
+
+func TestEmbedderIdentityReportsBothSides(t *testing.T) {
+	store, emb, svc := newStatusFixture(t)
+	emb.EXPECT().Identity().Return(statusIdentity)
+	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return(statusIdentity, nil)
+
+	got, err := svc.EmbedderIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("EmbedderIdentity: %v", err)
+	}
+	if got.Configured != statusIdentity || got.Indexed != statusIdentity {
+		t.Errorf("identity = %+v, want both sides %q", got, statusIdentity)
+	}
+}
+
+// A workspace that has never synced is configured but not yet committed to a
+// vector space: the empty half is the signal, not an error.
+func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.T) {
+	store, emb, svc := newStatusFixture(t)
+	emb.EXPECT().Identity().Return(statusIdentity)
+	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", nil)
+
+	got, err := svc.EmbedderIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("EmbedderIdentity: %v", err)
+	}
+	if got.Configured != statusIdentity || got.Indexed != "" {
+		t.Errorf("identity = %+v, want %q configured and nothing indexed", got, statusIdentity)
+	}
+}
+
+func TestEmbedderIdentityClassifiesAStoreFailure(t *testing.T) {
+	store, emb, svc := newStatusFixture(t)
+	emb.EXPECT().Identity().Return(statusIdentity).AnyTimes()
+	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", errStatusStore)
+
+	got, err := svc.EmbedderIdentity(context.Background())
+	if err == nil {
+		t.Fatal("EmbedderIdentity: want an error")
+	}
+	if kind := internalerror.KindOf(err); kind != internalerror.KindInternal {
+		t.Errorf("kind = %s, want %s", kind, internalerror.KindInternal)
+	}
+	if !errors.Is(err, errStatusStore) {
+		t.Errorf("error %v does not wrap the store's failure", err)
+	}
+	if got != (entities.EmbedderIdentity{}) {
+		t.Errorf("identity = %+v, want the zero report on failure", got)
 	}
 }
