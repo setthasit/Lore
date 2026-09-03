@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 var (

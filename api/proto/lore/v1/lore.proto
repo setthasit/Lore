@@ -4,7 +4,7 @@ package lore.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "lore/api/proto/lore/v1;lorev1";
+option go_package = "github.com/setthasit/Lore/api/proto/lore/v1;lorev1";
 
 service QueryService {
   rpc FindDecision(FindDecisionRequest) returns (FindDecisionResponse);

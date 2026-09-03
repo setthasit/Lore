@@ -6,11 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"lore/internal/connectors/embedder"
-	"lore/internal/connectors/gitrepo"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/connectors/gitrepo"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/repositories"
 )
 
 type WhyService interface {

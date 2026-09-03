@@ -10,10 +10,10 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_repositories "lore/internal/mocks/repositories"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const (

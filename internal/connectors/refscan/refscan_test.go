@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func TestSetKeepsFirstSeenOrderAndDropsRepeats(t *testing.T) {

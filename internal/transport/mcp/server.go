@@ -9,8 +9,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"lore/internal/errors/internalerror"
-	"lore/internal/transport"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 const (

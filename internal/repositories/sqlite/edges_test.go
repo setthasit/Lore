@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func TestNeighborsHonorsDirectionAndKind(t *testing.T) {

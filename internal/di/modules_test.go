@@ -14,13 +14,13 @@ import (
 
 	"go.uber.org/fx"
 
-	"lore/internal/config"
-	"lore/internal/connectors/embedder"
-	"lore/internal/connectors/llm"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/repositories"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 func writeConfig(t *testing.T, body string) string {

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/connectors/jira"
-	"lore/internal/connectors/notion"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/connectors/jira"
+	"github.com/setthasit/Lore/internal/connectors/notion"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const (

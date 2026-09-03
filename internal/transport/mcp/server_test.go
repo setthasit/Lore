@@ -11,9 +11,9 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/services"
-	"lore/internal/transport"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 const serveTimeout = 10 * time.Second

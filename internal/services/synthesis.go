@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"lore/internal/connectors/llm"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 type SynthesisService interface {

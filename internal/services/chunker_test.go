@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"lore/internal/entities"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 // The chunker's sizing contract, restated here so the tests fail if the

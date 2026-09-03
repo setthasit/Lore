@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 const defaultConfigPath = "./lore.yaml"

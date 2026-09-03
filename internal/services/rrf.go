@@ -3,7 +3,7 @@ package services
 import (
 	"sort"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 // k = 60 is the constant the original RRF paper reports as robust across collections.

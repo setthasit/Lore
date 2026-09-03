@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"lore/internal/connectors/github"
-	"lore/internal/connectors/gitrepo"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/connectors/github"
+	"github.com/setthasit/Lore/internal/connectors/gitrepo"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const (

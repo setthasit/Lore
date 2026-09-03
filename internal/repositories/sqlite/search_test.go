@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 // One document with one chunk, so a document id names a hit unambiguously.

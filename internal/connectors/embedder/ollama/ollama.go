@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"lore/internal/connectors/embedder"
-	"lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/connectors/httpretry"
 )
 
 var _ embedder.Embedder = (*Embedder)(nil)

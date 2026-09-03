@@ -10,10 +10,10 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	lorev1 "lore/api/proto/lore/v1"
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
-	"lore/internal/transport"
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 const shutdownGrace = 5 * time.Second

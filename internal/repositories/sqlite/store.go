@@ -16,7 +16,7 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 
-	"lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/repositories"
 )
 
 var _ repositories.IndexStore = (*Store)(nil)

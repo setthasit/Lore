@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 const repoPlaceholder = "{{REPO}}"

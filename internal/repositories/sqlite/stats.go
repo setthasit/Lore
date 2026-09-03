@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const (

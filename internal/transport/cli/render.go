@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 const dateLayout = "2006-01-02"

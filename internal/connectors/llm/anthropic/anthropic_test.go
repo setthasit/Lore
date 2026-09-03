@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/connectors/httpretry"
-	"lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
 )
 
 const (

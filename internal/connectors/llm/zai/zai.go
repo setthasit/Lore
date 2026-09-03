@@ -3,8 +3,8 @@
 package zai
 
 import (
-	"lore/internal/connectors/httpretry"
-	"lore/internal/connectors/llm/openai"
+	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/internal/connectors/llm/openai"
 )
 
 // DefaultBaseURL reaches the global endpoint; the China deployment is selected

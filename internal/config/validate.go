@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // Validate reports the first rule the configuration breaks. Load applies

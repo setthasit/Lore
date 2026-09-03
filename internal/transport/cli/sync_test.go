@@ -7,10 +7,10 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 func mockSync(t *testing.T) (*Runtime, *mock_services.MockSyncOrchestrator) {

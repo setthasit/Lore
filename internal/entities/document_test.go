@@ -3,7 +3,7 @@ package entities_test
 import (
 	"testing"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func TestNewDocID(t *testing.T) {

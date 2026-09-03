@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // Defaults applied at load when the corresponding key is absent.

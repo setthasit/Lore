@@ -6,9 +6,9 @@ import (
 	"slices"
 	"strings"
 
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/repositories"
 )
 
 type TraceService interface {

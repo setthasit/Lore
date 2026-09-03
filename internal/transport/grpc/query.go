@@ -7,10 +7,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lorev1 "lore/api/proto/lore/v1"
-	"lore/internal/entities"
-	"lore/internal/services"
-	"lore/internal/transport"
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 type queryServer struct {

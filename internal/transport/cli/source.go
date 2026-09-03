@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"lore/internal/config"
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

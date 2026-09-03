@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 var errCause = errors.New("disk offline")

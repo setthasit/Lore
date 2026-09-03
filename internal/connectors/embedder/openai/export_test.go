@@ -1,6 +1,6 @@
 package openai
 
-import "lore/internal/connectors/httpretry"
+import "github.com/setthasit/Lore/internal/connectors/httpretry"
 
 const (
 	maxAttempts = httpretry.MaxAttempts

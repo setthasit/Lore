@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func EncodeBundle(bundle *entities.EvidenceBundle) ([]byte, error) {

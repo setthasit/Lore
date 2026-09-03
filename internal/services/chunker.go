@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 type Chunker interface {

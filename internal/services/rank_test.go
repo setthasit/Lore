@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const rankDay = 24 * time.Hour

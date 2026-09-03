@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // The codes are stable: a script can branch on them instead of parsing stderr.

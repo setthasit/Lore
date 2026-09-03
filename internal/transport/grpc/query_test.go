@@ -20,12 +20,12 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lorev1 "lore/api/proto/lore/v1"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/services"
-	"lore/internal/transport"
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 const (

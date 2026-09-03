@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 type historyFlags struct {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 const fusionK = 60

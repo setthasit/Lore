@@ -15,12 +15,12 @@ import (
 	"testing"
 	"unicode"
 
-	"lore/internal/connectors/embedder"
-	"lore/internal/connectors/github"
-	"lore/internal/entities"
-	"lore/internal/repositories"
-	"lore/internal/repositories/sqlite"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/connectors/github"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 const (

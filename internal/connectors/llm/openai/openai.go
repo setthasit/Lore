@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"lore/internal/connectors/httpretry"
-	"lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/internal/connectors/llm"
 )
 
 var _ llm.LLM = (*Client)(nil)

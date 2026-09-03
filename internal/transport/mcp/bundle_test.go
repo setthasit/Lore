@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"lore/internal/entities"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 var testCreatedAt = time.Date(2025, 3, 12, 9, 30, 0, 0, time.UTC)

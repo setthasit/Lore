@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"lore/internal/connectors/embedder"
-	"lore/internal/entities"
-	"lore/internal/errors/internalerror"
-	"lore/internal/repositories"
-	"lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/internal/connectors/embedder"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/repositories/sqlite"
 )
 
 const (

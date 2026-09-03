@@ -5,8 +5,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lorev1 "lore/api/proto/lore/v1"
-	"lore/internal/entities"
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 func newEvidenceBundle(bundle *entities.EvidenceBundle) *lorev1.EvidenceBundle {

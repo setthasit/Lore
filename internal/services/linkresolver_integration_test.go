@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"lore/internal/connectors/gitrepo"
-	"lore/internal/entities"
-	"lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/internal/connectors/gitrepo"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/repositories/sqlite"
 )
 
 const (

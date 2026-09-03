@@ -1,4 +1,4 @@
-module lore
+module github.com/setthasit/Lore
 
 go 1.25.3
 

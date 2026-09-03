@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"lore/internal/config"
+	"github.com/setthasit/Lore/internal/config"
 )
 
 func TestSourceAddNotionWithDefaults(t *testing.T) {

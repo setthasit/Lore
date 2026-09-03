@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"lore/internal/entities"
+	"github.com/setthasit/Lore/internal/entities"
 )
 
 type rankWeights struct {

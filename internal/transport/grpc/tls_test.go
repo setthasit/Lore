@@ -19,11 +19,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 
-	lorev1 "lore/api/proto/lore/v1"
-	"lore/internal/entities"
-	mock_services "lore/internal/mocks/services"
-	"lore/internal/services"
-	"lore/internal/transport"
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
+	"github.com/setthasit/Lore/internal/entities"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 type certAuthority struct {

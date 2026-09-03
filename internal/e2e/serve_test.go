@@ -16,11 +16,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"lore/internal/di"
-	"lore/internal/entities"
-	"lore/internal/transport"
-	"lore/internal/transport/cli"
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/transport"
+	"github.com/setthasit/Lore/internal/transport/cli"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 const (

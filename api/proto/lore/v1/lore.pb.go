@@ -2281,7 +2281,7 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\vSyncService\x12<\n" +
 	"\aTrigger\x12\x17.lore.v1.TriggerRequest\x1a\x18.lore.v1.TriggerResponse\x129\n" +
 	"\x06Status\x12\x16.lore.v1.StatusRequest\x1a\x17.lore.v1.StatusResponse\x124\n" +
-	"\x05Watch\x12\x15.lore.v1.WatchRequest\x1a\x12.lore.v1.SyncEvent0\x01B\x1fZ\x1dlore/api/proto/lore/v1;lorev1b\x06proto3"
+	"\x05Watch\x12\x15.lore.v1.WatchRequest\x1a\x12.lore.v1.SyncEvent0\x01B4Z2github.com/setthasit/Lore/api/proto/lore/v1;lorev1b\x06proto3"
 
 var (
 	file_lore_v1_lore_proto_rawDescOnce sync.Once

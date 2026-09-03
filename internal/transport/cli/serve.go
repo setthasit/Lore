@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/config"
-	"lore/internal/di"
-	"lore/internal/errors/internalerror"
-	"lore/internal/transport/grpc"
-	"lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/transport/grpc"
+	"github.com/setthasit/Lore/internal/transport/mcp"
 )
 
 const defaultGRPCAddr = "127.0.0.1:9090"

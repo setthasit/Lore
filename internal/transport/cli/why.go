@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"lore/internal/errors/internalerror"
-	"lore/internal/services"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/services"
 )
 
 type whyFlags struct {

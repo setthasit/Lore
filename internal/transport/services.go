@@ -1,6 +1,6 @@
 package transport
 
-import "lore/internal/services"
+import "github.com/setthasit/Lore/internal/services"
 
 type Services struct {
 	Query   services.QueryService
