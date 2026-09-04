@@ -15,21 +15,21 @@ anchoring remains fully supported as an optional enrichment.
 ## Status
 
 **Implemented.** This set is the source of truth for the shipped system and is
-kept in step with the code; it supersedes [v1](../v1/), and v2 was abandoned
-research that nothing builds on.
+kept in step with the code. The v1 design it replaced and the abandoned v2
+research are both out of the repository; nothing here builds on either.
 
 ## Reading order
 
 | Doc | Contents |
 |-----|----------|
-| [00 — Design deltas](00-design-deltas.md) | Every change vs v1, with rationale — read this first if you know v1 |
+| [00 — Design deltas](00-design-deltas.md) | Every change from the v1 design, with the rationale that drove it |
 | [01 — Overview](01-overview.md) | Problem, concept, differentiators, goals / non-goals, landscape |
 | [02 — Architecture](02-architecture.md) | Layers, transports, request flows, key design decisions, testing strategy |
 | [03 — Data Model & Storage](03-data-model.md) | Document / Edge model, SQLite schema, chunking, hybrid retrieval |
 | [04 — Connectors & Sync](04-connectors-and-sync.md) | Connector contract, GitHub / GitLab / Notion / Jira connectors, scheduler, sync lock, link resolver |
 | [05 — Query Engine](05-query-engine.md) | Unified pipeline, anchors, `find_decision` / `why` / `trace` / `impact_of` / `history_of`, synthesis |
 | [06 — Interfaces & Config](06-interfaces-and-config.md) | MCP tools, CLI commands, gRPC API + mTLS, `lore.yaml` reference |
-| [07 — Roadmap & Risks](07-roadmap.md) | Build milestones (ask-first ordering), named risks, open questions |
+| [07 — Risks & Open Questions](07-risks.md) | operating risks with their standing mitigations, open questions |
 | [08 — Extensibility](08-extensibility.md) | Plugin kinds, the `sdk` contract, manifests, registry, instance configuration, provider roles |
 | [09 — Plugin Protocol](09-plugin-protocol.md) | NDJSON wire protocol for out-of-process plugins: ops, streaming, cancellation, errors |
 | [10 — Plugin Distribution](10-plugin-distribution.md) | Coordinates, install and lockfile, signatures, trust model, custom binaries |
