@@ -9,7 +9,7 @@ Transport (MCP stdio / MCP Streamable HTTP / gRPC+mTLS / CLI)
     ↓ calls
 Service (QueryService, SynthesisService, SyncOrchestrator, LinkResolver)
     ↓ calls
-Repository (IndexStore) + Connectors (GitHub, GitLab, Notion, Jira, Git, Embedder, LLM)
+Repository (IndexStore) + Plugin registry (source / provider / code plugins)
 ```
 
 Rules (no exceptions):
@@ -19,8 +19,11 @@ Rules (no exceptions):
   loop", but every tool call still goes through the service layer.
 - Services orchestrate repositories and connectors; they carry all business
   logic and validation.
-- The repository (IndexStore) talks only to SQLite. Connectors talk only to
-  their external API. Neither contains business logic.
+- The repository (IndexStore) talks only to SQLite. Plugins talk only to their
+  external API or local clone. Neither contains business logic.
+- Plugins never reach upward. A plugin receives configuration, secrets and a
+  small host (HTTP client, logger, clock) and returns data; it never touches
+  the store, a service, or another plugin. See [08](08-extensibility.md).
 
 ## Topology
 
@@ -37,15 +40,12 @@ flowchart TB
         SO[SyncOrchestrator<br/>scheduler + lease lock]
         LR[LinkResolver]
     end
-    subgraph RC [Repository / Connector layer]
-        ST[(IndexStore<br/>SQLite: FTS5 + sqlite-vec)]
-        GIT[GitConnector<br/>blame on local clones — OPTIONAL]
-        GHC[GitHubConnector]
-        GLC[GitLabConnector]
-        NTC[NotionConnector]
-        JRC[JiraConnector]
-        EMB[EmbedderConnector<br/>OpenAI default / Ollama]
-        LLM[LLMConnector<br/>OpenAI / Anthropic / Z.AI / Ollama]
+    subgraph RC [Repository / Plugin layer]
+        ST[(IndexStore<br/>SQLite: FTS5 + sqlite-vec — built in)]
+        GIT[code plugin<br/>blame on local clones — OPTIONAL]
+        SRC[source plugins<br/>GitHub / GitLab / Notion / Jira / third party]
+        EMB[provider plugin — embedding<br/>OpenAI default / Ollama]
+        LLM[provider plugin — completion<br/>OpenAI / Anthropic / OpenAI-compatible / Ollama]
     end
     MCP -->|"synthesize=false (default)"| QS
     NAI -->|"synthesize=true (default)"| QS
@@ -55,7 +55,7 @@ flowchart TB
     EB -->|non-AI path| SY
     SY --> LLM
     SY -->|cited prose| NAI
-    SO --> GHC & NTC & JRC & EMB & ST
+    SO --> SRC & EMB & ST
     LR --> ST
 ```
 
@@ -136,11 +136,13 @@ sqlite-vec embedded — no cgo, clean cross-compilation. The cgo variant
 (mattn + sqlite-vec cgo bindings) stays available behind the same IndexStore
 interface if benchmarks demand it. See [03](03-data-model.md).
 
-### D7 — Every connector is optional
+### D7 — Every source is a plugin, and every plugin is optional
 
 A workspace declares its sources in `lore.yaml`. Absent source = not synced,
-not required. Adding a new source (GitLab, Confluence, ClickUp, Slack) is one
-package implementing the `Connector` interface plus an FX provider.
+not required. Adding a source (Confluence, ClickUp, Slack, an internal system)
+is a plugin implementing `lore.Connector` plus a manifest — official plugins
+live in `plugins/`, third-party plugins ship as their own binary. The engine
+holds no source or provider name. See [08](08-extensibility.md).
 
 ### D8 — Connectors stream checkpointable batches
 
@@ -160,14 +162,17 @@ is in-place: the old tool stays registered with a "deprecated — use X"
 description for one release, then disappears; host models follow the
 description automatically.
 
-### D10 — Plugin-ready seam, plugins deferred
+### D10 — Connectors and providers are plugins; SQLite is not
 
-The `Connector` contract is deliberately plugin-shaped — pure data in
-(`Batch` of `Document` + `RawRef`), no business logic, no store access — but
-v1 ships all connectors in-process (YAGNI: with three sources, packages beat
-processes on every axis). Three disciplines keep the seam viable until a
-plugin transport is warranted; see
-[04 — Plugin readiness](04-connectors-and-sync.md#plugin-readiness-deferred).
+Three plugin kinds — sources, model providers, code access — share one
+registry, one manifest contract, and one configuration format. Compiled
+plugins and out-of-process plugins ([09](09-plugin-protocol.md)) both surface
+as the same interfaces, so the services layer never learns which mode a plugin
+came from. The IndexStore stays built in: it has one implementation, and an
+alternative would have to reproduce lease semantics and the fixed vector width
+as well as hybrid search. The test for admitting a plugin kind, and the full
+classification of every component against it, is in
+[08](08-extensibility.md#what-is-a-plugin-and-what-is-not).
 
 ## Request flows
 
@@ -191,7 +196,7 @@ sequenceDiagram
 ### AI path (MCP) — code-anchored
 
 Identical, except the tool is `why(repo, file, 40, 55)` and the seed step calls
-the GitConnector for blame before walking.
+the code plugin for blame before walking.
 
 ### Non-AI path (CLI / gRPC)
 
@@ -201,7 +206,7 @@ sequenceDiagram
     participant C as CLI `lore ask --explain` / gRPC
     participant Q as QueryService
     participant S as SynthesisService
-    participant L as LLMConnector (user-configured provider)
+    participant L as Provider plugin (user-configured)
     U->>C: lore ask "why B over A?" --around "incident X" --explain
     C->>Q: FindDecision(req) [synthesize=true]
     Q-->>C: EvidenceBundle
@@ -232,10 +237,14 @@ Central `internalerror`-style package: typed constructors
   functions where possible).
 - **Repository** — integration tests against a temp SQLite file (fast, no
   external infra).
-- **Connectors** — `httptest` servers replaying recorded GitHub/GitLab/Notion/Jira
+- **Plugins** — `httptest` servers replaying recorded GitHub/GitLab/Notion/Jira
   fixtures; retry/pagination/batch-checkpoint logic covered explicitly — plus
-  the shared connector conformance suite
-  ([04](04-connectors-and-sync.md#plugin-readiness-deferred)).
+  `sdk/conform`, the shared conformance suite that every source plugin passes
+  and that third parties run as certification
+  ([08](08-extensibility.md#invariants-a-plugin-must-not-break)).
+- **Registry** — a manifest whose declared capabilities disagree with the built
+  value's interfaces fails at registration, so a misdeclared plugin breaks the
+  test suite rather than a user's sync.
 - **Transports** — mocked services; assert request parsing and error mapping.
 - **End-to-end smoke, ask-only** — fixture Jira + Notion API servers, zero
   repos; run `sync` then `find_decision`/`impact_of`, assert the citation chain and the
@@ -243,10 +252,19 @@ Central `internalerror`-style package: typed constructors
 - **End-to-end smoke, code-anchored** — tiny fixture git repo + fixture API
   server; run `sync` then `why`, assert the blame-seeded chain.
 
-## Project structure (planned)
+## Project structure
 
 ```
-cmd/lore/                   # single entry point, subcommands
+cmd/lore/                   # composition root: names the plugins this binary ships
+app/                        # composable wiring (FX + cobra); takes []lore.Plugin
+sdk/                        # package lore — public plugin contract, stdlib only
+├── httpx/                  # retrying HTTP client
+├── refs/                   # reference scanning helpers
+└── conform/                # conformance / certification suite
+plugins/                    # official plugins — same contract as third-party ones
+├── sources/{github,gitlab,notion,jira}/
+├── providers/{openai,anthropic,ollama,compat}/
+└── code/git/               # local-clone blame/log
 internal/
 ├── transport/
 │   ├── mcp/                # stdio + streamable HTTP (official Go MCP SDK)
@@ -254,17 +272,13 @@ internal/
 │   └── cli/                # command implementations
 ├── services/               # QueryService, SynthesisService, SyncOrchestrator, LinkResolver
 ├── repositories/           # IndexStore (SQLite via ncruces/go-sqlite3)
-├── connectors/
-│   ├── github/
-│   ├── notion/
-│   ├── jira/
-│   ├── gitrepo/            # local-clone blame/log (optional per workspace)
-│   ├── embedder/           # provider interface + openai/, ollama/
-│   └── llm/                # provider interface + openai/, anthropic/, zai/, ollama/
+├── registry/               # plugin registration, manifest validation, instances
+├── plugexec/               # out-of-process plugin host (see 09)
 ├── di/                     # Uber FX modules
-├── entities/               # Document, Edge, Anchor, EvidenceBundle, Cursor, Batch, …
+├── entities/               # Edge, Anchor, EvidenceBundle, IndexStats, SyncEvent, …
 ├── errors/internalerror/
 └── config/                 # lore.yaml loading + validation
 api/proto/lore/v1/          # gRPC contract
+test/e2e/                   # composes the real binary, so it sits outside internal/
 docs/                       # these documents
 ```

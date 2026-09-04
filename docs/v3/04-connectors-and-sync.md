@@ -2,7 +2,9 @@
 
 ## Connector contract
 
-One interface; every source is a package implementing it plus an FX provider:
+One interface; every source is a **plugin** implementing it plus a manifest —
+official plugins live in `plugins/sources/`, third-party plugins ship as their
+own binary ([08](08-extensibility.md)):
 
 ```go
 type Connector interface {
@@ -27,20 +29,26 @@ returning one final cursor alongside the stream cannot checkpoint per batch.)
 
 Contract rules:
 
-- **Optional by construction.** `lore.yaml` declares which sources exist for a
-  workspace; the SyncOrchestrator only iterates configured connectors.
-  Jira-only, Notion-only, GitHub-only, GitLab-only — any subset is supported.
+- **Optional by construction.** `lore.yaml` declares which source instances
+  exist for a workspace; the SyncOrchestrator only iterates configured
+  instances. Jira-only, Notion-only, GitHub-only, GitLab-only — any subset is
+  supported, and two instances of one plugin (two Jira sites) are as well.
+- **Instance-scoped identity.** `Name()` is the instance id, which is also the
+  cursor key, `Document.Source`, and the `DocID` prefix. The orchestrator
+  rejects a batch whose documents disagree with the instance that produced
+  them.
 - **No business logic.** Connectors fetch, paginate, retry, and normalize to
   `Document` + `RawRef`s. Ref *resolution* is the LinkResolver's job.
 - **Read-only.** No connector ever writes to its source.
-- Credentials come from environment variables named in config — never stored
-  in `lore.yaml` or the index.
+- Credentials are named in config as environment variable names, resolved by
+  the host, and injected. A connector never reads the environment, and sees
+  only the secrets its manifest declared.
 - Both timestamps populated: `CreatedAt` (event time) and `UpdatedAt`
   (edit time / watermark). A source without true creation time sets
-  `CreatedAt = UpdatedAt` and says so in its package doc.
-- **Conformance-tested.** Every connector passes the shared contract suite —
-  resumability, idempotency, batch-cursor honesty, timestamps — see
-  [Plugin readiness](#plugin-readiness-deferred).
+  `CreatedAt = UpdatedAt` and says so in its manifest summary.
+- **Conformance-tested.** Every connector passes `sdk/conform` — resumability,
+  idempotency, batch-cursor honesty, timestamps, full identity — which is also
+  the third-party certification suite ([08](08-extensibility.md)).
 
 ### GitHubConnector (v1)
 
@@ -114,14 +122,14 @@ Contract rules:
 - This connector is what makes ticket-key refs from commits/PRs/Notion
   *resolve* — the classic provenance case ([link resolver](#link-resolver)).
 
-### GitConnector (repository blame — not a `Connector`)
+### Git (code plugin — not a `Connector`)
 
-Separate small interface over **local clones** registered in the workspace.
-Entirely optional: absent `repos:` config means this connector is never
+A separate plugin kind (`KindCode`) over **local clones** registered in the
+workspace. Entirely optional: absent `repos:` config means no code plugin is
 constructed, and `why`/`history_of` return a precondition error.
 
 ```go
-type GitRepo interface {
+type CodeRepo interface {
     Blame(ctx context.Context, path string, startLine, endLine int) ([]BlameSpan, error)
     Log(ctx context.Context, path string) ([]CommitRef, error)
 }
@@ -133,28 +141,36 @@ GitHub/GitLab connectors *enrich* those commits with PR/review/issue layers
 `git` (blame with `--porcelain`) — robust, zero-dependency, already installed
 everywhere Lore runs.
 
-### EmbedderConnector / LLMConnector
+### Model providers
+
+Embedding and completion are one plugin kind (`KindProvider`) with two optional
+capabilities:
 
 ```go
 type Embedder interface {
     Embed(ctx context.Context, texts []string) ([][]float32, error)
-    Identity() string // "openai/text-embedding-3-small/1536" — stored in meta
+    Dimensions() int
 }
 
-type LLM interface { // used ONLY by SynthesisService (non-AI surfaces)
+type Completer interface { // used ONLY by SynthesisService (non-AI surfaces)
     Complete(ctx context.Context, system, user string) (string, error)
 }
 ```
 
-Both pluggable via config. Embedder default: OpenAI; Ollama for fully-local.
-LLM providers: OpenAI, Anthropic, Z.AI, Ollama — user-configured, never
-required for MCP usage.
+`embedder:` and `llm:` in `lore.yaml` are role bindings naming a provider
+instance and a model; binding a role to a provider lacking the capability is a
+load-time error. The host — not the plugin — composes the vector-space
+identity `<plugin>/<model>/<dims>` stored in `meta`, so no plugin can claim
+another's identity. Embedder default: OpenAI; Ollama for fully-local. Vendors
+speaking the OpenAI protocol (Z.AI, OpenRouter, Moonshot, DeepSeek, Groq, …)
+are presets of one driver rather than packages. Synthesis is never required
+for MCP usage. See [08](08-extensibility.md#provider-roles-and-drivers).
 
-### Future connectors (post-v1, same contract)
+### Future sources (same contract)
 
-GitLab (proves the git-host abstraction; MR ≈ PR mapping), Confluence,
-ClickUp, Slack (decision threads; `message` DocType). Each is a new package +
-config entry; core does not change.
+Confluence, ClickUp, Slack (decision threads; `message` DocType). Each is a new
+plugin plus a config entry; core does not change, and nothing requires the
+plugin to live in this repository.
 
 ## Sync
 
@@ -184,17 +200,24 @@ flowchart LR
 
 ### Sync round
 
-For each configured connector:
+For each configured source instance:
 
-1. Load cursor from `cursors`.
+1. Load cursor from `cursors`, keyed by instance id.
 2. Stream `Changes(cursor)`; for each `Batch`:
-   a. Upsert documents (idempotent by `DocID`).
+   a. Upsert documents (idempotent by `DocID`), rejecting any document whose
+      `Source` or `DocID` prefix disagrees with the instance.
    b. Chunk changed documents; embed new/changed chunks (batched); update
       FTS + vectors.
-   c. Store emitted `RawRef`s.
+   c. Store emitted `RawRef`s, rejecting unknown `RefKind` values.
    d. Commit durably, **then** persist `batch.Cursor` — crash-safe resume at
       batch granularity.
-3. After all connectors: run the LinkResolver pass.
+3. After all instances: run the LinkResolver pass.
+
+**Instances fail independently.** A failing instance ends its own stream at the
+last committed cursor; the remaining instances still run, the LinkResolver pass
+still runs over what was ingested, and the round reports partial failure with
+the per-instance errors. One broken third-party plugin must not be able to
+stop a workspace from syncing.
 
 ### Link resolver
 
@@ -226,37 +249,26 @@ First sync of a large source is the stress case. Mitigations: GraphQL batching
 respect `Retry-After`/secondary-limit headers with exponential backoff,
 per-connector concurrency of 1 in v1 (simple, sufficient).
 
-## Plugin readiness (deferred)
+## Plugins
 
-Connectors are the natural extension point for a future plugin ecosystem
-(third-party Jira/Notion/… packages that never touch base code). v1 ships
-every connector **in-process** — with four sources, packages beat processes
-on type safety, testing, and distribution — but the seam is kept
-plugin-viable by three disciplines:
+Connectors, model providers and code access are plugins; the contract,
+registry, manifest and configuration format are in
+[08](08-extensibility.md). Two loading modes exist and both surface as the
+same interfaces to the orchestrator:
 
-1. **Entities-only dependency.** Connector packages import `entities` and the
-   stdlib — never services, repositories, or each other.
-2. **Schemas as if external.** `Document`, `RawRef`, `Batch`, `Cursor` are
-   versioned and change additively only; they are the future wire format.
-3. **Conformance suite.** One shared table of contract assertions —
-   resumability, idempotency, batch-cursor honesty, both timestamps set,
-   read-only behavior — runs against every built-in connector. It becomes the
-   plugin certification suite verbatim.
+- **Compiled** — registered in a binary's composition root. Official plugins
+  are compiled into `lore`; a third party either upstreams a plugin or builds
+  its own binary, because Go cannot load code dynamically.
+- **External** — a separate process speaking NDJSON over stdio
+  ([09](09-plugin-protocol.md)), declared in `plugins:` and fetched by
+  coordinate ([10](10-plugin-distribution.md)). Any language, no rebuild.
 
-When a plugin transport is warranted (>5 sources, or third-party authors),
-candidates in order of preference: **exec + NDJSON batches over stdio** (any
-language, no SDK needed), **subprocess gRPC** (hashicorp/go-plugin model,
-proven by Terraform/Vault), **WASM via wazero** (the only option with a real
-sandbox — an HTTP host-function with a domain allowlist). Go's native
-`plugin` package is ruled out: version-locked, no Windows, breaks the pure-Go
-build. Built-ins can later re-host through the chosen transport or stay
-in-process behind the same interface; core changes either way are limited to
-the FX provider list. The transport protocol is frozen only once the
-connector contract stops moving — Δ10 in [00](00-design-deltas.md) shows why
-freezing early turns internal fixes into ecosystem breaks.
+Sync is I/O bound — a Jira backfill is HTTP round-trips — so the subprocess
+boundary costs nothing measurable against the network, which is why external
+is the default answer for third-party sources.
 
-Trust model to document before accepting third-party plugins: a connector
-plugin holds its source token — "read-only" is a promise, not enforceable for
-a subprocess. Mitigations when the time comes: per-plugin env allowlist (a
-plugin sees only its own `token_env`), checksum-pinned plugin manifest, WASM
-sandbox for untrusted authors.
+Trust: an external plugin runs with the user's privileges and holds its
+source's token, so "read-only" is a promise, not an enforcement. The
+mitigations that exist — per-plugin secret injection, mandatory digest
+pinning, explicit installation, `lore plugin verify` — and the WASM sandbox
+that would enforce it are in [10](10-plugin-distribution.md#trust-model).
