@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/setthasit/Lore/sdk"
 )
 
 const logFormat = "%H%x00%an%x00%at%x00%s"
 
-func (r *Repo) Log(ctx context.Context, file string) ([]CommitRef, error) {
+func (r *Repo) Log(ctx context.Context, file string) ([]lore.CommitRef, error) {
 	rel, err := repoRelPath(file)
 	if err != nil {
 		return nil, err
@@ -24,8 +26,8 @@ func (r *Repo) Log(ctx context.Context, file string) ([]CommitRef, error) {
 	return parseLog(string(out))
 }
 
-func parseLog(out string) ([]CommitRef, error) {
-	refs := make([]CommitRef, 0, strings.Count(out, "\n"))
+func parseLog(out string) ([]lore.CommitRef, error) {
+	refs := make([]lore.CommitRef, 0, strings.Count(out, "\n"))
 	for rest := strings.TrimSuffix(out, "\n"); rest != ""; {
 		var record string
 		record, rest, _ = strings.Cut(rest, "\n")
@@ -38,7 +40,7 @@ func parseLog(out string) ([]CommitRef, error) {
 		if err != nil {
 			return nil, err
 		}
-		refs = append(refs, CommitRef{SHA: fields[0], Author: fields[1], Time: when, Subject: fields[3]})
+		refs = append(refs, lore.CommitRef{SHA: fields[0], Author: fields[1], Time: when, Subject: fields[3]})
 	}
 	return refs, nil
 }

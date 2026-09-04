@@ -1,11 +1,11 @@
-package conformance
+package conform
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type Fixture struct {
@@ -18,15 +18,15 @@ type Fixture struct {
 
 	// ReplayableTypes may reappear below the resume position — immutable records the
 	// connector re-yields rather than risk dropping. Any other reappearance is a duplicate.
-	ReplayableTypes []entities.DocType
+	ReplayableTypes []lore.DocType
 }
 
 // Run asserts the connector contract against fixture. newConnector is called once
 // per stream and must open the same unchanged source every time.
-func Run(t *testing.T, newConnector func() entities.Connector, fixture Fixture) {
+func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 	t.Helper()
 	if newConnector == nil {
-		t.Fatal("conformance.Run needs a connector constructor")
+		t.Fatal("conform.Run needs a connector constructor")
 	}
 	if fixture.Docs <= 0 {
 		t.Fatalf("fixture declares %d documents: the whole suite would hold vacuously", fixture.Docs)
@@ -48,7 +48,7 @@ func Run(t *testing.T, newConnector func() entities.Connector, fixture Fixture) 
 	t.Run("resume from a mid-stream cursor", func(t *testing.T) { assertResumable(t, newConnector, full, fixture) })
 }
 
-func assertBatchCursors(t *testing.T, batches []entities.Batch) {
+func assertBatchCursors(t *testing.T, batches []lore.Batch) {
 	for i, b := range batches {
 		if len(b.Cursor) == 0 {
 			t.Errorf("batch %d (%d documents) carries no cursor, so committing it checkpoints nothing", i, len(b.Docs))
@@ -56,7 +56,7 @@ func assertBatchCursors(t *testing.T, batches []entities.Batch) {
 	}
 }
 
-func assertIdentity(t *testing.T, batches []entities.Batch, source string) {
+func assertIdentity(t *testing.T, batches []lore.Batch, source string) {
 	for i, b := range batches {
 		for j, d := range b.Docs {
 			if d.ID == "" {
@@ -86,7 +86,7 @@ func assertIdentity(t *testing.T, batches []entities.Batch, source string) {
 	}
 }
 
-func assertIdempotent(t *testing.T, newConnector func() entities.Connector, full []entities.Batch) {
+func assertIdempotent(t *testing.T, newConnector func() lore.Connector, full []lore.Batch) {
 	second, err := collect(newConnector(), nil)
 	if err != nil {
 		t.Fatalf("second full stream: %v", err)
@@ -105,7 +105,7 @@ func assertIdempotent(t *testing.T, newConnector func() entities.Connector, full
 	}
 }
 
-func assertResumable(t *testing.T, newConnector func() entities.Connector, full []entities.Batch, fixture Fixture) {
+func assertResumable(t *testing.T, newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) {
 	if len(full) < 2 {
 		t.Fatalf("the full stream has %d batch(es): a mid-stream resume needs at least two", len(full))
 	}
@@ -115,13 +115,13 @@ func assertResumable(t *testing.T, newConnector func() entities.Connector, full 
 			at, len(full))
 	}
 
-	inFull := make(map[entities.DocID]bool, countDocs(full))
+	inFull := make(map[lore.DocID]bool, countDocs(full))
 	for _, b := range full {
 		for _, d := range b.Docs {
 			inFull[d.ID] = true
 		}
 	}
-	committed := make(map[entities.DocID]bool, countDocs(full[:at+1]))
+	committed := make(map[lore.DocID]bool, countDocs(full[:at+1]))
 	for _, b := range full[:at+1] {
 		for _, d := range b.Docs {
 			committed[d.ID] = true
@@ -136,12 +136,12 @@ func assertResumable(t *testing.T, newConnector func() entities.Connector, full 
 
 	assertBatchCursors(t, resumed)
 
-	replayable := make(map[entities.DocType]bool, len(fixture.ReplayableTypes))
+	replayable := make(map[lore.DocType]bool, len(fixture.ReplayableTypes))
 	for _, dt := range fixture.ReplayableTypes {
 		replayable[dt] = true
 	}
 
-	resumedIDs := make(map[entities.DocID]bool, countDocs(resumed))
+	resumedIDs := make(map[lore.DocID]bool, countDocs(resumed))
 	for i, b := range resumed {
 		for _, d := range b.Docs {
 			resumedIDs[d.ID] = true
@@ -164,8 +164,8 @@ func assertResumable(t *testing.T, newConnector func() entities.Connector, full 
 	}
 }
 
-func collect(c entities.Connector, cursor entities.Cursor) ([]entities.Batch, error) {
-	var batches []entities.Batch
+func collect(c lore.Connector, cursor lore.Cursor) ([]lore.Batch, error) {
+	var batches []lore.Batch
 	for batch, err := range c.Changes(context.Background(), cursor) {
 		if err != nil {
 			return nil, err
@@ -175,7 +175,7 @@ func collect(c entities.Connector, cursor entities.Cursor) ([]entities.Batch, er
 	return batches, nil
 }
 
-func countDocs(batches []entities.Batch) int {
+func countDocs(batches []lore.Batch) int {
 	n := 0
 	for _, b := range batches {
 		n += len(b.Docs)
@@ -183,8 +183,8 @@ func countDocs(batches []entities.Batch) int {
 	return n
 }
 
-func ids(batches []entities.Batch) []entities.DocID {
-	out := make([]entities.DocID, 0, countDocs(batches))
+func ids(batches []lore.Batch) []lore.DocID {
+	out := make([]lore.DocID, 0, countDocs(batches))
 	for _, b := range batches {
 		for _, d := range b.Docs {
 			out = append(out, d.ID)

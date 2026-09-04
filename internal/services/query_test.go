@@ -13,9 +13,10 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -45,7 +46,7 @@ var queryVector = []float32{0.25, -0.5, 0.75}
 
 type queryFixture struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
+	emb   *mock_lore.MockEmbedder
 	svc   services.QueryService
 }
 
@@ -64,7 +65,7 @@ func newQueryFixtureWith(t *testing.T, cfg services.QueryConfig) queryFixture {
 
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
-	emb := mock_embedder.NewMockEmbedder(ctrl)
+	emb := mock_lore.NewMockEmbedder(ctrl)
 
 	return queryFixture{store: store, emb: emb, svc: services.NewQueryService(store, emb, cfg)}
 }
@@ -80,36 +81,36 @@ func (f queryFixture) expectRetrieval(query string, filters any, lexical, semant
 }
 
 // Seed metadata is read twice: once to lift chunks to documents, once to open the walk.
-func (f queryFixture) expectSeedLoad(ids []entities.DocID, metas ...entities.DocumentMeta) {
+func (f queryFixture) expectSeedLoad(ids []lore.DocID, metas ...entities.DocumentMeta) {
 	f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil).Times(2)
 }
 
-func (f queryFixture) expectLoad(ids []entities.DocID, metas ...entities.DocumentMeta) *gomock.Call {
+func (f queryFixture) expectLoad(ids []lore.DocID, metas ...entities.DocumentMeta) *gomock.Call {
 	return f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil)
 }
 
-func (f queryFixture) expectNeighbors(ids []entities.DocID, edges ...entities.Edge) *gomock.Call {
+func (f queryFixture) expectNeighbors(ids []lore.DocID, edges ...entities.Edge) *gomock.Call {
 	return f.store.EXPECT().Neighbors(gomock.Any(), ids, nil, entities.DirBoth).Return(edges, nil)
 }
 
-func queryHit(doc entities.DocID, ordinal int) entities.ChunkHit {
+func queryHit(doc lore.DocID, ordinal int) entities.ChunkHit {
 	return entities.ChunkHit{
 		Chunk: entities.Chunk{
 			DocID:   doc,
 			Ordinal: ordinal,
 			Text:    string(doc) + " excerpt " + strconv.Itoa(ordinal),
 			Source:  "github",
-			DocType: entities.DocTypePage,
+			DocType: lore.DocTypePage,
 		},
 		Score: -3.25,
 	}
 }
 
-func queryMeta(doc entities.DocID) entities.DocumentMeta {
+func queryMeta(doc lore.DocID) entities.DocumentMeta {
 	return entities.DocumentMeta{
 		ID:        doc,
 		Source:    "github",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     "decision: " + string(doc),
 		Author:    "dev@example.test",
 		URL:       "https://example.test/" + string(doc),
@@ -118,7 +119,7 @@ func queryMeta(doc entities.DocID) entities.DocumentMeta {
 	}
 }
 
-func queryEdge(src, dst entities.DocID) entities.Edge {
+func queryEdge(src, dst lore.DocID) entities.Edge {
 	return entities.Edge{Src: src, Dst: dst, Kind: entities.EdgeKindReferencesDoc, Confidence: 1}
 }
 
@@ -138,7 +139,7 @@ func assertGaps(t *testing.T, got, want []string) {
 	}
 }
 
-func assertChain(t *testing.T, got [][]entities.DocID, want []entities.DocID) {
+func assertChain(t *testing.T, got [][]lore.DocID, want []lore.DocID) {
 	t.Helper()
 
 	if len(got) != 1 || !slices.Equal(got[0], want) {
@@ -146,8 +147,8 @@ func assertChain(t *testing.T, got [][]entities.DocID, want []entities.DocID) {
 	}
 }
 
-func nodeIDs(nodes []entities.EvidenceNode) []entities.DocID {
-	ids := make([]entities.DocID, len(nodes))
+func nodeIDs(nodes []entities.EvidenceNode) []lore.DocID {
+	ids := make([]lore.DocID, len(nodes))
 	for i, node := range nodes {
 		ids[i] = node.Doc.ID
 	}
@@ -165,7 +166,7 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	semantic := []entities.ChunkHit{queryHit("docA", 0), queryHit("docC", 0), queryHit("docB", 0)}
 	f.expectRetrieval(question, gomock.Any(), lexical, semantic)
 
-	lifted := []entities.DocID{"docA", "docB", "docC"}
+	lifted := []lore.DocID{"docA", "docB", "docC"}
 	f.expectSeedLoad(lifted, queryMeta("docC"), queryMeta("docA"), queryMeta("docB"))
 	f.expectNeighbors(lifted)
 
@@ -195,7 +196,7 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	})
 
 	want := []struct {
-		doc     entities.DocID
+		doc     lore.DocID
 		excerpt string
 		score   float32
 	}{
@@ -244,7 +245,7 @@ func TestFindDecisionPushesFiltersIntoBothSearches(t *testing.T) {
 	wantFilters := entities.Filters{
 		Source:      "github",
 		RepoRef:     "github:acme/lore",
-		DocType:     entities.DocTypePR,
+		DocType:     lore.DocTypePR,
 		CreatedFrom: since,
 		CreatedTo:   until,
 	}
@@ -256,7 +257,7 @@ func TestFindDecisionPushesFiltersIntoBothSearches(t *testing.T) {
 		Question: question,
 		Source:   "github",
 		Repo:     "github:acme/lore",
-		DocType:  string(entities.DocTypePR),
+		DocType:  string(lore.DocTypePR),
 		Since:    since,
 		Until:    until,
 	}); err != nil {
@@ -295,9 +296,9 @@ func TestFindDecisionDropsNodesWithoutURL(t *testing.T) {
 	f := newQueryFixture(t)
 	hits := []entities.ChunkHit{queryHit("docA", 0), queryHit("docB", 0), queryHit("docC", 0)}
 	f.expectRetrieval(question, gomock.Any(), hits, nil)
-	f.expectLoad([]entities.DocID{"docA", "docB", "docC"}, queryMeta("docA"), urlless)
-	f.expectLoad([]entities.DocID{"docA"}, queryMeta("docA"))
-	f.expectNeighbors([]entities.DocID{"docA"})
+	f.expectLoad([]lore.DocID{"docA", "docB", "docC"}, queryMeta("docA"), urlless)
+	f.expectLoad([]lore.DocID{"docA"}, queryMeta("docA"))
+	f.expectNeighbors([]lore.DocID{"docA"})
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
@@ -403,7 +404,7 @@ func TestFindDecisionResolvesFreeTextEventBeforeSeeding(t *testing.T) {
 			Return([]entities.ChunkHit{queryHit(anchor.ID, 0)}, nil),
 		f.store.EXPECT().SearchVector(gomock.Any(), queryVector, gomock.Eq(entities.Filters{}), queryTopK).
 			Return(nil, nil),
-		f.expectLoad([]entities.DocID{anchor.ID}, anchor),
+		f.expectLoad([]lore.DocID{anchor.ID}, anchor),
 		f.expectEmbed(question),
 		f.store.EXPECT().SearchLexical(gomock.Any(), question, gomock.Eq(wantSeedFilters), queryTopK).
 			Return(nil, nil),
@@ -442,8 +443,8 @@ func TestFindDecisionProceedsUnwindowedWhenEventUnresolved(t *testing.T) {
 	f := newQueryFixture(t)
 	f.expectRetrieval(around, gomock.Eq(entities.Filters{}), nil, nil)
 	f.expectRetrieval(question, gomock.Eq(entities.Filters{}), []entities.ChunkHit{queryHit("docA", 0)}, nil)
-	f.expectSeedLoad([]entities.DocID{"docA"}, queryMeta("docA"))
-	f.expectNeighbors([]entities.DocID{"docA"})
+	f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
+	f.expectNeighbors([]lore.DocID{"docA"})
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{
 		Question: question,
@@ -539,15 +540,15 @@ func TestFindDecisionExpandsSeedThroughGraph(t *testing.T) {
 	const question = "why did we choose option B?"
 
 	implementation := queryMeta("docPR")
-	implementation.Type = entities.DocTypePR
+	implementation.Type = lore.DocTypePR
 	edge := queryEdge("docA", implementation.ID)
 
 	f := newQueryFixture(t)
 	f.expectRetrieval(question, gomock.Any(), []entities.ChunkHit{queryHit("docA", 0)}, nil)
-	f.expectSeedLoad([]entities.DocID{"docA"}, queryMeta("docA"))
-	f.expectNeighbors([]entities.DocID{"docA"}, edge)
-	f.expectLoad([]entities.DocID{implementation.ID}, implementation)
-	f.expectNeighbors([]entities.DocID{implementation.ID})
+	f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
+	f.expectNeighbors([]lore.DocID{"docA"}, edge)
+	f.expectLoad([]lore.DocID{implementation.ID}, implementation)
+	f.expectNeighbors([]lore.DocID{implementation.ID})
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
@@ -572,7 +573,7 @@ func TestFindDecisionExpandsSeedThroughGraph(t *testing.T) {
 	}
 	assertScore(t, "seed", seed.Score, queryRecencyPrior)
 	assertScore(t, "reached", reached.Score, 0.6*queryRecencyPrior)
-	assertChain(t, bundle.Chains, []entities.DocID{"docA", implementation.ID})
+	assertChain(t, bundle.Chains, []lore.DocID{"docA", implementation.ID})
 	if bundle.Gaps != nil {
 		t.Errorf("Gaps = %q, want none: the seed opened a chain", bundle.Gaps)
 	}
@@ -585,12 +586,12 @@ func TestFindDecisionStopsAtConfiguredWalkDepth(t *testing.T) {
 
 	f := newQueryFixture(t)
 	f.expectRetrieval(question, gomock.Any(), []entities.ChunkHit{queryHit("docA", 0)}, nil)
-	f.expectSeedLoad([]entities.DocID{"docA"}, queryMeta("docA"))
+	f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
 
 	// A fourth reachable node stays uncited: queryWalkDepth allows two hops.
-	for _, hop := range []struct{ from, to entities.DocID }{{"docA", "docB"}, {"docB", "docC"}, {"docC", "docD"}} {
-		f.expectNeighbors([]entities.DocID{hop.from}, queryEdge(hop.from, hop.to)).MaxTimes(1)
-		f.expectLoad([]entities.DocID{hop.to}, queryMeta(hop.to)).MaxTimes(1)
+	for _, hop := range []struct{ from, to lore.DocID }{{"docA", "docB"}, {"docB", "docC"}, {"docC", "docD"}} {
+		f.expectNeighbors([]lore.DocID{hop.from}, queryEdge(hop.from, hop.to)).MaxTimes(1)
+		f.expectLoad([]lore.DocID{hop.to}, queryMeta(hop.to)).MaxTimes(1)
 	}
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
@@ -598,7 +599,7 @@ func TestFindDecisionStopsAtConfiguredWalkDepth(t *testing.T) {
 		t.Fatalf("FindDecision: %v", err)
 	}
 
-	want := []entities.DocID{"docA", "docB", "docC"}
+	want := []lore.DocID{"docA", "docB", "docC"}
 	if !slices.Equal(nodeIDs(bundle.Nodes), want) {
 		t.Errorf("Nodes = %v, want %v", nodeIDs(bundle.Nodes), want)
 	}
@@ -615,17 +616,17 @@ func TestFindDecisionReportsSeedsTheWalkNeverLeaves(t *testing.T) {
 	f := newQueryFixture(t)
 	hits := []entities.ChunkHit{queryHit("docA", 0), queryHit("docB", 0)}
 	f.expectRetrieval(question, gomock.Any(), hits, nil)
-	f.expectSeedLoad([]entities.DocID{"docA", "docB"}, queryMeta("docA"), queryMeta("docB"))
-	f.expectNeighbors([]entities.DocID{"docA", "docB"}, edge)
-	f.expectLoad([]entities.DocID{"docPR"}, queryMeta("docPR"))
-	f.expectNeighbors([]entities.DocID{"docPR"})
+	f.expectSeedLoad([]lore.DocID{"docA", "docB"}, queryMeta("docA"), queryMeta("docB"))
+	f.expectNeighbors([]lore.DocID{"docA", "docB"}, edge)
+	f.expectLoad([]lore.DocID{"docPR"}, queryMeta("docPR"))
+	f.expectNeighbors([]lore.DocID{"docPR"})
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
 		t.Fatalf("FindDecision: %v", err)
 	}
 
-	assertChain(t, bundle.Chains, []entities.DocID{"docA", "docPR"})
+	assertChain(t, bundle.Chains, []lore.DocID{"docA", "docPR"})
 	assertGaps(t, bundle.Gaps, []string{"decision: docB (docB) stands alone; no linked discussion"})
 }
 
@@ -637,17 +638,17 @@ func TestFindDecisionChainsTwoLinkedSeeds(t *testing.T) {
 	f := newQueryFixture(t)
 	hits := []entities.ChunkHit{queryHit("docA", 0), queryHit("docB", 0)}
 	f.expectRetrieval(question, gomock.Any(), hits, nil)
-	f.expectSeedLoad([]entities.DocID{"docA", "docB"}, queryMeta("docA"), queryMeta("docB"))
-	f.expectNeighbors([]entities.DocID{"docA", "docB"}, queryEdge("docA", "docB"), queryEdge("docB", "docPR"))
-	f.expectLoad([]entities.DocID{"docPR"}, queryMeta("docPR"))
-	f.expectNeighbors([]entities.DocID{"docPR"})
+	f.expectSeedLoad([]lore.DocID{"docA", "docB"}, queryMeta("docA"), queryMeta("docB"))
+	f.expectNeighbors([]lore.DocID{"docA", "docB"}, queryEdge("docA", "docB"), queryEdge("docB", "docPR"))
+	f.expectLoad([]lore.DocID{"docPR"}, queryMeta("docPR"))
+	f.expectNeighbors([]lore.DocID{"docPR"})
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
 		t.Fatalf("FindDecision: %v", err)
 	}
 
-	want := []entities.DocID{"docA", "docB", "docPR"}
+	want := []lore.DocID{"docA", "docB", "docPR"}
 	if !slices.Equal(nodeIDs(bundle.Nodes), want) {
 		t.Errorf("Nodes = %v, want %v", nodeIDs(bundle.Nodes), want)
 	}
@@ -719,7 +720,7 @@ func TestFindDecisionClassifiesStoreFailures(t *testing.T) {
 				Return([]entities.ChunkHit{queryHit("docA", 0)}, nil)
 			f.store.EXPECT().SearchVector(gomock.Any(), queryVector, gomock.Any(), queryTopK).
 				Return(nil, nil)
-			f.store.EXPECT().DocumentsByID(gomock.Any(), []entities.DocID{"docA"}).
+			f.store.EXPECT().DocumentsByID(gomock.Any(), []lore.DocID{"docA"}).
 				Return(nil, errQueryStore)
 		},
 	}
@@ -751,8 +752,8 @@ func TestFindDecisionClassifiesWalkFailure(t *testing.T) {
 
 	f := newQueryFixture(t)
 	f.expectRetrieval(question, gomock.Any(), []entities.ChunkHit{queryHit("docA", 0)}, nil)
-	f.expectSeedLoad([]entities.DocID{"docA"}, queryMeta("docA"))
-	f.store.EXPECT().Neighbors(gomock.Any(), []entities.DocID{"docA"}, nil, entities.DirBoth).
+	f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
+	f.store.EXPECT().Neighbors(gomock.Any(), []lore.DocID{"docA"}, nil, entities.DirBoth).
 		Return(nil, errQueryStore)
 
 	_, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
@@ -794,14 +795,14 @@ func TestNewQueryServiceAppliesDefaults(t *testing.T) {
 				f.store.EXPECT().
 					SearchVector(gomock.Any(), queryVector, gomock.Any(), queryDefaultTopK).
 					Return(nil, nil)
-				f.expectSeedLoad([]entities.DocID{"docA"}, queryMeta("docA"))
+				f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
 
-				hops := []struct{ from, to entities.DocID }{
+				hops := []struct{ from, to lore.DocID }{
 					{"docA", "docB"}, {"docB", "docC"}, {"docC", "docD"}, {"docD", "docE"},
 				}
 				for _, hop := range hops {
-					f.expectNeighbors([]entities.DocID{hop.from}, queryEdge(hop.from, hop.to)).MaxTimes(1)
-					f.expectLoad([]entities.DocID{hop.to}, queryMeta(hop.to)).MaxTimes(1)
+					f.expectNeighbors([]lore.DocID{hop.from}, queryEdge(hop.from, hop.to)).MaxTimes(1)
+					f.expectLoad([]lore.DocID{hop.to}, queryMeta(hop.to)).MaxTimes(1)
 				}
 
 				bundle, err := f.svc.FindDecision(context.Background(),

@@ -1,4 +1,4 @@
-package httpretry
+package httpx
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 type chatBody struct {
@@ -24,15 +24,15 @@ func TestPostJSONWritesOutOnlyOnASoundBody(t *testing.T) {
 	// half-decoded attempt must never be retried into a thinner second body.
 	const partlyTyped = `{"choices":[{"message":{"content":"stale"}},{"message":{"content":5}}]}`
 
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 		if attempt == 1 {
-			httpretrytest.WriteJSON(w, http.StatusOK, partlyTyped)
+			httpxtest.WriteJSON(w, http.StatusOK, partlyTyped)
 			return
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, `{}`)
+		httpxtest.WriteJSON(w, http.StatusOK, `{}`)
 	})
 
-	rec := &httpretrytest.WaitRecorder{}
+	rec := &httpxtest.WaitRecorder{}
 	call := Client{Sleep: rec.Sleep, Op: "test: chat"}
 
 	var out chatBody
@@ -49,15 +49,15 @@ func TestPostJSONWritesOutOnlyOnASoundBody(t *testing.T) {
 }
 
 func TestPostJSONRetriesATruncatedBody(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 		if attempt < MaxAttempts {
-			httpretrytest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":`)
+			httpxtest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":`)
 			return
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"content":"whole"}}]}`)
+		httpxtest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"content":"whole"}}]}`)
 	})
 
-	rec := &httpretrytest.WaitRecorder{}
+	rec := &httpxtest.WaitRecorder{}
 	call := Client{Sleep: rec.Sleep, Op: "test: chat"}
 
 	var out chatBody

@@ -12,12 +12,11 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
-	mock_entities "github.com/setthasit/Lore/internal/mocks/entities"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -27,7 +26,7 @@ const (
 	tolerantHeartbeat = 25 * time.Millisecond
 
 	heartbeatHolder   = "test-host/1"
-	heartbeatIdentity = "openai/text-embedding-3-small/1536"
+	heartbeatIdentity = VectorSpace("openai/text-embedding-3-small/1536")
 )
 
 var errHeartbeatStore = errors.New("store is on fire")
@@ -36,7 +35,7 @@ var errLeaseTakenOver = fmt.Errorf("sqlite: sync lease is not held by %q: %w", "
 
 type heartbeatLinks struct{ pending atomic.Int64 }
 
-func (l *heartbeatLinks) Link(context.Context, []entities.Document) error { return nil }
+func (l *heartbeatLinks) Link(context.Context, []lore.Document) error { return nil }
 
 func (l *heartbeatLinks) LinkPending(context.Context) error {
 	l.pending.Add(1)
@@ -46,7 +45,7 @@ func (l *heartbeatLinks) LinkPending(context.Context) error {
 
 type heartbeatMocks struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
+	emb   *mock_lore.MockEmbedder
 	links *heartbeatLinks
 }
 
@@ -100,25 +99,25 @@ func awaitBeats(t *testing.T, beats <-chan struct{}, n int) {
 }
 
 // A round that takes a free lease and finds its own embedder identity; the caller declares ReleaseLease.
-func newHeartbeatRound(t *testing.T, connectors ...entities.Connector) (*syncOrchestrator, heartbeatMocks) {
+func newHeartbeatRound(t *testing.T, connectors ...lore.Connector) (*syncOrchestrator, heartbeatMocks) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
 	m := heartbeatMocks{
 		store: mock_repositories.NewMockIndexStore(ctrl),
-		emb:   mock_embedder.NewMockEmbedder(ctrl),
+		emb:   mock_lore.NewMockEmbedder(ctrl),
 		links: &heartbeatLinks{},
 	}
 
-	m.emb.EXPECT().Identity().Return(heartbeatIdentity).AnyTimes()
 	m.store.EXPECT().Lease(gomock.Any()).Return(nil, nil)
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
-	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity, nil)
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity.String(), nil)
 
 	return &syncOrchestrator{
 		store:      m.store,
 		connectors: connectors,
 		emb:        m.emb,
+		space:      heartbeatIdentity,
 		links:      m.links,
 		holder:     heartbeatHolder,
 		heartbeat:  testHeartbeat,
@@ -126,19 +125,19 @@ func newHeartbeatRound(t *testing.T, connectors ...entities.Connector) (*syncOrc
 	}, m
 }
 
-func heartbeatConnector(t *testing.T) *mock_entities.MockConnector {
+func heartbeatConnector(t *testing.T) *mock_lore.MockConnector {
 	t.Helper()
 
-	conn := mock_entities.NewMockConnector(gomock.NewController(t))
+	conn := mock_lore.NewMockConnector(gomock.NewController(t))
 	conn.EXPECT().Name().Return("github").AnyTimes()
 
 	return conn
 }
 
-func changes(conn *mock_entities.MockConnector, stream func(context.Context, func(entities.Batch, error) bool)) {
+func changes(conn *mock_lore.MockConnector, stream func(context.Context, func(lore.Batch, error) bool)) {
 	conn.EXPECT().Changes(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, _ entities.Cursor) iter.Seq2[entities.Batch, error] {
-			return func(yield func(entities.Batch, error) bool) { stream(ctx, yield) }
+		func(ctx context.Context, _ lore.Cursor) iter.Seq2[lore.Batch, error] {
+			return func(yield func(lore.Batch, error) bool) { stream(ctx, yield) }
 		})
 }
 
@@ -256,9 +255,9 @@ func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) 
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 
 	// No writes are declared: the strict controller fails any the round attempts after losing the lease.
-	changes(conn, func(ctx context.Context, yield func(entities.Batch, error) bool) {
+	changes(conn, func(ctx context.Context, yield func(lore.Batch, error) bool) {
 		<-ctx.Done()
-		yield(entities.Batch{}, ctx.Err())
+		yield(lore.Batch{}, ctx.Err())
 	})
 
 	_, err := round.Sync(context.Background(), SyncOptions{})
@@ -285,16 +284,16 @@ func TestSyncRidesOutATransientHeartbeatFailure(t *testing.T) {
 	round.heartbeat = tolerantHeartbeat
 
 	beats := recoveringHeartbeats(m.store)
-	cursor := entities.Cursor{"page": "1"}
+	cursor := lore.Cursor{"page": "1"}
 
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
 
-	changes(conn, func(_ context.Context, yield func(entities.Batch, error) bool) {
+	changes(conn, func(_ context.Context, yield func(lore.Batch, error) bool) {
 		awaitBeats(t, beats, 1)
-		yield(entities.Batch{Cursor: cursor}, nil)
+		yield(lore.Batch{Cursor: cursor}, nil)
 	})
 
 	if _, err := round.Sync(context.Background(), SyncOptions{}); err != nil {
@@ -317,7 +316,7 @@ func TestSyncJoinsItsHeartbeatBeforeReleasingTheLease(t *testing.T) {
 
 	conn := heartbeatConnector(t)
 	round, m := newHeartbeatRound(t, conn)
-	cursor := entities.Cursor{"page": "1"}
+	cursor := lore.Cursor{"page": "1"}
 
 	m.store.EXPECT().HeartbeatLease(gomock.Any(), heartbeatHolder).AnyTimes().DoAndReturn(
 		func(context.Context, string) error {
@@ -341,9 +340,9 @@ func TestSyncJoinsItsHeartbeatBeforeReleasingTheLease(t *testing.T) {
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", cursor).Return(nil)
 
-	changes(conn, func(_ context.Context, yield func(entities.Batch, error) bool) {
+	changes(conn, func(_ context.Context, yield func(lore.Batch, error) bool) {
 		<-inFlight
-		yield(entities.Batch{Cursor: cursor}, nil)
+		yield(lore.Batch{Cursor: cursor}, nil)
 	})
 
 	type outcome struct {

@@ -1,25 +1,25 @@
-package refscan
+package refs
 
 import (
 	"slices"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestSetKeepsFirstSeenOrderAndDropsRepeats(t *testing.T) {
 	var s Set
-	s.Add(entities.RefKindPRNumber, "acme/widgets#42")
-	s.AddAll(entities.RefKindCommitSHA, []string{"1a2b3c4", "9f8e7d6", "1a2b3c4"})
-	s.Add(entities.RefKindPRNumber, "acme/widgets#42")
-	s.Add(entities.RefKindTicketKey, "")
-	s.Add(entities.RefKindTicketKey, "PROJ-123")
+	s.Add(lore.RefKindPRNumber, "acme/widgets#42")
+	s.AddAll(lore.RefKindCommitSHA, []string{"1a2b3c4", "9f8e7d6", "1a2b3c4"})
+	s.Add(lore.RefKindPRNumber, "acme/widgets#42")
+	s.Add(lore.RefKindTicketKey, "")
+	s.Add(lore.RefKindTicketKey, "PROJ-123")
 
-	want := []entities.RawRef{
-		{Kind: entities.RefKindPRNumber, Value: "acme/widgets#42"},
-		{Kind: entities.RefKindCommitSHA, Value: "1a2b3c4"},
-		{Kind: entities.RefKindCommitSHA, Value: "9f8e7d6"},
-		{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
+	want := []lore.RawRef{
+		{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+		{Kind: lore.RefKindCommitSHA, Value: "1a2b3c4"},
+		{Kind: lore.RefKindCommitSHA, Value: "9f8e7d6"},
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 	}
 	if got := s.Refs(); !slices.Equal(got, want) {
 		t.Errorf("Refs()\n got %v\nwant %v", got, want)
@@ -35,8 +35,8 @@ func TestZeroSetHasNoRefs(t *testing.T) {
 
 func TestKindIsPartOfIdentity(t *testing.T) {
 	var s Set
-	s.Add(entities.RefKindTicketKey, "PROJ-123")
-	s.Add(entities.RefKindURL, "PROJ-123")
+	s.Add(lore.RefKindTicketKey, "PROJ-123")
+	s.Add(lore.RefKindURL, "PROJ-123")
 
 	if got := len(s.Refs()); got != 2 {
 		t.Errorf("len(Refs()) = %d, want 2", got)
@@ -48,15 +48,15 @@ func TestTextScanners(t *testing.T) {
 		name string
 		scan func(*Set, string)
 		text string
-		want []entities.RawRef
+		want []lore.RawRef
 	}{
 		{
 			name: "ticket keys: repeats collapse, lowercase is not a key",
 			scan: (*Set).AddTicketKeys,
 			text: "PROJ-123 blocks PROJ-456 which reverts PROJ-123 (not proj-789)",
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-456"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-456"},
 			},
 		},
 		{
@@ -69,9 +69,9 @@ func TestTextScanners(t *testing.T) {
 			name: "urls: sentence period trimmed, markdown link yields a bare url",
 			scan: (*Set).AddURLs,
 			text: "See https://www.notion.so/acme/Auth-spec-abc123. Also [spec](https://example.com/spec).",
-			want: []entities.RawRef{
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
-				{Kind: entities.RefKindURL, Value: "https://example.com/spec"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
+				{Kind: lore.RefKindURL, Value: "https://example.com/spec"},
 			},
 		},
 		{
@@ -84,9 +84,9 @@ func TestTextScanners(t *testing.T) {
 			name: "commit shas: abbreviated and full, too short is skipped",
 			scan: (*Set).AddCommitSHAs,
 			text: "reverts 1a2b3c4 and 0123456789abcdef0123456789abcdef01234567, not 1a2b3c",
-			want: []entities.RawRef{
-				{Kind: entities.RefKindCommitSHA, Value: "1a2b3c4"},
-				{Kind: entities.RefKindCommitSHA, Value: "0123456789abcdef0123456789abcdef01234567"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindCommitSHA, Value: "1a2b3c4"},
+				{Kind: lore.RefKindCommitSHA, Value: "0123456789abcdef0123456789abcdef01234567"},
 			},
 		},
 		{
@@ -99,10 +99,10 @@ func TestTextScanners(t *testing.T) {
 			name: "file paths: nested paths, backticks and a sentence period",
 			scan: (*Set).AddFilePaths,
 			text: "`cmd/lore/main.go` calls internal/auth/auth.go, described in docs/v3/04-connectors-and-sync.md.",
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "cmd/lore/main.go"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindFilePath, Value: "docs/v3/04-connectors-and-sync.md"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "cmd/lore/main.go"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindFilePath, Value: "docs/v3/04-connectors-and-sync.md"},
 			},
 		},
 		{
@@ -139,8 +139,8 @@ func TestTextScanners(t *testing.T) {
 			name: "file paths: a real path next to a url still matches",
 			scan: (*Set).AddFilePaths,
 			text: "https://example.com/spec.html covers internal/auth/auth.go",
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
 			},
 		},
 		{

@@ -6,15 +6,16 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestNeighborsHonorsDirectionAndKind(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	commit := entities.NewDocID("github", entities.DocTypeCommit, "acme/lore/commit/aaaaaaaaaaaa")
-	pr := entities.NewDocID("github", entities.DocTypePR, "acme/lore/pull/42")
-	issue := entities.NewDocID("github", entities.DocTypeIssue, "acme/lore/issues/7")
+	commit := lore.NewDocID("github", lore.DocTypeCommit, "acme/lore/commit/aaaaaaaaaaaa")
+	pr := lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/42")
+	issue := lore.NewDocID("github", lore.DocTypeIssue, "acme/lore/issues/7")
 
 	commitInPR := entities.Edge{Src: commit, Dst: pr, Kind: entities.EdgeKindCommitInPR, Confidence: 1}
 	prClosesIssue := entities.Edge{Src: pr, Dst: issue, Kind: entities.EdgeKindPRClosesIssue, Confidence: 1}
@@ -26,45 +27,45 @@ func TestNeighborsHonorsDirectionAndKind(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		ids   []entities.DocID
+		ids   []lore.DocID
 		kinds []entities.EdgeKind
 		dir   entities.Direction
 		want  []entities.Edge
 	}{
 		{
 			name: "outgoing from a mid-graph node",
-			ids:  []entities.DocID{pr},
+			ids:  []lore.DocID{pr},
 			dir:  entities.DirOut,
 			want: []entities.Edge{prClosesIssue},
 		},
 		{
 			name: "incoming to a mid-graph node",
-			ids:  []entities.DocID{pr},
+			ids:  []lore.DocID{pr},
 			dir:  entities.DirIn,
 			want: []entities.Edge{commitInPR},
 		},
 		{
 			name: "both directions union the two sides",
-			ids:  []entities.DocID{pr},
+			ids:  []lore.DocID{pr},
 			dir:  entities.DirBoth,
 			want: []entities.Edge{commitInPR, prClosesIssue},
 		},
 		{
 			name: "both endpoints of an edge yield it once",
-			ids:  []entities.DocID{commit, pr},
+			ids:  []lore.DocID{commit, pr},
 			dir:  entities.DirBoth,
 			want: []entities.Edge{commitInPR, prClosesIssue, commitMentions},
 		},
 		{
 			name:  "kind filter excludes every other kind",
-			ids:   []entities.DocID{commit},
+			ids:   []lore.DocID{commit},
 			kinds: []entities.EdgeKind{entities.EdgeKindReferencesDoc},
 			dir:   entities.DirOut,
 			want:  []entities.Edge{commitMentions},
 		},
 		{
 			name:  "kind nobody wrote matches nothing",
-			ids:   []entities.DocID{commit},
+			ids:   []lore.DocID{commit},
 			kinds: []entities.EdgeKind{entities.EdgeKindSupersedes},
 			dir:   entities.DirBoth,
 			want:  nil,
@@ -98,8 +99,8 @@ func TestUpsertEdgesKeepsTheHighestConfidence(t *testing.T) {
 	ctx := context.Background()
 
 	strong := entities.Edge{
-		Src:        entities.NewDocID("notion", entities.DocTypePage, "design/retrieval"),
-		Dst:        entities.NewDocID("github", entities.DocTypeCommit, "acme/lore/commit/bbbbbbbbbbbb"),
+		Src:        lore.NewDocID("notion", lore.DocTypePage, "design/retrieval"),
+		Dst:        lore.NewDocID("github", lore.DocTypeCommit, "acme/lore/commit/bbbbbbbbbbbb"),
 		Kind:       entities.EdgeKindMentionsCommit,
 		Confidence: 0.9,
 	}
@@ -119,7 +120,7 @@ func TestUpsertEdgesKeepsTheHighestConfidence(t *testing.T) {
 				}
 			}
 
-			got, err := s.Neighbors(ctx, []entities.DocID{strong.Src}, nil, entities.DirOut)
+			got, err := s.Neighbors(ctx, []lore.DocID{strong.Src}, nil, entities.DirOut)
 			if err != nil {
 				t.Fatalf("Neighbors: %v", err)
 			}
@@ -132,14 +133,14 @@ func TestPendingRefsSurviveUpsertAndTargetedDelete(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	src := entities.NewDocID("github", entities.DocTypePR, "acme/lore/pull/42")
+	src := lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/42")
 	page := entities.PendingRef{
 		SourceDoc: src,
-		Ref:       entities.RawRef{Kind: entities.RefKindURL, Value: "https://notion.so/design/retrieval"},
+		Ref:       lore.RawRef{Kind: lore.RefKindURL, Value: "https://notion.so/design/retrieval"},
 	}
 	ticket := entities.PendingRef{
 		SourceDoc: src,
-		Ref:       entities.RawRef{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
+		Ref:       lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 	}
 
 	if err := s.UpsertPendingRefs(ctx, []entities.PendingRef{page, ticket, page}); err != nil {
@@ -159,7 +160,7 @@ func TestPendingRefsSurviveUpsertAndTargetedDelete(t *testing.T) {
 
 	absent := entities.PendingRef{
 		SourceDoc: src,
-		Ref:       entities.RawRef{Kind: entities.RefKindCommitSHA, Value: "deadbeef"},
+		Ref:       lore.RawRef{Kind: lore.RefKindCommitSHA, Value: "deadbeef"},
 	}
 	if err := s.DeletePendingRefs(ctx, []entities.PendingRef{page, absent}); err != nil {
 		t.Fatalf("DeletePendingRefs: %v", err)

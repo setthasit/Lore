@@ -1,6 +1,6 @@
-// Package httpretry posts JSON to an HTTP API and retries the failures a
+// Package httpx posts JSON to an HTTP API and retries the failures a
 // server reports as temporary: 429, 5xx, a transport error, a truncated body.
-package httpretry
+package httpx
 
 import (
 	"bytes"

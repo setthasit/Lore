@@ -15,12 +15,12 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/connectors/github"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -38,17 +38,18 @@ const (
 	topK = 12
 )
 
-var prDocID = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/42")
+var prDocID = lore.NewDocID(githubSource, lore.DocTypePR, fixtureRepo+"/pull/42")
 
 const fakeDims = 8
 
+// The host composes the vector-space identity; the fake embedder only reports a width.
+var fakeSpace = services.NewVectorSpace("fake", "bag-of-words", fakeDims)
+
 type fakeEmbedder struct{}
 
-var _ embedder.Embedder = fakeEmbedder{}
+var _ lore.Embedder = fakeEmbedder{}
 
-func (fakeEmbedder) Identity() string {
-	return embedder.FormatIdentity("fake", "bag-of-words", fakeDims)
-}
+func (fakeEmbedder) Dimensions() int { return fakeDims }
 
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
@@ -225,7 +226,7 @@ func newWorkspace(t *testing.T, fixtures string) *workspace {
 	api := newFixtureAPI(t, corpusDir(fixtures), fixtureHost)
 	api.listen(api.serve)
 
-	return newIndexedWorkspace(t, api, []entities.Connector{
+	return newIndexedWorkspace(t, api, []lore.Connector{
 		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
 	}, nil)
 }
@@ -233,7 +234,7 @@ func newWorkspace(t *testing.T, fixtures string) *workspace {
 func newIndexedWorkspace(
 	t *testing.T,
 	api *fixtureAPI,
-	connectors []entities.Connector,
+	connectors []lore.Connector,
 	repos []services.CodeRepo,
 ) *workspace {
 	t.Helper()
@@ -253,11 +254,11 @@ func newIndexedWorkspace(
 	return &workspace{
 		api:     api,
 		store:   store,
-		round:   services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store, repos)),
+		round:   services.NewSyncOrchestrator(store, connectors, services.NewChunker(), emb, services.NewLinkResolver(store, repos), fakeSpace),
 		query:   services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
 		trace:   services.NewTraceService(store),
 		impact:  services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
-		status:  services.NewStatusService(store, emb),
+		status:  services.NewStatusService(store, fakeSpace),
 		why:     services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
 		history: services.NewHistoryService(store, repos),
 	}
@@ -336,11 +337,11 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 		t.Errorf("bundle carries no chain for %q, though the fixture documents reference each other", question)
 	}
 
-	cited := make(map[entities.DocID]bool, len(bundle.Nodes))
+	cited := make(map[lore.DocID]bool, len(bundle.Nodes))
 	for _, node := range bundle.Nodes {
 		cited[node.Doc.ID] = true
 	}
-	chained := make(map[entities.DocID]bool, len(bundle.Nodes))
+	chained := make(map[lore.DocID]bool, len(bundle.Nodes))
 	for _, chain := range bundle.Chains {
 		for _, id := range chain {
 			if !cited[id] {

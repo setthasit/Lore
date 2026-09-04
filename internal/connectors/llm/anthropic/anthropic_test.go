@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/sdk/httpx"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 const (
@@ -23,14 +23,14 @@ const (
 	testUser   = "Why was the cache added?"
 )
 
-func newTestClient(t *testing.T, baseURL string) (*Client, *httpretrytest.WaitRecorder) {
+func newTestClient(t *testing.T, baseURL string) (*Client, *httpxtest.WaitRecorder) {
 	t.Helper()
 
 	c, err := New(fakeKey, testModel, baseURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	rec := &httpretrytest.WaitRecorder{}
+	rec := &httpxtest.WaitRecorder{}
 	c.call.Sleep = rec.Sleep
 	return c, rec
 }
@@ -50,7 +50,7 @@ func TestCompleteSendsMessagesRequest(t *testing.T) {
 		} `json:"messages"`
 	}
 
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
 		}
@@ -72,7 +72,7 @@ func TestCompleteSendsMessagesRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("Because reads dominated."))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("Because reads dominated."))
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -105,11 +105,11 @@ func TestCompleteSendsMessagesRequest(t *testing.T) {
 
 func TestCompleteOmitsEmptySystemPrompt(t *testing.T) {
 	var got map[string]any
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("ok"))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("ok"))
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -127,8 +127,8 @@ func TestCompleteReadsTextBlocksOnly(t *testing.T) {
 		{"type":"text","text":"Reads dominated"},
 		{"type":"text","text":", so a cache paid off."}
 	]}`
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusOK, body)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusOK, body)
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -161,15 +161,15 @@ func TestCompleteRetriesRateLimit(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+			ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 				if attempt == 1 {
 					if tc.retryAfter != "" {
 						w.Header().Set("Retry-After", tc.retryAfter)
 					}
-					httpretrytest.WriteJSON(w, http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
+					httpxtest.WriteJSON(w, http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
 					return
 				}
-				httpretrytest.WriteJSON(w, http.StatusOK, answer("second try"))
+				httpxtest.WriteJSON(w, http.StatusOK, answer("second try"))
 			})
 
 			c, rec := newTestClient(t, ts.URL)
@@ -192,12 +192,12 @@ func TestCompleteRetriesRateLimit(t *testing.T) {
 }
 
 func TestCompleteRetriesServerError(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 		if attempt == 1 {
-			httpretrytest.WriteJSON(w, http.StatusInternalServerError, `{"type":"error","error":{"type":"api_error","message":"internal"}}`)
+			httpxtest.WriteJSON(w, http.StatusInternalServerError, `{"type":"error","error":{"type":"api_error","message":"internal"}}`)
 			return
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("recovered"))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("recovered"))
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -217,8 +217,8 @@ func TestCompleteRetriesServerError(t *testing.T) {
 }
 
 func TestCompleteFailsFastOnClientError(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: field required"}}`)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: field required"}}`)
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -267,8 +267,8 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-				httpretrytest.WriteJSON(w, http.StatusOK, tc.body)
+			ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+				httpxtest.WriteJSON(w, http.StatusOK, tc.body)
 			})
 
 			c, _ := newTestClient(t, ts.URL)
@@ -282,7 +282,7 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 
 			wantAttempts := 1
 			if tc.wantRetries {
-				wantAttempts = httpretry.MaxAttempts
+				wantAttempts = httpx.MaxAttempts
 			}
 			if n := ts.Attempts(); n != wantAttempts {
 				t.Errorf("attempts = %d, want %d", n, wantAttempts)
@@ -292,8 +292,8 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 }
 
 func TestCompleteStopsAfterAttemptBudget(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusServiceUnavailable, `{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}`)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusServiceUnavailable, `{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}`)
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -301,13 +301,13 @@ func TestCompleteStopsAfterAttemptBudget(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete succeeded, want error")
 	}
-	if n := ts.Attempts(); n != httpretry.MaxAttempts {
-		t.Errorf("attempts = %d, want %d", n, httpretry.MaxAttempts)
+	if n := ts.Attempts(); n != httpx.MaxAttempts {
+		t.Errorf("attempts = %d, want %d", n, httpx.MaxAttempts)
 	}
-	if waits := rec.Recorded(); len(waits) != httpretry.MaxAttempts-1 {
-		t.Errorf("waits = %v, want %d entries", waits, httpretry.MaxAttempts-1)
+	if waits := rec.Recorded(); len(waits) != httpx.MaxAttempts-1 {
+		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
-	for _, want := range []string{fmt.Sprintf("after %d attempts", httpretry.MaxAttempts), "503"} {
+	for _, want := range []string{fmt.Sprintf("after %d attempts", httpx.MaxAttempts), "503"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -319,9 +319,9 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 			t.Error("server called, want no request")
-			httpretrytest.WriteJSON(w, http.StatusOK, answer("unreachable"))
+			httpxtest.WriteJSON(w, http.StatusOK, answer("unreachable"))
 		})
 
 		c, _ := newTestClient(t, ts.URL)
@@ -334,9 +334,9 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 			w.Header().Set("Retry-After", "600")
-			httpretrytest.WriteJSON(w, http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
+			httpxtest.WriteJSON(w, http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
 		})
 
 		c, err := New(fakeKey, testModel, ts.URL)
@@ -374,8 +374,8 @@ func TestErrorsOmitAPIKey(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-				httpretrytest.WriteJSON(w, tc.status, echoBody)
+			ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+				httpxtest.WriteJSON(w, tc.status, echoBody)
 			})
 
 			c, _ := newTestClient(t, ts.URL)

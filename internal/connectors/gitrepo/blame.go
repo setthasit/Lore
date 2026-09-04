@@ -6,9 +6,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/setthasit/Lore/sdk"
 )
 
-func (r *Repo) Blame(ctx context.Context, file string, startLine, endLine int) ([]BlameSpan, error) {
+func (r *Repo) Blame(ctx context.Context, file string, startLine, endLine int) ([]lore.BlameSpan, error) {
 	rel, err := repoRelPath(file)
 	if err != nil {
 		return nil, err
@@ -37,9 +39,9 @@ type commitMeta struct {
 
 // Porcelain repeats a commit's author block only on its first appearance, so later
 // spans of the same commit are filled from meta.
-func parseBlamePorcelain(out string) ([]BlameSpan, error) {
+func parseBlamePorcelain(out string) ([]lore.BlameSpan, error) {
 	meta := make(map[string]commitMeta)
-	var spans []BlameSpan
+	var spans []lore.BlameSpan
 	var sha string
 	var line int
 
@@ -56,7 +58,7 @@ func parseBlamePorcelain(out string) ([]BlameSpan, error) {
 				spans[n].Lines = append(spans[n].Lines, content)
 				continue
 			}
-			spans = append(spans, BlameSpan{
+			spans = append(spans, lore.BlameSpan{
 				SHA:       sha,
 				LineStart: line,
 				LineEnd:   line,

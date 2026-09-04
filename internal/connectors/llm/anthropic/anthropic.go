@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
-var _ llm.LLM = (*Client)(nil)
+var _ lore.Completer = (*Client)(nil)
 
 const DefaultBaseURL = "https://api.anthropic.com"
 
@@ -31,7 +31,7 @@ type Client struct {
 	model    string
 	endpoint string
 	header   http.Header
-	call     httpretry.Client
+	call     httpx.Client
 }
 
 type Option func(*Client)
@@ -60,10 +60,10 @@ func New(apiKey, model, baseURL string, opts ...Option) (*Client, error) {
 
 	c := &Client{
 		model:    model,
-		endpoint: httpretry.Endpoint(baseURL, DefaultBaseURL, messagesPath),
+		endpoint: httpx.Endpoint(baseURL, DefaultBaseURL, messagesPath),
 		header:   header,
-		call: httpretry.Client{
-			HTTP:   &http.Client{Timeout: llm.RequestTimeout},
+		call: httpx.Client{
+			HTTP:   &http.Client{Timeout: lore.CompleteTimeout},
 			Op:     "anthropic: messages",
 			Secret: apiKey,
 		},

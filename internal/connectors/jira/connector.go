@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/refscan"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/refs"
 )
 
 const (
@@ -28,7 +28,7 @@ const (
 	jqlSlack      = 24 * time.Hour
 )
 
-var _ entities.Connector = (*Connector)(nil)
+var _ lore.Connector = (*Connector)(nil)
 
 type Connector struct {
 	client    *client
@@ -86,25 +86,25 @@ func NewConnector(baseURL, email, token string, projects []string, opts ...Optio
 func (c *Connector) Name() string { return sourceName }
 
 // Changes streams each issue with its comments as one indivisible unit, oldest-first.
-func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Seq2[entities.Batch, error] {
-	return func(yield func(entities.Batch, error) bool) {
+func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
 		if err := c.checkProjectKeys(); err != nil {
-			yield(entities.Batch{}, err)
+			yield(lore.Batch{}, err)
 			return
 		}
 		state := cloneCursor(cursor)
 		from, err := readCursor(state)
 		if err != nil {
-			yield(entities.Batch{}, err)
+			yield(lore.Batch{}, err)
 			return
 		}
 		units, err := c.units(ctx, from)
 		if err != nil {
-			yield(entities.Batch{}, fmt.Errorf("jira: %w", err))
+			yield(lore.Batch{}, fmt.Errorf("jira: %w", err))
 			return
 		}
 
-		docs := make([]entities.Document, 0, c.batchSize)
+		docs := make([]lore.Document, 0, c.batchSize)
 		for i := range units {
 			u := &units[i]
 			docs = append(docs, u.docs...)
@@ -112,12 +112,12 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 			if len(docs) < c.batchSize {
 				continue
 			}
-			if !yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
 				return
 			}
-			docs = make([]entities.Document, 0, c.batchSize)
+			docs = make([]lore.Document, 0, c.batchSize)
 		}
-		if len(docs) > 0 && !yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+		if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
 			return
 		}
 	}
@@ -126,7 +126,7 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 // The document id breaks ties: several issues can share an updated timestamp.
 type unitKey struct {
 	updatedAt time.Time
-	docID     entities.DocID
+	docID     lore.DocID
 }
 
 func (k unitKey) compare(o unitKey) int {
@@ -142,7 +142,7 @@ func (k unitKey) after(o unitKey) bool { return k.compare(o) > 0 }
 // a comment changes.
 type unit struct {
 	key  unitKey
-	docs []entities.Document
+	docs []lore.Document
 }
 
 func (c *Connector) units(ctx context.Context, from unitKey) ([]unit, error) {
@@ -172,12 +172,12 @@ func (c *Connector) units(ctx context.Context, from unitKey) ([]unit, error) {
 	return units, nil
 }
 
-func (c *Connector) unitDocs(ctx context.Context, key string, ticket entities.Document) ([]entities.Document, error) {
+func (c *Connector) unitDocs(ctx context.Context, key string, ticket lore.Document) ([]lore.Document, error) {
 	comments, err := c.client.comments(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	docs := make([]entities.Document, 0, 1+len(comments))
+	docs := make([]lore.Document, 0, 1+len(comments))
 	docs = append(docs, ticket)
 	for i := range comments {
 		docs = append(docs, c.commentDoc(key, &comments[i]))
@@ -185,42 +185,42 @@ func (c *Connector) unitDocs(ctx context.Context, key string, ticket entities.Do
 	return docs, nil
 }
 
-func (c *Connector) issueDoc(n *issue) entities.Document {
+func (c *Connector) issueDoc(n *issue) lore.Document {
 	// The store derives external_key from the third id segment, so the bare key is
 	// what makes a "PROJ-123" reference resolve to this document.
-	doc := newDocument(entities.DocTypeTicket, n.Key)
+	doc := newDocument(lore.DocTypeTicket, n.Key)
 	doc.Title = n.Key + ": " + n.Fields.Summary
 	doc.Body = flatten(n.Fields.Description)
 	doc.Author = n.Fields.Reporter.name()
 	doc.URL = c.browseURL(n.Key)
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.Fields.Created.Time, n.Fields.Updated.Time)
 
-	var refs refscan.Set
-	addTextRefs(&refs, n.Fields.Summary+"\n"+doc.Body)
-	doc.Refs = withoutKey(refs.Refs(), n.Key)
+	var found refs.Set
+	addTextRefs(&found, n.Fields.Summary+"\n"+doc.Body)
+	doc.Refs = withoutKey(found.Refs(), n.Key)
 	return doc
 }
 
-func (c *Connector) commentDoc(key string, cm *comment) entities.Document {
+func (c *Connector) commentDoc(key string, cm *comment) lore.Document {
 	// The chunker cuts the id at its last "#" to recover the thread, so the issue
 	// key has to sit in front of the only "#" a comment id carries.
-	doc := newDocument(entities.DocTypeTicketComment, key+"#"+cm.ID)
+	doc := newDocument(lore.DocTypeTicketComment, key+"#"+cm.ID)
 	doc.Title = "Comment on " + key
 	doc.Body = flatten(cm.Body)
 	doc.Author = cm.Author.name()
 	doc.URL = c.browseURL(key) + "?focusedCommentId=" + cm.ID
 	doc.CreatedAt, doc.UpdatedAt = timestamps(cm.Created.Time, cm.Updated.Time)
 
-	var refs refscan.Set
-	refs.Add(entities.RefKindTicketKey, key)
-	addTextRefs(&refs, doc.Body)
-	doc.Refs = refs.Refs()
+	var found refs.Set
+	found.Add(lore.RefKindTicketKey, key)
+	addTextRefs(&found, doc.Body)
+	doc.Refs = found.Refs()
 	return doc
 }
 
-func newDocument(t entities.DocType, externalID string) entities.Document {
-	return entities.Document{
-		ID:     entities.NewDocID(sourceName, t, externalID),
+func newDocument(t lore.DocType, externalID string) lore.Document {
+	return lore.Document{
+		ID:     lore.NewDocID(sourceName, t, externalID),
 		Source: sourceName,
 		Type:   t,
 	}
@@ -266,7 +266,7 @@ func validProjectKey(key string) bool {
 	return true
 }
 
-func addTextRefs(s *refscan.Set, text string) {
+func addTextRefs(s *refs.Set, text string) {
 	if text == "" {
 		return
 	}
@@ -276,9 +276,9 @@ func addTextRefs(s *refscan.Set, text string) {
 	s.AddFilePaths(text)
 }
 
-func withoutKey(refs []entities.RawRef, key string) []entities.RawRef {
-	return slices.DeleteFunc(refs, func(r entities.RawRef) bool {
-		return r.Kind == entities.RefKindTicketKey && r.Value == key
+func withoutKey(refs []lore.RawRef, key string) []lore.RawRef {
+	return slices.DeleteFunc(refs, func(r lore.RawRef) bool {
+		return r.Kind == lore.RefKindTicketKey && r.Value == key
 	})
 }
 
@@ -292,7 +292,7 @@ func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	return created, updated
 }
 
-func readCursor(c entities.Cursor) (unitKey, error) {
+func readCursor(c lore.Cursor) (unitKey, error) {
 	raw := c[cursorUpdatedKey]
 	if raw == "" {
 		return unitKey{}, nil
@@ -301,19 +301,19 @@ func readCursor(c entities.Cursor) (unitKey, error) {
 	if err != nil {
 		return unitKey{}, fmt.Errorf("jira: parse cursor watermark %q: %w", raw, err)
 	}
-	return unitKey{updatedAt: at, docID: entities.DocID(c[cursorDocKey])}, nil
+	return unitKey{updatedAt: at, docID: lore.DocID(c[cursorDocKey])}, nil
 }
 
 // Truncating Jira's milliseconds here would replay the watermark unit on every resume.
-func writeCursor(c entities.Cursor, k unitKey) {
+func writeCursor(c lore.Cursor, k unitKey) {
 	c[cursorUpdatedKey] = k.updatedAt.UTC().Format(time.RFC3339Nano)
 	c[cursorDocKey] = string(k.docID)
 }
 
 // A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c entities.Cursor) entities.Cursor {
+func cloneCursor(c lore.Cursor) lore.Cursor {
 	if len(c) == 0 {
-		return entities.Cursor{}
+		return lore.Cursor{}
 	}
 	return maps.Clone(c)
 }

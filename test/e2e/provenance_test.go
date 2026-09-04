@@ -11,6 +11,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -28,11 +29,11 @@ const (
 var incidentAt = time.Date(2024, time.March, 12, 9, 15, 0, 0, time.UTC)
 
 var (
-	incidentDocID = entities.NewDocID(githubSource, entities.DocTypeIssue, fixtureRepo+"/issues/61")
-	debateDocID   = entities.NewDocID(githubSource, entities.DocTypeIssue, fixtureRepo+"/issues/62")
-	decisionDocID = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/64")
-	revertDocID   = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/67")
-	unlinkedDocID = entities.NewDocID(githubSource, entities.DocTypeIssue, fixtureRepo+"/issues/69")
+	incidentDocID = lore.NewDocID(githubSource, lore.DocTypeIssue, fixtureRepo+"/issues/61")
+	debateDocID   = lore.NewDocID(githubSource, lore.DocTypeIssue, fixtureRepo+"/issues/62")
+	decisionDocID = lore.NewDocID(githubSource, lore.DocTypePR, fixtureRepo+"/pull/64")
+	revertDocID   = lore.NewDocID(githubSource, lore.DocTypePR, fixtureRepo+"/pull/67")
+	unlinkedDocID = lore.NewDocID(githubSource, lore.DocTypeIssue, fixtureRepo+"/issues/69")
 )
 
 // The chunker splits the decision body, so no retrieval excerpt holds both.
@@ -82,7 +83,7 @@ func impactOfTheDecision(ctx context.Context, t *testing.T, w *workspace) *entit
 	return bundle
 }
 
-func citedNode(bundle *entities.EvidenceBundle, id entities.DocID) (entities.EvidenceNode, bool) {
+func citedNode(bundle *entities.EvidenceBundle, id lore.DocID) (entities.EvidenceNode, bool) {
 	for _, node := range bundle.Nodes {
 		if node.Doc.ID == id {
 			return node, true
@@ -252,7 +253,7 @@ func assertChronological(t *testing.T, tool string, nodes []entities.EvidenceNod
 func assertBundleContract(t *testing.T, tool string, bundle *entities.EvidenceBundle) {
 	t.Helper()
 
-	cited := make(map[entities.DocID]bool, len(bundle.Nodes))
+	cited := make(map[lore.DocID]bool, len(bundle.Nodes))
 	for _, node := range bundle.Nodes {
 		if node.Doc.URL == "" {
 			t.Errorf("%s: node %s carries no URL, so it is not citable evidence", tool, node.Doc.ID)
@@ -316,8 +317,8 @@ func jsonText(t *testing.T, s string) string {
 	return string(quoted)
 }
 
-func citedIDs(bundle *entities.EvidenceBundle) []entities.DocID {
-	ids := make([]entities.DocID, len(bundle.Nodes))
+func citedIDs(bundle *entities.EvidenceBundle) []lore.DocID {
+	ids := make([]lore.DocID, len(bundle.Nodes))
 	for i, node := range bundle.Nodes {
 		ids[i] = node.Doc.ID
 	}

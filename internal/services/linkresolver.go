@@ -9,11 +9,12 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type LinkResolver interface {
 	// Refs of documents whose target is not ingested yet are recorded for retry.
-	Link(ctx context.Context, docs []entities.Document) error
+	Link(ctx context.Context, docs []lore.Document) error
 	LinkPending(ctx context.Context) error
 }
 
@@ -28,18 +29,18 @@ var (
 	supersedesRule    = edgeRule{entities.EdgeKindSupersedes, 0.8}
 )
 
-var refKindRules = map[entities.RefKind]edgeRule{
-	entities.RefKindURL:       {entities.EdgeKindReferencesDoc, 1.0},
-	entities.RefKindCommitSHA: {entities.EdgeKindMentionsCommit, 0.9},
-	entities.RefKindTicketKey: {entities.EdgeKindReferencesDoc, 0.9},
-	entities.RefKindPRNumber:  {entities.EdgeKindReferencesDoc, 0.9},
-	entities.RefKindFilePath:  {entities.EdgeKindMentionsPath, 0.7},
+var refKindRules = map[lore.RefKind]edgeRule{
+	lore.RefKindURL:       {entities.EdgeKindReferencesDoc, 1.0},
+	lore.RefKindCommitSHA: {entities.EdgeKindMentionsCommit, 0.9},
+	lore.RefKindTicketKey: {entities.EdgeKindReferencesDoc, 0.9},
+	lore.RefKindPRNumber:  {entities.EdgeKindReferencesDoc, 0.9},
+	lore.RefKindFilePath:  {entities.EdgeKindMentionsPath, 0.7},
 }
 
-var refTargetTypes = map[entities.RefKind][]entities.DocType{
-	entities.RefKindCommitSHA: {entities.DocTypeCommit},
-	entities.RefKindPRNumber:  {entities.DocTypePR, entities.DocTypeIssue},
-	entities.RefKindTicketKey: {entities.DocTypeTicket, entities.DocTypeIssue},
+var refTargetTypes = map[lore.RefKind][]lore.DocType{
+	lore.RefKindCommitSHA: {lore.DocTypeCommit},
+	lore.RefKindPRNumber:  {lore.DocTypePR, lore.DocTypeIssue},
+	lore.RefKindTicketKey: {lore.DocTypeTicket, lore.DocTypeIssue},
 }
 
 var supersedePhrases = []string{"supersede", "replaces", "replaced by"}
@@ -59,8 +60,8 @@ func NewLinkResolver(store repositories.IndexStore, repos []CodeRepo) LinkResolv
 	return &linkResolver{store: store, repos: slices.Clone(repos)}
 }
 
-func (l *linkResolver) Link(ctx context.Context, docs []entities.Document) error {
-	sources := make(map[entities.DocID]entities.Document, len(docs))
+func (l *linkResolver) Link(ctx context.Context, docs []lore.Document) error {
+	sources := make(map[lore.DocID]lore.Document, len(docs))
 	var refs []entities.PendingRef
 	for _, doc := range docs {
 		sources[doc.ID] = doc
@@ -86,7 +87,7 @@ type resolvedRef struct {
 	target entities.DocumentMeta
 }
 
-func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, inHand map[entities.DocID]entities.Document) error {
+func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, inHand map[lore.DocID]lore.Document) error {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -130,7 +131,7 @@ func (l *linkResolver) appendTargets(
 	logged map[loggedPath][]entities.DocumentMeta,
 	ref entities.PendingRef,
 ) ([]resolvedRef, error) {
-	if ref.Ref.Kind == entities.RefKindFilePath {
+	if ref.Ref.Kind == lore.RefKindFilePath {
 		commits, err := l.pathCommits(ctx, logged, ref.Ref.Value)
 		if err != nil {
 			return into, err
@@ -228,8 +229,8 @@ func (l *linkResolver) target(ctx context.Context, ref entities.PendingRef) (ent
 	return only, found == 1, nil
 }
 
-func admitsTarget(kind entities.RefKind, target entities.DocType) bool {
-	if kind == entities.RefKindURL {
+func admitsTarget(kind lore.RefKind, target lore.DocType) bool {
+	if kind == lore.RefKindURL {
 		return true
 	}
 
@@ -239,10 +240,10 @@ func admitsTarget(kind entities.RefKind, target entities.DocType) bool {
 func (l *linkResolver) sourceDocuments(
 	ctx context.Context,
 	resolved []resolvedRef,
-	inHand map[entities.DocID]entities.Document,
-) (map[entities.DocID]entities.Document, error) {
-	sources := make(map[entities.DocID]entities.Document, len(resolved))
-	var absent []entities.DocID
+	inHand map[lore.DocID]lore.Document,
+) (map[lore.DocID]lore.Document, error) {
+	sources := make(map[lore.DocID]lore.Document, len(resolved))
+	var absent []lore.DocID
 	for _, r := range resolved {
 		id := r.ref.SourceDoc
 		if _, seen := sources[id]; seen {
@@ -252,7 +253,7 @@ func (l *linkResolver) sourceDocuments(
 			sources[id] = doc
 			continue
 		}
-		sources[id] = entities.Document{}
+		sources[id] = lore.Document{}
 		absent = append(absent, id)
 	}
 
@@ -272,7 +273,7 @@ func (l *linkResolver) sourceDocuments(
 	return sources, nil
 }
 
-func edgeFor(source entities.Document, r resolvedRef) entities.Edge {
+func edgeFor(source lore.Document, r resolvedRef) entities.Edge {
 	rule := ruleFor(source, r)
 
 	return entities.Edge{
@@ -285,8 +286,8 @@ func edgeFor(source entities.Document, r resolvedRef) entities.Edge {
 
 // Neither the document type pair nor a supersede phrase qualifies a path ref: its
 // targets are commits the path itself picked, not documents the body talks about.
-func ruleFor(source entities.Document, r resolvedRef) edgeRule {
-	if kind := r.ref.Ref.Kind; kind == entities.RefKindFilePath {
+func ruleFor(source lore.Document, r resolvedRef) edgeRule {
+	if kind := r.ref.Ref.Kind; kind == lore.RefKindFilePath {
 		return refKindRules[kind]
 	}
 	if rule, explicit := explicitRelation(source.Type, r.target.Type); explicit {
@@ -298,19 +299,19 @@ func ruleFor(source entities.Document, r resolvedRef) edgeRule {
 
 // Connectors emit API relations and body-text matches under the same RefKind, so
 // the document type pair is the only thing that tells the two apart.
-func explicitRelation(source, target entities.DocType) (edgeRule, bool) {
+func explicitRelation(source, target lore.DocType) (edgeRule, bool) {
 	switch {
-	case source == entities.DocTypeCommit && target == entities.DocTypePR,
-		source == entities.DocTypePR && target == entities.DocTypeCommit:
+	case source == lore.DocTypeCommit && target == lore.DocTypePR,
+		source == lore.DocTypePR && target == lore.DocTypeCommit:
 		return commitInPRRule, true
-	case source == entities.DocTypePR && target == entities.DocTypeIssue:
+	case source == lore.DocTypePR && target == lore.DocTypeIssue:
 		return prClosesIssueRule, true
 	}
 
 	return edgeRule{}, false
 }
 
-func textRule(source entities.Document, ref entities.RawRef) edgeRule {
+func textRule(source lore.Document, ref lore.RawRef) edgeRule {
 	if hasSupersedePhrase(source, ref) {
 		return supersedesRule
 	}
@@ -318,7 +319,7 @@ func textRule(source entities.Document, ref entities.RawRef) edgeRule {
 	return refKindRules[ref.Kind]
 }
 
-func hasSupersedePhrase(source entities.Document, ref entities.RawRef) bool {
+func hasSupersedePhrase(source lore.Document, ref lore.RawRef) bool {
 	form := strings.ToLower(referenceBodyForm(ref))
 	for _, text := range [...]string{source.Title, source.Body} {
 		for line := range strings.Lines(text) {
@@ -376,8 +377,8 @@ func alphanumericAt(s string, i int) bool {
 }
 
 // A pr_number ref is repo-qualified ("acme/lore#123"); prose writes "#123".
-func referenceBodyForm(ref entities.RawRef) string {
-	if ref.Kind != entities.RefKindPRNumber {
+func referenceBodyForm(ref lore.RawRef) string {
+	if ref.Kind != lore.RefKindPRNumber {
 		return ref.Value
 	}
 

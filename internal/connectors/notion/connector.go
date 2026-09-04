@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/refscan"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/refs"
 )
 
 const (
@@ -26,7 +26,7 @@ const (
 	cursorDocKey        = "doc_id"
 )
 
-var _ entities.Connector = (*Connector)(nil)
+var _ lore.Connector = (*Connector)(nil)
 
 type Connector struct {
 	client    *client
@@ -80,21 +80,21 @@ func NewConnector(token string, rootPages []string, baseURL string, opts ...Opti
 
 func (c *Connector) Name() string { return sourceName }
 
-func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Seq2[entities.Batch, error] {
-	return func(yield func(entities.Batch, error) bool) {
+func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
 		state := cloneCursor(cursor)
 		from, err := readCursor(state)
 		if err != nil {
-			yield(entities.Batch{}, err)
+			yield(lore.Batch{}, err)
 			return
 		}
 		sc, err := c.resolveScope(ctx)
 		if err != nil {
-			yield(entities.Batch{}, err)
+			yield(lore.Batch{}, err)
 			return
 		}
 
-		docs := make([]entities.Document, 0, c.batchSize)
+		docs := make([]lore.Document, 0, c.batchSize)
 		pos := from
 		stopped := false
 		var buildErr error
@@ -102,11 +102,11 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 		walkErr := c.client.eachPage(ctx, "", func(p *page) bool {
 			// Notion orders search by last_edited_time alone, so a batch never closes mid-timestamp.
 			if len(docs) >= c.batchSize && p.LastEditedTime.After(pos.lastEditedAt) {
-				if !yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
 					stopped = true
 					return false
 				}
-				docs = make([]entities.Document, 0, c.batchSize)
+				docs = make([]lore.Document, 0, c.batchSize)
 			}
 
 			key := pageKey{lastEditedAt: p.LastEditedTime, docID: docID(p.ID)}
@@ -138,22 +138,22 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 		case stopped:
 			return
 		case buildErr != nil:
-			yield(entities.Batch{}, fmt.Errorf("notion: %w", buildErr))
+			yield(lore.Batch{}, fmt.Errorf("notion: %w", buildErr))
 			return
 		case walkErr != nil:
-			yield(entities.Batch{}, fmt.Errorf("notion: %w", walkErr))
+			yield(lore.Batch{}, fmt.Errorf("notion: %w", walkErr))
 			return
 		}
 		if len(docs) > 0 {
-			yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil)
+			yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil)
 		}
 	}
 }
 
-func (c *Connector) document(ctx context.Context, p *page) (entities.Document, error) {
+func (c *Connector) document(ctx context.Context, p *page) (lore.Document, error) {
 	blocks, err := c.client.blockTree(ctx, p.ID, 0)
 	if err != nil {
-		return entities.Document{}, fmt.Errorf("page %s: %w", p.ID, err)
+		return lore.Document{}, fmt.Errorf("page %s: %w", p.ID, err)
 	}
 	title, body := p.title(), flatten(blocks)
 	created, updated := p.CreatedTime, p.LastEditedTime
@@ -164,28 +164,28 @@ func (c *Connector) document(ctx context.Context, p *page) (entities.Document, e
 		updated = created
 	}
 
-	var refs refscan.Set
+	var found refs.Set
 	text := title + "\n" + body
-	refs.AddTicketKeys(text)
-	refs.AddURLs(text)
-	refs.AddCommitSHAs(text)
-	refs.AddFilePaths(text)
+	found.AddTicketKeys(text)
+	found.AddURLs(text)
+	found.AddCommitSHAs(text)
+	found.AddFilePaths(text)
 
-	return entities.Document{
+	return lore.Document{
 		ID:        docID(p.ID),
 		Source:    sourceName,
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     title,
 		Body:      body,
 		URL:       p.URL,
 		CreatedAt: created,
 		UpdatedAt: updated,
-		Refs:      refs.Refs(),
+		Refs:      found.Refs(),
 	}, nil
 }
 
-func docID(pageID string) entities.DocID {
-	return entities.NewDocID(sourceName, entities.DocTypePage, pageID)
+func docID(pageID string) lore.DocID {
+	return lore.NewDocID(sourceName, lore.DocTypePage, pageID)
 }
 
 type scope struct {
@@ -317,7 +317,7 @@ func isHexDigit(r rune) bool { return '0' <= r && r <= '9' || 'a' <= r && r <= '
 
 type pageKey struct {
 	lastEditedAt time.Time
-	docID        entities.DocID
+	docID        lore.DocID
 }
 
 func (k pageKey) after(o pageKey) bool {
@@ -327,7 +327,7 @@ func (k pageKey) after(o pageKey) bool {
 	return strings.Compare(string(k.docID), string(o.docID)) > 0
 }
 
-func readCursor(c entities.Cursor) (pageKey, error) {
+func readCursor(c lore.Cursor) (pageKey, error) {
 	raw := c[cursorLastEditedKey]
 	if raw == "" {
 		return pageKey{}, nil
@@ -336,20 +336,20 @@ func readCursor(c entities.Cursor) (pageKey, error) {
 	if err != nil {
 		return pageKey{}, fmt.Errorf("notion: parse cursor watermark %q: %w", raw, err)
 	}
-	return pageKey{lastEditedAt: at, docID: entities.DocID(c[cursorDocKey])}, nil
+	return pageKey{lastEditedAt: at, docID: lore.DocID(c[cursorDocKey])}, nil
 }
 
 // Notion edit times carry milliseconds, so the watermark keeps them: truncating
 // would replay every page sharing the second.
-func writeCursor(c entities.Cursor, k pageKey) {
+func writeCursor(c lore.Cursor, k pageKey) {
 	c[cursorLastEditedKey] = k.lastEditedAt.UTC().Format(time.RFC3339Nano)
 	c[cursorDocKey] = string(k.docID)
 }
 
 // A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c entities.Cursor) entities.Cursor {
+func cloneCursor(c lore.Cursor) lore.Cursor {
 	if len(c) == 0 {
-		return entities.Cursor{}
+		return lore.Cursor{}
 	}
 	return maps.Clone(c)
 }

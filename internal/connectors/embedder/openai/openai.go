@@ -9,16 +9,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
-var _ embedder.Embedder = (*Embedder)(nil)
+var _ lore.Embedder = (*Embedder)(nil)
 
 const DefaultBaseURL = "https://api.openai.com"
 
 const (
-	provider       = "openai"
 	embeddingsPath = "/v1/embeddings"
 
 	// maxInputsPerRequest splits caller batches: every vector comes back inline,
@@ -34,7 +33,6 @@ type Embedder struct {
 	model    string
 	dims     int
 	endpoint string
-	identity string
 	header   http.Header
 	client   *http.Client
 
@@ -67,8 +65,7 @@ func New(apiKey, model, baseURL string, dims int, opts ...Option) (*Embedder, er
 		apiKey:   apiKey,
 		model:    model,
 		dims:     dims,
-		endpoint: httpretry.Endpoint(baseURL, DefaultBaseURL, embeddingsPath),
-		identity: embedder.FormatIdentity(provider, model, dims),
+		endpoint: httpx.Endpoint(baseURL, DefaultBaseURL, embeddingsPath),
 		header: http.Header{
 			"Content-Type":  {"application/json"},
 			"Authorization": {"Bearer " + apiKey},
@@ -81,7 +78,9 @@ func New(apiKey, model, baseURL string, dims int, opts ...Option) (*Embedder, er
 	return e, nil
 }
 
-func (e *Embedder) Identity() string { return e.identity }
+// Dimensions is the width every vector this Embedder returns carries; the host
+// composes the vector-space identity from it.
+func (e *Embedder) Dimensions() int { return e.dims }
 
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
@@ -110,7 +109,7 @@ func (e *Embedder) embedBatch(ctx context.Context, texts []string) ([][]float32,
 		return nil, fmt.Errorf("openai: encode embeddings request: %w", err)
 	}
 
-	call := httpretry.Client{HTTP: e.client, Sleep: e.sleep, Op: "openai: embeddings", Secret: e.apiKey}
+	call := httpx.Client{HTTP: e.client, Sleep: e.sleep, Op: "openai: embeddings", Secret: e.apiKey}
 	var payload response
 	if err := call.PostJSON(ctx, e.endpoint, e.header, body, &payload); err != nil {
 		return nil, err

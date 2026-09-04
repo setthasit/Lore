@@ -9,16 +9,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
-var _ embedder.Embedder = (*Embedder)(nil)
+var _ lore.Embedder = (*Embedder)(nil)
 
 const DefaultBaseURL = "http://127.0.0.1:11434"
 
 const (
-	provider  = "ollama"
 	embedPath = "/api/embed"
 
 	// The daemon loads the model on the first call, which can take tens of seconds.
@@ -30,7 +29,6 @@ type Embedder struct {
 	model    string
 	dims     int
 	endpoint string
-	identity string
 	header   http.Header
 	client   *http.Client
 
@@ -60,8 +58,7 @@ func New(model, baseURL string, dims int, opts ...Option) (*Embedder, error) {
 	e := &Embedder{
 		model:    model,
 		dims:     dims,
-		endpoint: httpretry.Endpoint(baseURL, DefaultBaseURL, embedPath),
-		identity: embedder.FormatIdentity(provider, model, dims),
+		endpoint: httpx.Endpoint(baseURL, DefaultBaseURL, embedPath),
 		header:   http.Header{"Content-Type": {"application/json"}},
 		client:   &http.Client{Timeout: requestTimeout},
 	}
@@ -71,7 +68,9 @@ func New(model, baseURL string, dims int, opts ...Option) (*Embedder, error) {
 	return e, nil
 }
 
-func (e *Embedder) Identity() string { return e.identity }
+// Dimensions is the width every vector this Embedder returns carries; the host
+// composes the vector-space identity from it.
+func (e *Embedder) Dimensions() int { return e.dims }
 
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
@@ -88,7 +87,7 @@ func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 		return nil, fmt.Errorf("ollama: encode embeddings request: %w", err)
 	}
 
-	call := httpretry.Client{HTTP: e.client, Sleep: e.sleep, Op: "ollama: embeddings"}
+	call := httpx.Client{HTTP: e.client, Sleep: e.sleep, Op: "ollama: embeddings"}
 	var payload response
 	if err := call.PostJSON(ctx, e.endpoint, e.header, body, &payload); err != nil {
 		return nil, err

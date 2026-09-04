@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/refscan"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
+	"github.com/setthasit/Lore/sdk/refs"
 )
 
 const (
@@ -31,7 +31,7 @@ const (
 	cursorDocSuffix     = ":doc_id"
 )
 
-var _ entities.Connector = (*Connector)(nil)
+var _ lore.Connector = (*Connector)(nil)
 
 type Connector struct {
 	client    *client
@@ -74,7 +74,7 @@ func withBackoff(base time.Duration) Option {
 // ("group/project" or "group/subgroup/project"). An empty baseURL means
 // gitlab.com; a self-managed instance passes its root, "https://gitlab.acme.dev".
 func NewConnector(token string, projects []string, baseURL string, opts ...Option) *Connector {
-	root := httpretry.Endpoint(baseURL, DefaultBaseURL, "")
+	root := httpx.Endpoint(baseURL, DefaultBaseURL, "")
 	c := &Connector{
 		client:    newClient(root, token),
 		webRoot:   root,
@@ -90,28 +90,28 @@ func NewConnector(token string, projects []string, baseURL string, opts ...Optio
 func (c *Connector) Name() string { return sourceName }
 
 // Changes walks the configured projects in order, oldest-first within each.
-func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Seq2[entities.Batch, error] {
-	return func(yield func(entities.Batch, error) bool) {
+func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
 		state := cloneCursor(cursor)
 
 		for _, name := range c.projects {
 			p, err := parseProject(name)
 			if err != nil {
-				yield(entities.Batch{}, err)
+				yield(lore.Batch{}, err)
 				return
 			}
 			from, err := readCursor(state, p)
 			if err != nil {
-				yield(entities.Batch{}, err)
+				yield(lore.Batch{}, err)
 				return
 			}
 			units, err := c.projectUnits(ctx, p, from)
 			if err != nil {
-				yield(entities.Batch{}, fmt.Errorf("gitlab %s: %w", p.path, err))
+				yield(lore.Batch{}, fmt.Errorf("gitlab %s: %w", p.path, err))
 				return
 			}
 
-			docs := make([]entities.Document, 0, c.batchSize)
+			docs := make([]lore.Document, 0, c.batchSize)
 			pos := from
 			for i := range units {
 				u := &units[i]
@@ -126,12 +126,12 @@ func (c *Connector) Changes(ctx context.Context, cursor entities.Cursor) iter.Se
 				if len(docs) < c.batchSize {
 					continue
 				}
-				if !yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
 					return
 				}
-				docs = make([]entities.Document, 0, c.batchSize)
+				docs = make([]lore.Document, 0, c.batchSize)
 			}
-			if len(docs) > 0 && !yield(entities.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
 				return
 			}
 		}
@@ -185,7 +185,7 @@ func (c *Connector) commitURL(p project, sha string) string {
 // a watermark alone cannot tell an already-yielded one from a new one.
 type unitKey struct {
 	updatedAt time.Time
-	docID     entities.DocID
+	docID     lore.DocID
 }
 
 func (k unitKey) compare(o unitKey) int {
@@ -201,7 +201,7 @@ func (k unitKey) after(o unitKey) bool { return k.compare(o) > 0 }
 // their own — GitLab bumps the parent's updated_at when a note changes.
 type unit struct {
 	key  unitKey
-	docs []entities.Document
+	docs []lore.Document
 
 	// replayOnTie exempts the unit from the tiebreak: a commit is immutable and can
 	// be pushed long after its committed date, so one lost at a tie never comes back.
@@ -265,7 +265,7 @@ func (c *Connector) projectUnits(ctx context.Context, p project, from unitKey) (
 }
 
 func (c *Connector) commitUnit(ctx context.Context, p project, n *commit) (unit, error) {
-	doc := newDocument(entities.DocTypeCommit, p, p.path+"/commit/"+n.ID)
+	doc := newDocument(lore.DocTypeCommit, p, p.path+"/commit/"+n.ID)
 	doc.Title = n.Title
 	doc.Body = n.Message
 	doc.Author = n.AuthorName
@@ -276,16 +276,16 @@ func (c *Connector) commitUnit(ctx context.Context, p project, n *commit) (unit,
 	if err != nil {
 		return unit{}, err
 	}
-	var refs refscan.Set
+	var found refs.Set
 	for i := range diffs {
-		refs.AddAll(entities.RefKindFilePath, changedPaths(&diffs[i]))
+		found.AddAll(lore.RefKindFilePath, changedPaths(&diffs[i]))
 	}
-	addTextRefs(&refs, p, n.Message)
-	doc.Refs = refs.Refs()
+	addTextRefs(&found, p, n.Message)
+	doc.Refs = found.Refs()
 
 	return unit{
 		key:         unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID},
-		docs:        []entities.Document{doc},
+		docs:        []lore.Document{doc},
 		replayOnTie: true,
 	}, nil
 }
@@ -302,7 +302,7 @@ func (c *Connector) mergeRequestUnit(ctx context.Context, p project, n *mergeReq
 	// "/pull/" rather than GitLab's own "/-/merge_requests/": the index resolves a
 	// "group/project#123" reference against that external key, whatever the forge.
 	external := p.path + "/pull/" + strconv.Itoa(n.IID)
-	doc := newDocument(entities.DocTypePR, p, external)
+	doc := newDocument(lore.DocTypePR, p, external)
 	doc.Title = n.Title
 	doc.Body = n.Description
 	doc.Author = n.Author.display()
@@ -313,23 +313,23 @@ func (c *Connector) mergeRequestUnit(ctx context.Context, p project, n *mergeReq
 	if err != nil {
 		return unit{}, err
 	}
-	var refs refscan.Set
+	var found refs.Set
 	for i := range commits {
-		refs.Add(entities.RefKindCommitSHA, commits[i].ID)
+		found.Add(lore.RefKindCommitSHA, commits[i].ID)
 	}
-	refs.Add(entities.RefKindCommitSHA, n.SHA)
-	refs.Add(entities.RefKindCommitSHA, n.MergeCommitSHA)
-	refs.Add(entities.RefKindCommitSHA, n.SquashCommitSHA)
+	found.Add(lore.RefKindCommitSHA, n.SHA)
+	found.Add(lore.RefKindCommitSHA, n.MergeCommitSHA)
+	found.Add(lore.RefKindCommitSHA, n.SquashCommitSHA)
 	// The source branch name carries ticket keys ("feature/PROJ-123-retry").
-	addTextRefs(&refs, p, n.Title+"\n"+n.Description+"\n"+n.SourceBranch)
-	doc.Refs = refs.Refs()
+	addTextRefs(&found, p, n.Title+"\n"+n.Description+"\n"+n.SourceBranch)
+	doc.Refs = found.Refs()
 
 	discussions, err := c.client.mergeRequestDiscussions(ctx, p, n.IID)
 	if err != nil {
 		return unit{}, err
 	}
 	mr := parent{external: external, url: doc.URL, iid: n.IID}
-	docs := []entities.Document{doc}
+	docs := []lore.Document{doc}
 	for i := range discussions {
 		docs = append(docs, discussionDocs(p, mr, &discussions[i])...)
 	}
@@ -349,13 +349,13 @@ func (t parent) noteURL(id int64) string { return t.url + noteFragment(id) }
 // A resolvable thread is the closest GitLab has to a review: its opening note
 // states the position, the replies argue it. A standalone comment opens nothing,
 // so it stays a plain review comment.
-func discussionDocs(p project, mr parent, d *discussion) []entities.Document {
+func discussionDocs(p project, mr parent, d *discussion) []lore.Document {
 	notes := authored(d.Notes)
 	if len(notes) == 0 {
 		return nil
 	}
 
-	docs := make([]entities.Document, 0, len(notes))
+	docs := make([]lore.Document, 0, len(notes))
 	if !d.IndividualNote {
 		docs = append(docs, reviewDoc(p, mr, notes[0]))
 		notes = notes[1:]
@@ -378,66 +378,66 @@ func authored(notes []note) []*note {
 	return out
 }
 
-func reviewDoc(p project, mr parent, n *note) entities.Document {
-	doc := newDocument(entities.DocTypePRReview, p, mr.external+noteFragment(n.ID))
+func reviewDoc(p project, mr parent, n *note) lore.Document {
+	doc := newDocument(lore.DocTypePRReview, p, mr.external+noteFragment(n.ID))
 	doc.Title = reviewTitle(p, mr.iid, n)
 	doc.Body = n.Body
 	doc.Author = n.Author.display()
 	doc.URL = mr.noteURL(n.ID)
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
-	var refs refscan.Set
-	refs.AddAll(entities.RefKindFilePath, n.Position.paths())
-	refs.Add(entities.RefKindPRNumber, p.numberRef(mr.iid))
-	addTextRefs(&refs, p, n.Body)
-	doc.Refs = refs.Refs()
+	var found refs.Set
+	found.AddAll(lore.RefKindFilePath, n.Position.paths())
+	found.Add(lore.RefKindPRNumber, p.numberRef(mr.iid))
+	addTextRefs(&found, p, n.Body)
+	doc.Refs = found.Refs()
 	return doc
 }
 
-func reviewCommentDoc(p project, mr parent, n *note) entities.Document {
-	doc := newDocument(entities.DocTypeReviewComment, p, mr.external+noteFragment(n.ID))
+func reviewCommentDoc(p project, mr parent, n *note) lore.Document {
+	doc := newDocument(lore.DocTypeReviewComment, p, mr.external+noteFragment(n.ID))
 	doc.Title = reviewCommentTitle(p, mr.iid, n.Position.path())
 	doc.Body = n.Body
 	doc.Author = n.Author.display()
 	doc.URL = mr.noteURL(n.ID)
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
-	var refs refscan.Set
-	refs.AddAll(entities.RefKindFilePath, n.Position.paths())
-	refs.Add(entities.RefKindPRNumber, p.numberRef(mr.iid))
-	addTextRefs(&refs, p, n.Body)
-	doc.Refs = refs.Refs()
+	var found refs.Set
+	found.AddAll(lore.RefKindFilePath, n.Position.paths())
+	found.Add(lore.RefKindPRNumber, p.numberRef(mr.iid))
+	addTextRefs(&found, p, n.Body)
+	doc.Refs = found.Refs()
 	return doc
 }
 
 func (c *Connector) issueUnit(ctx context.Context, p project, n *issue) (unit, error) {
 	external := p.path + "/issues/" + strconv.Itoa(n.IID)
-	doc := newDocument(entities.DocTypeIssue, p, external)
+	doc := newDocument(lore.DocTypeIssue, p, external)
 	doc.Title = n.Title
 	doc.Body = n.Description
 	doc.Author = n.Author.display()
 	doc.URL = cmp.Or(n.WebURL, c.issueURL(p, n.IID))
 	doc.CreatedAt, doc.UpdatedAt = timestamps(n.CreatedAt, n.UpdatedAt)
 
-	var refs refscan.Set
-	addTextRefs(&refs, p, n.Title+"\n"+n.Description)
-	doc.Refs = refs.Refs()
+	var found refs.Set
+	addTextRefs(&found, p, n.Title+"\n"+n.Description)
+	doc.Refs = found.Refs()
 
 	notes, err := c.client.issueNotes(ctx, p, n.IID)
 	if err != nil {
 		return unit{}, err
 	}
-	docs := []entities.Document{doc}
+	docs := []lore.Document{doc}
 	for _, cm := range authored(notes) {
-		cdoc := newDocument(entities.DocTypeIssueComment, p, external+noteFragment(cm.ID))
+		cdoc := newDocument(lore.DocTypeIssueComment, p, external+noteFragment(cm.ID))
 		cdoc.Title = "Comment on " + p.issueLabel(n.IID)
 		cdoc.Body = cm.Body
 		cdoc.Author = cm.Author.display()
 		cdoc.URL = doc.URL + noteFragment(cm.ID)
 		cdoc.CreatedAt, cdoc.UpdatedAt = timestamps(cm.CreatedAt, cm.UpdatedAt)
 
-		var crefs refscan.Set
-		crefs.Add(entities.RefKindPRNumber, p.numberRef(n.IID))
+		var crefs refs.Set
+		crefs.Add(lore.RefKindPRNumber, p.numberRef(n.IID))
 		addTextRefs(&crefs, p, cm.Body)
 		cdoc.Refs = crefs.Refs()
 
@@ -446,9 +446,9 @@ func (c *Connector) issueUnit(ctx context.Context, p project, n *issue) (unit, e
 	return unit{key: unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID}, docs: docs}, nil
 }
 
-func newDocument(t entities.DocType, p project, externalID string) entities.Document {
-	return entities.Document{
-		ID:      entities.NewDocID(sourceName, t, externalID),
+func newDocument(t lore.DocType, p project, externalID string) lore.Document {
+	return lore.Document{
+		ID:      lore.NewDocID(sourceName, t, externalID),
 		Source:  sourceName,
 		Type:    t,
 		RepoRef: p.ref(),
@@ -479,7 +479,7 @@ func reviewCommentTitle(p project, iid int, path string) string {
 var crossRefPattern = regexp.MustCompile(`(?:((?:[A-Za-z0-9][A-Za-z0-9._-]*/)+[A-Za-z0-9][A-Za-z0-9._-]*))?[#!](\d+)`)
 
 // Precision is the resolver's problem: an unresolvable match never becomes an edge.
-func addTextRefs(s *refscan.Set, p project, text string) {
+func addTextRefs(s *refs.Set, p project, text string) {
 	if text == "" {
 		return
 	}
@@ -490,7 +490,7 @@ func addTextRefs(s *refscan.Set, p project, text string) {
 		if path == "" {
 			path = p.path
 		}
-		s.Add(entities.RefKindPRNumber, path+"#"+m[2])
+		s.Add(lore.RefKindPRNumber, path+"#"+m[2])
 	}
 	s.AddCommitSHAs(text)
 }
@@ -507,7 +507,7 @@ func timestamps(created, updated time.Time) (time.Time, time.Time) {
 }
 
 // A malformed watermark is an error rather than a silent full re-backfill.
-func readCursor(c entities.Cursor, p project) (unitKey, error) {
+func readCursor(c lore.Cursor, p project) (unitKey, error) {
 	raw := c[p.path+cursorUpdatedSuffix]
 	if raw == "" {
 		return unitKey{}, nil
@@ -516,19 +516,19 @@ func readCursor(c entities.Cursor, p project) (unitKey, error) {
 	if err != nil {
 		return unitKey{}, fmt.Errorf("gitlab %s: parse cursor watermark %q: %w", p.path, raw, err)
 	}
-	return unitKey{updatedAt: at, docID: entities.DocID(c[p.path+cursorDocSuffix])}, nil
+	return unitKey{updatedAt: at, docID: lore.DocID(c[p.path+cursorDocSuffix])}, nil
 }
 
 // Truncating GitLab's milliseconds here would replay the watermark unit on every resume.
-func writeCursor(c entities.Cursor, p project, k unitKey) {
+func writeCursor(c lore.Cursor, p project, k unitKey) {
 	c[p.path+cursorUpdatedSuffix] = k.updatedAt.UTC().Format(time.RFC3339Nano)
 	c[p.path+cursorDocSuffix] = string(k.docID)
 }
 
 // A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c entities.Cursor) entities.Cursor {
+func cloneCursor(c lore.Cursor) lore.Cursor {
 	if len(c) == 0 {
-		return entities.Cursor{}
+		return lore.Cursor{}
 	}
 	return maps.Clone(c)
 }

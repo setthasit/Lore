@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -81,14 +82,14 @@ var benchQueryTemplates = []string{
 
 var benchDocKinds = []struct {
 	source  string
-	docType entities.DocType
+	docType lore.DocType
 	repoRef string
 }{
-	{"github", entities.DocTypeCommit, "github:acme/lore"},
-	{"github", entities.DocTypePR, "github:acme/lore"},
-	{"github", entities.DocTypeIssue, "github:acme/other"},
-	{"notion", entities.DocTypePage, ""},
-	{"jira", entities.DocTypeTicket, ""},
+	{"github", lore.DocTypeCommit, "github:acme/lore"},
+	{"github", lore.DocTypePR, "github:acme/lore"},
+	{"github", lore.DocTypeIssue, "github:acme/other"},
+	{"notion", lore.DocTypePage, ""},
+	{"jira", lore.DocTypeTicket, ""},
 }
 
 var benchAuthors = []string{"dev@example.test", "reviewer@example.test", "ops@example.test"}
@@ -110,10 +111,10 @@ func openBenchStore(b *testing.B) *Store {
 
 // The generator is seeded per document, so index i means the same bytes whatever
 // order or iteration count the benchmark loop settles on.
-func benchDoc(i int) (entities.Document, []entities.Chunk) {
+func benchDoc(i int) (lore.Document, []entities.Chunk) {
 	rng := rand.New(rand.NewPCG(benchSeed, uint64(i)))
 	kind := benchDocKinds[i%len(benchDocKinds)]
-	id := entities.NewDocID(kind.source, kind.docType, strconv.Itoa(i))
+	id := lore.NewDocID(kind.source, kind.docType, strconv.Itoa(i))
 	created := benchEpoch.Add(time.Duration(i) * time.Hour)
 	author := benchAuthors[i%len(benchAuthors)]
 
@@ -137,7 +138,7 @@ func benchDoc(i int) (entities.Document, []entities.Chunk) {
 		}
 	}
 
-	doc := entities.Document{
+	doc := lore.Document{
 		ID:        id,
 		Source:    kind.source,
 		Type:      kind.docType,
@@ -178,8 +179,8 @@ func benchVector(rng *rand.Rand) []float32 {
 	return v
 }
 
-func benchBatch(start, n int) ([]entities.Document, [][]entities.Chunk) {
-	docs := make([]entities.Document, n)
+func benchBatch(start, n int) ([]lore.Document, [][]entities.Chunk) {
+	docs := make([]lore.Document, n)
 	chunks := make([][]entities.Chunk, n)
 	for i := range n {
 		docs[i], chunks[i] = benchDoc(start + i)
@@ -187,7 +188,7 @@ func benchBatch(start, n int) ([]entities.Document, [][]entities.Chunk) {
 	return docs, chunks
 }
 
-func ingestBatch(b *testing.B, s *Store, docs []entities.Document, chunks [][]entities.Chunk) {
+func ingestBatch(b *testing.B, s *Store, docs []lore.Document, chunks [][]entities.Chunk) {
 	b.Helper()
 	ctx := context.Background()
 

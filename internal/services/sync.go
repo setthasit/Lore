@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const metaKeyEmbedderIdentity = "embedder_identity"
@@ -45,10 +45,11 @@ type SyncOrchestrator interface {
 
 type syncOrchestrator struct {
 	store      repositories.IndexStore
-	connectors []entities.Connector
+	connectors []lore.Connector
 	chunker    Chunker
-	emb        embedder.Embedder
+	emb        lore.Embedder
 	links      LinkResolver
+	space      VectorSpace
 	holder     string
 	heartbeat  time.Duration
 	now        func() time.Time
@@ -59,10 +60,11 @@ var _ SyncOrchestrator = (*syncOrchestrator)(nil)
 
 func NewSyncOrchestrator(
 	store repositories.IndexStore,
-	connectors []entities.Connector,
+	connectors []lore.Connector,
 	chunker Chunker,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	links LinkResolver,
+	space VectorSpace,
 ) SyncOrchestrator {
 	return &syncOrchestrator{
 		store:      store,
@@ -70,6 +72,7 @@ func NewSyncOrchestrator(
 		chunker:    chunker,
 		emb:        emb,
 		links:      links,
+		space:      space,
 		holder:     leaseHolder(),
 		heartbeat:  heartbeatInterval,
 		now:        time.Now,
@@ -142,7 +145,7 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 func (s *syncOrchestrator) runRound(
 	round context.Context,
 	opts SyncOptions,
-	selected []entities.Connector,
+	selected []lore.Connector,
 	progress *syncProgress,
 ) error {
 	if err := s.reconcileIdentity(round, opts); err != nil {
@@ -164,13 +167,13 @@ func (s *syncOrchestrator) runRound(
 	return nil
 }
 
-func (s *syncOrchestrator) selectConnectors(source string) ([]entities.Connector, error) {
+func (s *syncOrchestrator) selectConnectors(source string) ([]lore.Connector, error) {
 	if source == "" {
 		return s.connectors, nil
 	}
 	for _, conn := range s.connectors {
 		if conn.Name() == source {
-			return []entities.Connector{conn}, nil
+			return []lore.Connector{conn}, nil
 		}
 	}
 
@@ -266,7 +269,7 @@ func (s *syncOrchestrator) leaseHeldError(ctx context.Context) error {
 }
 
 func (s *syncOrchestrator) reconcileIdentity(ctx context.Context, opts SyncOptions) error {
-	want := s.emb.Identity()
+	want := s.space.String()
 
 	stored, err := s.store.Meta(ctx, metaKeyEmbedderIdentity)
 	if err != nil {
@@ -315,7 +318,7 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 	return nil
 }
 
-func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Connector, progress *syncProgress) error {
+func (s *syncOrchestrator) syncConnector(ctx context.Context, conn lore.Connector, progress *syncProgress) error {
 	name := conn.Name()
 
 	cursor, err := s.store.Cursor(ctx, name)
@@ -353,7 +356,7 @@ func (s *syncOrchestrator) syncConnector(ctx context.Context, conn entities.Conn
 }
 
 // ReplaceChunks requires the parent document to exist, so documents commit first.
-func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch entities.Batch) (int, error) {
+func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch lore.Batch) (int, error) {
 	if err := s.store.UpsertDocuments(ctx, batch.Docs); err != nil {
 		return 0, internalerror.NewInternalError(
 			fmt.Sprintf("could not store %d documents from %s", len(batch.Docs), name), err)
@@ -373,7 +376,7 @@ func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch e
 }
 
 // A document that chunks to nothing still calls ReplaceChunks, or the previous edit's chunks stay retrievable.
-func (s *syncOrchestrator) indexDocument(ctx context.Context, doc entities.Document) (int, error) {
+func (s *syncOrchestrator) indexDocument(ctx context.Context, doc lore.Document) (int, error) {
 	chunks := s.chunker.Chunk(doc)
 
 	if len(chunks) > 0 {

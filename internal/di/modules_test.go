@@ -15,12 +15,11 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/setthasit/Lore/internal/config"
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/llm"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -46,13 +45,13 @@ func gitClone(t *testing.T) string {
 	return dir
 }
 
-func resolveWorkspace(t *testing.T, path string) ([]entities.Connector, error) {
+func resolveWorkspace(t *testing.T, path string) ([]lore.Connector, error) {
 	t.Helper()
 
 	var (
 		query      services.QueryService
 		orch       services.SyncOrchestrator
-		connectors []entities.Connector
+		connectors []lore.Connector
 	)
 	app := fx.New(
 		fx.NopLogger,
@@ -161,23 +160,26 @@ func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
 	}
 }
 
-func resolveEmbedder(t *testing.T, path string) (embedder.Embedder, error) {
+func resolveEmbedder(t *testing.T, path string) (lore.Embedder, services.VectorSpace, error) {
 	t.Helper()
 
-	var emb embedder.Embedder
-	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&emb))
+	var (
+		emb   lore.Embedder
+		space services.VectorSpace
+	)
+	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&emb, &space))
 	if err := app.Err(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	ctx := context.Background()
 	if err := app.Start(ctx); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := app.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	return emb, nil
+	return emb, space, nil
 }
 
 func TestWorkspaceGraphResolvesTheOllamaEmbedder(t *testing.T) {
@@ -193,12 +195,17 @@ embedder:
   dimensions: 768
 `)
 
-	emb, err := resolveEmbedder(t, path)
+	emb, space, err := resolveEmbedder(t, path)
 	if err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if want := "ollama/nomic-embed-text/768"; emb.Identity() != want {
-		t.Errorf("Identity = %q, want %q", emb.Identity(), want)
+	if got := emb.Dimensions(); got != 768 {
+		t.Errorf("Dimensions = %d, want 768", got)
+	}
+	// The host composes the identity from the provider name, the model and the
+	// width the embedder reports; the provider never names a vector space itself.
+	if want := services.VectorSpace("ollama/nomic-embed-text/768"); space != want {
+		t.Errorf("vector space = %q, want %q", space, want)
 	}
 }
 
@@ -210,7 +217,7 @@ embedder:
   model: nomic-embed-text
 `)
 
-	_, err := resolveEmbedder(t, path)
+	_, _, err := resolveEmbedder(t, path)
 	if err == nil {
 		t.Fatal("resolve workspace: want an error naming embedder.dimensions")
 	}
@@ -234,7 +241,7 @@ embedder:
   dimensions: 1024
 `)
 
-	_, err := resolveEmbedder(t, path)
+	_, _, err := resolveEmbedder(t, path)
 	if err == nil {
 		t.Fatal("resolve workspace: want an error naming the provider")
 	}
@@ -259,7 +266,7 @@ embedder:
   dimensions: 512
 `)
 
-	_, err := resolveEmbedder(t, path)
+	_, _, err := resolveEmbedder(t, path)
 	if err == nil {
 		t.Fatal("resolve workspace: want an error rejecting a width openai derives itself")
 	}
@@ -273,12 +280,12 @@ embedder:
 
 const llmKeyEnv = "LORE_TEST_LLM_KEY"
 
-func resolveSynthesis(t *testing.T, path string) (services.SynthesisService, llm.LLM, error) {
+func resolveSynthesis(t *testing.T, path string) (services.SynthesisService, lore.Completer, error) {
 	t.Helper()
 
 	var (
 		svc   services.SynthesisService
-		model llm.LLM
+		model lore.Completer
 	)
 	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&svc, &model))
 	if err := app.Err(); err != nil {

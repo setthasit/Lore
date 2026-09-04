@@ -13,6 +13,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -46,10 +47,10 @@ const (
 )
 
 var (
-	incidentTicketID = entities.NewDocID(jiraSource, entities.DocTypeTicket, "INC-201")
-	debateTicketID   = entities.NewDocID(jiraSource, entities.DocTypeTicket, "ARCH-88")
-	followUpTicketID = entities.NewDocID(jiraSource, entities.DocTypeTicket, "OPS-410")
-	decisionPageID   = entities.NewDocID(notionSource, entities.DocTypePage, notionDecisionPageID)
+	incidentTicketID = lore.NewDocID(jiraSource, lore.DocTypeTicket, "INC-201")
+	debateTicketID   = lore.NewDocID(jiraSource, lore.DocTypeTicket, "ARCH-88")
+	followUpTicketID = lore.NewDocID(jiraSource, lore.DocTypeTicket, "OPS-410")
+	decisionPageID   = lore.NewDocID(notionSource, lore.DocTypePage, notionDecisionPageID)
 )
 
 var incidentCreatedAt = time.Date(2024, time.June, 3, 9, 15, 0, 0, time.UTC)
@@ -74,7 +75,7 @@ func askOnlyWorkspace(ctx context.Context, t *testing.T) *workspace {
 	api := newFixtureAPI(t, corpusDir(askOnlyFixtures), askOnlyHost)
 	api.listen(api.serveAskOnly)
 
-	w := newIndexedWorkspace(t, api, []entities.Connector{
+	w := newIndexedWorkspace(t, api, []lore.Connector{
 		notion.NewConnector(askOnlyNotionToken, []string{notionRootPageID}, api.server.URL),
 		jira.NewConnector(api.server.URL, askOnlyJiraEmail, askOnlyJiraToken, askOnlyProjects()),
 	}, nil)
@@ -204,8 +205,8 @@ func TestAskOnlyFindDecisionWindowsOnTheJiraIncidentAndChainsToTheNotionPage(t *
 	}
 
 	wantChains := []string{
-		chainText([]entities.DocID{debateTicketID, incidentTicketID}),
-		chainText([]entities.DocID{followUpTicketID, decisionPageID, incidentTicketID}),
+		chainText([]lore.DocID{debateTicketID, incidentTicketID}),
+		chainText([]lore.DocID{followUpTicketID, decisionPageID, incidentTicketID}),
 	}
 	if got := sortedChains(bundle.Chains); !slices.Equal(got, wantChains) {
 		t.Errorf("find_decision chains = %q, want %q", got, wantChains)
@@ -221,7 +222,7 @@ func TestAskOnlyFindDecisionWindowsOnTheJiraIncidentAndChainsToTheNotionPage(t *
 		t.Errorf("the rejected-alternative ticket %s carries no URL, so it is not citable", debateTicketID)
 	}
 
-	wantCited := []entities.DocID{debateTicketID, incidentTicketID, followUpTicketID, decisionPageID}
+	wantCited := []lore.DocID{debateTicketID, incidentTicketID, followUpTicketID, decisionPageID}
 	got := citedIDs(bundle)
 	slices.Sort(got)
 	slices.Sort(wantCited)
@@ -241,7 +242,7 @@ func TestAskOnlyImpactOfTheNotionDecisionSurfacesTheLaterJiraTicket(t *testing.T
 		t.Fatalf("impact anchor = %+v, want the decision page %s", bundle.Anchor.Doc, decisionPageID)
 	}
 
-	wantTimeline := []entities.DocID{decisionPageID, followUpTicketID}
+	wantTimeline := []lore.DocID{decisionPageID, followUpTicketID}
 	if got := citedIDs(bundle); !slices.Equal(got, wantTimeline) {
 		t.Fatalf("impact_of timeline = %v, want %v", got, wantTimeline)
 	}
@@ -258,7 +259,7 @@ func TestAskOnlyImpactOfTheNotionDecisionSurfacesTheLaterJiraTicket(t *testing.T
 			followUpTicketID, followUp.Role, entities.RoleFollowUp)
 	}
 
-	wantChains := []string{chainText([]entities.DocID{decisionPageID, followUpTicketID})}
+	wantChains := []string{chainText([]lore.DocID{decisionPageID, followUpTicketID})}
 	if got := sortedChains(bundle.Chains); !slices.Equal(got, wantChains) {
 		t.Errorf("impact_of chains = %q, want %q", got, wantChains)
 	}
@@ -287,14 +288,14 @@ func TestAskOnlyWhyRefusesForWantOfACodeAnchor(t *testing.T) {
 }
 
 // The whole point of an ask-only workspace: provenance that no single source holds.
-func assertSpansBothSources(t *testing.T, tool string, chains [][]entities.DocID) {
+func assertSpansBothSources(t *testing.T, tool string, chains [][]lore.DocID) {
 	t.Helper()
 
 	for _, chain := range chains {
-		jiraHop := slices.ContainsFunc(chain, func(id entities.DocID) bool {
+		jiraHop := slices.ContainsFunc(chain, func(id lore.DocID) bool {
 			return strings.HasPrefix(string(id), jiraSource+":")
 		})
-		notionHop := slices.ContainsFunc(chain, func(id entities.DocID) bool {
+		notionHop := slices.ContainsFunc(chain, func(id lore.DocID) bool {
 			return strings.HasPrefix(string(id), notionSource+":")
 		})
 		if jiraHop && notionHop {
@@ -305,7 +306,7 @@ func assertSpansBothSources(t *testing.T, tool string, chains [][]entities.DocID
 	t.Errorf("%s: no chain in %v runs from Jira into Notion", tool, chains)
 }
 
-func sortedChains(chains [][]entities.DocID) []string {
+func sortedChains(chains [][]lore.DocID) []string {
 	texts := make([]string, len(chains))
 	for i, chain := range chains {
 		texts[i] = chainText(chain)
@@ -315,7 +316,7 @@ func sortedChains(chains [][]entities.DocID) []string {
 	return texts
 }
 
-func chainText(chain []entities.DocID) string {
+func chainText(chain []lore.DocID) string {
 	hops := make([]string, len(chain))
 	for i, id := range chain {
 		hops[i] = string(id)

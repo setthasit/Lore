@@ -3,8 +3,8 @@
 package zai
 
 import (
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
 	"github.com/setthasit/Lore/internal/connectors/llm/openai"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
 // DefaultBaseURL reaches the global endpoint; the China deployment is selected
@@ -15,5 +15,5 @@ const chatPath = "/paas/v4/chat/completions"
 
 // New builds a client for model at baseURL; empty baseURL means DefaultBaseURL.
 func New(apiKey, model, baseURL string, opts ...openai.Option) (*openai.Client, error) {
-	return openai.NewCompatible("zai", apiKey, model, httpretry.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
+	return openai.NewCompatible("zai", apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -39,8 +40,8 @@ const (
 )
 
 var (
-	whyPRDocID    = entities.NewDocID(githubSource, entities.DocTypePR, fixtureRepo+"/pull/91")
-	whyIssueDocID = entities.NewDocID(githubSource, entities.DocTypeIssue, fixtureRepo+"/issues/88")
+	whyPRDocID    = lore.NewDocID(githubSource, lore.DocTypePR, fixtureRepo+"/pull/91")
+	whyIssueDocID = lore.NewDocID(githubSource, lore.DocTypeIssue, fixtureRepo+"/issues/88")
 )
 
 // Line 3 opens the span, line 4 holds the field the unsynced commit renames and
@@ -189,7 +190,7 @@ func whyWorkspace(ctx context.Context, t *testing.T, fixtures string, repos []se
 	api := newFixtureAPI(t, fixtures, fixtureHost)
 	api.listen(api.serve)
 
-	w := newIndexedWorkspace(t, api, []entities.Connector{
+	w := newIndexedWorkspace(t, api, []lore.Connector{
 		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
 	}, repos)
 	w.sync(ctx, t, whyFixtures)
@@ -211,8 +212,8 @@ func whyOfTheBlamedSpan(ctx context.Context, w *workspace) (*entities.EvidenceBu
 	})
 }
 
-func commitDocID(sha string) entities.DocID {
-	return entities.NewDocID(githubSource, entities.DocTypeCommit, fixtureRepo+"/commit/"+sha)
+func commitDocID(sha string) lore.DocID {
+	return lore.NewDocID(githubSource, lore.DocTypeCommit, fixtureRepo+"/commit/"+sha)
 }
 
 func TestWhyAnchorsABlamedSpanOnTheCommitsPullRequestAndIssueBehindIt(t *testing.T) {
@@ -232,8 +233,8 @@ func TestWhyAnchorsABlamedSpanOnTheCommitsPullRequestAndIssueBehindIt(t *testing
 	assertWhyCitations(t, w, bundle, corpus)
 	assertBlamedExcerpts(t, bundle, corpus)
 
-	run := []entities.DocID{commitDocID(corpus.anchor), whyPRDocID, whyIssueDocID}
-	if !slices.ContainsFunc(bundle.Chains, func(chain []entities.DocID) bool { return chainRuns(chain, run) }) {
+	run := []lore.DocID{commitDocID(corpus.anchor), whyPRDocID, whyIssueDocID}
+	if !slices.ContainsFunc(bundle.Chains, func(chain []lore.DocID) bool { return chainRuns(chain, run) }) {
 		t.Errorf("no chain walks %v end to end; chains: %v", run, bundle.Chains)
 	}
 
@@ -291,7 +292,7 @@ func assertWhyCitations(t *testing.T, w *workspace, bundle *entities.EvidenceBun
 	t.Helper()
 
 	wanted := []struct {
-		id   entities.DocID
+		id   lore.DocID
 		role string
 		path string
 	}{
@@ -323,7 +324,7 @@ func assertBlamedExcerpts(t *testing.T, bundle *entities.EvidenceBundle, corpus 
 	t.Helper()
 
 	owned := []struct {
-		id   entities.DocID
+		id   lore.DocID
 		line string
 	}{
 		{commitDocID(corpus.anchor), "type Writer struct {"},
@@ -341,7 +342,7 @@ func assertBlamedExcerpts(t *testing.T, bundle *entities.EvidenceBundle, corpus 
 	}
 }
 
-func chainRuns(chain, run []entities.DocID) bool {
+func chainRuns(chain, run []lore.DocID) bool {
 	for i := range len(chain) - len(run) + 1 {
 		if slices.Equal(chain[i:i+len(run)], run) {
 			return true

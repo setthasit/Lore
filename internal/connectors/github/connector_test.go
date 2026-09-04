@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/conformance"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 const (
@@ -31,28 +31,28 @@ const (
 
 // Documents the fixtures are expected to produce, in stream order.
 const (
-	commitBID   entities.DocID = "github:commit:acme/widgets/commit/" + shaB
-	commitAID   entities.DocID = "github:commit:acme/widgets/commit/" + shaA
-	pr42ID      entities.DocID = "github:pr:acme/widgets/pull/42"
-	review1ID   entities.DocID = "github:pr_review:acme/widgets/pull/42#pullrequestreview-8801"
-	comment1ID  entities.DocID = "github:review_comment:acme/widgets/pull/42#discussion_r9901"
-	comment2ID  entities.DocID = "github:review_comment:acme/widgets/pull/42#discussion_r9902"
-	review2ID   entities.DocID = "github:pr_review:acme/widgets/pull/42#pullrequestreview-8802"
-	issue41ID   entities.DocID = "github:issue:acme/widgets/issues/41"
-	icomment1ID entities.DocID = "github:issue_comment:acme/widgets/issues/41#issuecomment-7701"
-	icomment2ID entities.DocID = "github:issue_comment:acme/widgets/issues/41#issuecomment-7702"
+	commitBID   lore.DocID = "github:commit:acme/widgets/commit/" + shaB
+	commitAID   lore.DocID = "github:commit:acme/widgets/commit/" + shaA
+	pr42ID      lore.DocID = "github:pr:acme/widgets/pull/42"
+	review1ID   lore.DocID = "github:pr_review:acme/widgets/pull/42#pullrequestreview-8801"
+	comment1ID  lore.DocID = "github:review_comment:acme/widgets/pull/42#discussion_r9901"
+	comment2ID  lore.DocID = "github:review_comment:acme/widgets/pull/42#discussion_r9902"
+	review2ID   lore.DocID = "github:pr_review:acme/widgets/pull/42#pullrequestreview-8802"
+	issue41ID   lore.DocID = "github:issue:acme/widgets/issues/41"
+	icomment1ID lore.DocID = "github:issue_comment:acme/widgets/issues/41#issuecomment-7701"
+	icomment2ID lore.DocID = "github:issue_comment:acme/widgets/issues/41#issuecomment-7702"
 )
 
-func wantBatchedIDs() [][]entities.DocID {
-	return [][]entities.DocID{
+func wantBatchedIDs() [][]lore.DocID {
+	return [][]lore.DocID{
 		{commitBID, commitAID},
 		{pr42ID, review1ID, comment1ID, comment2ID, review2ID},
 		{issue41ID, icomment1ID, icomment2ID},
 	}
 }
 
-func wantCursors() []entities.Cursor {
-	return []entities.Cursor{
+func wantCursors() []lore.Cursor {
+	return []lore.Cursor{
 		{"acme/widgets:updated_at": "2024-05-03T12:00:00Z", "acme/widgets:doc_id": string(commitAID)},
 		{"acme/widgets:updated_at": "2024-05-04T15:00:00Z", "acme/widgets:doc_id": string(pr42ID)},
 		{"acme/widgets:updated_at": "2024-05-05T10:00:00Z", "acme/widgets:doc_id": string(issue41ID)},
@@ -200,14 +200,14 @@ func (s *stub) authHeader() string {
 }
 
 type stream struct {
-	batches  []entities.Batch
+	batches  []lore.Batch
 	err      error
 	afterErr int // yields observed after the first error: must stay 0
 }
 
 // drain consumes the whole iterator without breaking, so a yield after an error
 // would be observed rather than hidden by an early return.
-func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
+func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
 	for batch, err := range c.Changes(context.Background(), cursor) {
@@ -227,10 +227,10 @@ func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
 	return got
 }
 
-func batchedIDs(batches []entities.Batch) [][]entities.DocID {
-	out := make([][]entities.DocID, 0, len(batches))
+func batchedIDs(batches []lore.Batch) [][]lore.DocID {
+	out := make([][]lore.DocID, 0, len(batches))
 	for _, b := range batches {
-		ids := make([]entities.DocID, 0, len(b.Docs))
+		ids := make([]lore.DocID, 0, len(b.Docs))
 		for _, d := range b.Docs {
 			ids = append(ids, d.ID)
 		}
@@ -239,12 +239,12 @@ func batchedIDs(batches []entities.Batch) [][]entities.DocID {
 	return out
 }
 
-func sameIDs(a, b [][]entities.DocID) bool {
-	return slices.EqualFunc(a, b, func(x, y []entities.DocID) bool { return slices.Equal(x, y) })
+func sameIDs(a, b [][]lore.DocID) bool {
+	return slices.EqualFunc(a, b, func(x, y []lore.DocID) bool { return slices.Equal(x, y) })
 }
 
-func allDocs(batches []entities.Batch) []entities.Document {
-	var docs []entities.Document
+func allDocs(batches []lore.Batch) []lore.Document {
+	var docs []lore.Document
 	for _, b := range batches {
 		docs = append(docs, b.Docs...)
 	}
@@ -257,11 +257,11 @@ func TestConformance(t *testing.T) {
 	for _, batch := range wantBatchedIDs() {
 		docs += len(batch)
 	}
-	conformance.Run(t, func() entities.Connector { return s.connector([]string{fixtureRepo}) }, conformance.Fixture{
+	conform.Run(t, func() lore.Connector { return s.connector([]string{fixtureRepo}) }, conform.Fixture{
 		Docs: docs,
 		// A commit whose committed date ties with the cursor's second is
 		// replayed rather than risked; nothing else re-enters the stream.
-		ReplayableTypes: []entities.DocType{entities.DocTypeCommit},
+		ReplayableTypes: []lore.DocType{lore.DocTypeCommit},
 	})
 }
 
@@ -278,10 +278,10 @@ func TestChangesStreamsOldestFirstInBatches(t *testing.T) {
 
 	// Oldest-first orders the top-level items. A review or comment keeps its own
 	// (older) edit time and travels with the parent whose update surfaced it.
-	var last entities.Document
+	var last lore.Document
 	for _, d := range allDocs(got.batches) {
 		switch d.Type {
-		case entities.DocTypeCommit, entities.DocTypePR, entities.DocTypeIssue:
+		case lore.DocTypeCommit, lore.DocTypePR, lore.DocTypeIssue:
 		default:
 			continue
 		}
@@ -327,8 +327,8 @@ func TestChangesResumesFromCursor(t *testing.T) {
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
 	}
-	wantResumed := [][]entities.DocID{
-		append([]entities.DocID{commitAID}, wantBatchedIDs()[1]...),
+	wantResumed := [][]lore.DocID{
+		append([]lore.DocID{commitAID}, wantBatchedIDs()[1]...),
 		wantBatchedIDs()[2],
 	}
 	if got := batchedIDs(resumed.batches); !sameIDs(got, wantResumed) {
@@ -352,27 +352,27 @@ func TestChangesResumesFromCursor(t *testing.T) {
 func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 	tests := []struct {
 		name   string
-		cursor entities.Cursor
-		want   []entities.DocID
-		absent []entities.DocID
+		cursor lore.Cursor
+		want   []lore.DocID
+		absent []lore.DocID
 	}{
 		{
 			name: "commit tied with the watermark second is replayed",
-			cursor: entities.Cursor{
+			cursor: lore.Cursor{
 				"acme/widgets:updated_at": "2024-05-03T12:00:00Z",
 				"acme/widgets:doc_id":     "github:pr:acme/widgets/pull/999",
 			},
-			want:   []entities.DocID{commitAID, pr42ID, issue41ID},
-			absent: []entities.DocID{commitBID},
+			want:   []lore.DocID{commitAID, pr42ID, issue41ID},
+			absent: []lore.DocID{commitBID},
 		},
 		{
 			name: "pull request tied with the watermark second stays skipped",
-			cursor: entities.Cursor{
+			cursor: lore.Cursor{
 				"acme/widgets:updated_at": "2024-05-04T15:00:00Z",
 				"acme/widgets:doc_id":     "github:zzzz",
 			},
-			want:   []entities.DocID{issue41ID, icomment1ID, icomment2ID},
-			absent: []entities.DocID{commitAID, commitBID, pr42ID, review1ID},
+			want:   []lore.DocID{issue41ID, icomment1ID, icomment2ID},
+			absent: []lore.DocID{commitAID, commitBID, pr42ID, review1ID},
 		},
 	}
 
@@ -386,7 +386,7 @@ func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 			if len(got.batches) == 0 {
 				t.Fatal("no batches yielded")
 			}
-			seen := make(map[entities.DocID]bool)
+			seen := make(map[lore.DocID]bool)
 			for _, d := range allDocs(got.batches) {
 				seen[d.ID] = true
 			}
@@ -448,14 +448,14 @@ func TestDocumentMetadata(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)
 	}
-	docs := make(map[entities.DocID]entities.Document)
+	docs := make(map[lore.DocID]lore.Document)
 	for _, d := range allDocs(got.batches) {
 		docs[d.ID] = d
 	}
 
 	tests := []struct {
-		id        entities.DocID
-		docType   entities.DocType
+		id        lore.DocID
+		docType   lore.DocType
 		title     string
 		author    string
 		url       string
@@ -463,50 +463,50 @@ func TestDocumentMetadata(t *testing.T) {
 		updatedAt string
 	}{
 		{
-			id: commitAID, docType: entities.DocTypeCommit,
+			id: commitAID, docType: lore.DocTypeCommit,
 			title: "Fix auth timeout on cold start", author: "ada",
 			url:       "https://github.com/acme/widgets/commit/" + shaA,
 			createdAt: "2024-05-03T11:45:00Z", updatedAt: "2024-05-03T12:00:00Z",
 		},
 		{
 			// No linked GitHub account: the raw git author name is all there is.
-			id: commitBID, docType: entities.DocTypeCommit,
+			id: commitBID, docType: lore.DocTypeCommit,
 			title: "Add widget cache", author: "Grace Hopper",
 			url:       "https://github.com/acme/widgets/commit/" + shaB,
 			createdAt: "2024-05-01T09:30:00Z", updatedAt: "2024-05-01T09:30:00Z",
 		},
 		{
-			id: pr42ID, docType: entities.DocTypePR,
+			id: pr42ID, docType: lore.DocTypePR,
 			title: "Fix auth timeout", author: "ada",
 			url:       "https://github.com/acme/widgets/pull/42",
 			createdAt: "2024-04-28T08:00:00Z", updatedAt: "2024-05-04T15:00:00Z",
 		},
 		{
-			id: review1ID, docType: entities.DocTypePRReview,
+			id: review1ID, docType: lore.DocTypePRReview,
 			title: "Review (APPROVED) on acme/widgets#42", author: "grace",
 			url:       "https://github.com/acme/widgets/pull/42#pullrequestreview-8801",
 			createdAt: "2024-05-02T09:00:00Z", updatedAt: "2024-05-02T09:05:00Z",
 		},
 		{
-			id: review2ID, docType: entities.DocTypePRReview,
+			id: review2ID, docType: lore.DocTypePRReview,
 			title: "Review (CHANGES_REQUESTED) on acme/widgets#42", author: "ada",
 			url:       "https://github.com/acme/widgets/pull/42#pullrequestreview-8802",
 			createdAt: "2024-05-03T10:00:00Z", updatedAt: "2024-05-03T10:00:00Z",
 		},
 		{
-			id: comment1ID, docType: entities.DocTypeReviewComment,
+			id: comment1ID, docType: lore.DocTypeReviewComment,
 			title: "Review comment on acme/widgets#42 (internal/auth/auth.go)", author: "grace",
 			url:       "https://github.com/acme/widgets/pull/42#discussion_r9901",
 			createdAt: "2024-05-02T09:01:00Z", updatedAt: "2024-05-02T09:01:00Z",
 		},
 		{
-			id: issue41ID, docType: entities.DocTypeIssue,
+			id: issue41ID, docType: lore.DocTypeIssue,
 			title: "Auth times out after deploy", author: "reporter",
 			url:       "https://github.com/acme/widgets/issues/41",
 			createdAt: "2024-04-20T07:00:00Z", updatedAt: "2024-05-05T10:00:00Z",
 		},
 		{
-			id: icomment2ID, docType: entities.DocTypeIssueComment,
+			id: icomment2ID, docType: lore.DocTypeIssueComment,
 			title: "Comment on acme/widgets#41", author: "grace",
 			url:       "https://github.com/acme/widgets/issues/41#issuecomment-7702",
 			createdAt: "2024-05-05T09:55:00Z", updatedAt: "2024-05-05T09:55:00Z",
@@ -541,7 +541,7 @@ func TestDocumentMetadata(t *testing.T) {
 	}
 }
 
-func externalID(t *testing.T, id entities.DocID) string {
+func externalID(t *testing.T, id lore.DocID) string {
 	t.Helper()
 	parts := strings.SplitN(string(id), ":", 3)
 	if len(parts) != 3 {
@@ -554,8 +554,8 @@ func externalID(t *testing.T, id entities.DocID) string {
 // "#", so that prefix has to be exactly the parent's external id.
 func TestCommentIDsStripToTheirThread(t *testing.T) {
 	tests := []struct {
-		comment entities.DocID
-		thread  entities.DocID
+		comment lore.DocID
+		thread  lore.DocID
 	}{
 		{review1ID, pr42ID},
 		{comment1ID, pr42ID},
@@ -573,7 +573,7 @@ func TestCommentIDsStripToTheirThread(t *testing.T) {
 			t.Errorf("%s strips to %q, want the thread %q", tt.comment, got, want)
 		}
 	}
-	for _, id := range []entities.DocID{commitAID, pr42ID, issue41ID} {
+	for _, id := range []lore.DocID{commitAID, pr42ID, issue41ID} {
 		if strings.Contains(externalID(t, id), "#") {
 			t.Errorf("%s is its own thread and must carry no fragment", id)
 		}
@@ -586,82 +586,82 @@ func TestReferenceExtraction(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)
 	}
-	refs := make(map[entities.DocID][]entities.RawRef)
+	refs := make(map[lore.DocID][]lore.RawRef)
 	for _, d := range allDocs(got.batches) {
 		refs[d.ID] = d.Refs
 	}
 
 	tests := []struct {
 		name string
-		id   entities.DocID
-		want []entities.RawRef
+		id   lore.DocID
+		want []lore.RawRef
 	}{
 		{
 			name: "commit: associated pr, touched files including the rename, then text",
 			id:   commitAID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#42"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth_test.go"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/old_auth_test.go"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#41"},
-				{Kind: entities.RefKindCommitSHA, Value: "1a2b3c4"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth_test.go"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/old_auth_test.go"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
+				{Kind: lore.RefKindCommitSHA, Value: "1a2b3c4"},
 			},
 		},
 		{
 			name: "commit: a ticket key repeated in the message is emitted once",
 			id:   commitBID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/cache/cache.go"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/cache/cache.go"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 			},
 		},
 		{
 			name: "pr: closing issue and every commit, branch ticket key, no duplicate #41",
 			id:   pr42ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#41"},
-				{Kind: entities.RefKindCommitSHA, Value: shaA},
-				{Kind: entities.RefKindCommitSHA, Value: shaB},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-456"},
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
+				{Kind: lore.RefKindCommitSHA, Value: shaA},
+				{Kind: lore.RefKindCommitSHA, Value: shaB},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-456"},
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
 			},
 		},
 		{
 			name: "review: parent pull request plus body text",
 			id:   review1ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#42"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 			},
 		},
 		{
 			name: "review comment: annotated path, parent, cross-reference",
 			id:   comment1ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#42"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#41"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
 			},
 		},
 		{
 			name: "issue: ticket key, url, qualified cross-reference",
 			id:   issue41ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindURL, Value: "https://acme.atlassian.net/browse/PROJ-123"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#42"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindURL, Value: "https://acme.atlassian.net/browse/PROJ-123"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
 			},
 		},
 		{
 			name: "issue comment: parent thread and a full sha in the body",
 			id:   icomment2ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#41"},
-				{Kind: entities.RefKindCommitSHA, Value: shaA},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
+				{Kind: lore.RefKindCommitSHA, Value: shaA},
 			},
 		},
 	}
@@ -821,7 +821,7 @@ func TestHardFailureMidStreamTerminatesIteration(t *testing.T) {
 
 func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 	s := newStub(t)
-	cursor := entities.Cursor{"acme/widgets:updated_at": "last tuesday"}
+	cursor := lore.Cursor{"acme/widgets:updated_at": "last tuesday"}
 	got := drain(t, s.connector([]string{fixtureRepo}), cursor)
 	if got.err == nil {
 		t.Fatal("Changes accepted a malformed watermark")
@@ -836,7 +836,7 @@ func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 
 func TestCursorIsCopiedPerBatch(t *testing.T) {
 	s := newStub(t)
-	caller := entities.Cursor{"acme/widgets:updated_at": "2024-05-03T12:00:00Z", "acme/widgets:doc_id": string(commitAID)}
+	caller := lore.Cursor{"acme/widgets:updated_at": "2024-05-03T12:00:00Z", "acme/widgets:doc_id": string(commitAID)}
 	got := drain(t, s.connector([]string{fixtureRepo}), caller)
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)

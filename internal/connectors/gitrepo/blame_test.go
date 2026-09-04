@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -24,7 +26,7 @@ func blameFixture(t *testing.T) (git *Repo, shaA, shaB string) {
 	return repo.connector(), shaA, shaB
 }
 
-func assertSpans(t *testing.T, got, want []BlameSpan) {
+func assertSpans(t *testing.T, got, want []lore.BlameSpan) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d spans, want %d\n got %+v\nwant %+v", len(got), len(want), got, want)
@@ -46,7 +48,7 @@ func TestBlameCollapsesRunsAndReusesCachedMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{
+	assertSpans(t, got, []lore.BlameSpan{
 		{SHA: shaA, LineStart: 1, LineEnd: 2, Author: authorAda, Time: addedTime, Lines: []string{"a1", "a2"}},
 		{SHA: shaB, LineStart: 3, LineEnd: 4, Author: authorGrace, Time: editedTime, Lines: []string{"b3", "b4"}},
 		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: addedTime, Lines: []string{"a5", "a6"}},
@@ -60,7 +62,7 @@ func TestBlameSingleLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{
+	assertSpans(t, got, []lore.BlameSpan{
 		{SHA: shaB, LineStart: 3, LineEnd: 3, Author: authorGrace, Time: mustTime(t, editedAt), Lines: []string{"b3"}},
 	})
 }
@@ -72,7 +74,7 @@ func TestBlameClampsEndBeyondLastLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{
+	assertSpans(t, got, []lore.BlameSpan{
 		{SHA: shaA, LineStart: 5, LineEnd: 6, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a5", "a6"}},
 	})
 }
@@ -123,7 +125,7 @@ func TestBlamePinsHEADOverADirtyWorkingTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{
+	assertSpans(t, got, []lore.BlameSpan{
 		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a1", "a2", "a3"}},
 	})
 }
@@ -149,7 +151,7 @@ func TestBlameParsesSHA256ObjectNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{
+	assertSpans(t, got, []lore.BlameSpan{
 		{SHA: sha, LineStart: 1, LineEnd: 3, Author: authorAda, Time: mustTime(t, addedAt), Lines: []string{"a1", "a2", "a3"}},
 	})
 }
@@ -163,7 +165,7 @@ func TestBlameKeepsLeadingIndentation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blame: %v", err)
 	}
-	assertSpans(t, got, []BlameSpan{{
+	assertSpans(t, got, []lore.BlameSpan{{
 		SHA: sha, LineStart: 2, LineEnd: 4, Author: authorAda, Time: mustTime(t, addedAt),
 		Lines: []string{"\tif ok {", "\t\treturn nil", "\t}"},
 	}})

@@ -12,6 +12,7 @@ import (
 	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -29,10 +30,10 @@ const (
 )
 
 var (
-	xrefCommitID = entities.NewDocID("github", entities.DocTypeCommit, xrefSlug+"/commit/"+xrefSHA)
-	xrefTicketID = entities.NewDocID("jira", entities.DocTypeTicket, xrefTicketKey)
-	xrefPageID   = entities.NewDocID("notion", entities.DocTypePage, "design/auth-rollout")
-	xrefLateID   = entities.NewDocID("jira", entities.DocTypeTicket, xrefLateKey)
+	xrefCommitID = lore.NewDocID("github", lore.DocTypeCommit, xrefSlug+"/commit/"+xrefSHA)
+	xrefTicketID = lore.NewDocID("jira", lore.DocTypeTicket, xrefTicketKey)
+	xrefPageID   = lore.NewDocID("notion", lore.DocTypePage, "design/auth-rollout")
+	xrefLateID   = lore.NewDocID("jira", lore.DocTypeTicket, xrefLateKey)
 )
 
 func xrefStore(t *testing.T) *sqlite.Store {
@@ -51,7 +52,7 @@ func xrefStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
-func xrefIngest(t *testing.T, s *sqlite.Store, docs ...entities.Document) {
+func xrefIngest(t *testing.T, s *sqlite.Store, docs ...lore.Document) {
 	t.Helper()
 
 	if err := s.UpsertDocuments(context.Background(), docs); err != nil {
@@ -59,11 +60,11 @@ func xrefIngest(t *testing.T, s *sqlite.Store, docs ...entities.Document) {
 	}
 }
 
-func xrefCommit(body string, refs ...entities.RawRef) entities.Document {
-	return entities.Document{
+func xrefCommit(body string, refs ...lore.RawRef) lore.Document {
+	return lore.Document{
 		ID:      xrefCommitID,
 		Source:  "github",
-		Type:    entities.DocTypeCommit,
+		Type:    lore.DocTypeCommit,
 		RepoRef: "github:" + xrefSlug,
 		Title:   "Send tenants to their own landing page",
 		Body:    body,
@@ -73,11 +74,11 @@ func xrefCommit(body string, refs ...entities.RawRef) entities.Document {
 	}
 }
 
-func xrefTicket() entities.Document {
-	return entities.Document{
+func xrefTicket() lore.Document {
+	return lore.Document{
 		ID:     xrefTicketID,
 		Source: "jira",
-		Type:   entities.DocTypeTicket,
+		Type:   lore.DocTypeTicket,
 		Title:  "Post-login redirect drops the tenant",
 		Body:   "Signing in lands the user on the wrong tenant.",
 		Author: "sam",
@@ -85,7 +86,7 @@ func xrefTicket() entities.Document {
 	}
 }
 
-func xrefEdges(t *testing.T, s *sqlite.Store, ids ...entities.DocID) []entities.Edge {
+func xrefEdges(t *testing.T, s *sqlite.Store, ids ...lore.DocID) []entities.Edge {
 	t.Helper()
 
 	edges, err := s.Neighbors(context.Background(), ids, nil, entities.DirBoth)
@@ -176,15 +177,15 @@ func (c *xrefClone) commit(content, when, subject string) string {
 	return strings.TrimSpace(c.git(nil, "rev-parse", "HEAD"))
 }
 
-func xrefCommitDocID(sha string) entities.DocID {
-	return entities.NewDocID("github", entities.DocTypeCommit, xrefSlug+"/commit/"+sha)
+func xrefCommitDocID(sha string) lore.DocID {
+	return lore.NewDocID("github", lore.DocTypeCommit, xrefSlug+"/commit/"+sha)
 }
 
-func xrefCommitDoc(sha, subject string) entities.Document {
-	return entities.Document{
+func xrefCommitDoc(sha, subject string) lore.Document {
+	return lore.Document{
 		ID:      xrefCommitDocID(sha),
 		Source:  "github",
-		Type:    entities.DocTypeCommit,
+		Type:    lore.DocTypeCommit,
 		RepoRef: "github:" + xrefSlug,
 		Title:   subject,
 		Body:    subject,
@@ -198,11 +199,11 @@ func TestLinkResolverPointsAGitHubCommitAtItsJiraTicket(t *testing.T) {
 	store := xrefStore(t)
 
 	commit := xrefCommit("Fix the post-login redirect described in "+xrefTicketKey+".",
-		entities.RawRef{Kind: entities.RefKindTicketKey, Value: xrefTicketKey})
+		lore.RawRef{Kind: lore.RefKindTicketKey, Value: xrefTicketKey})
 	ticket := xrefTicket()
 	xrefIngest(t, store, commit, ticket)
 
-	if err := NewLinkResolver(store, nil).Link(ctx, []entities.Document{commit, ticket}); err != nil {
+	if err := NewLinkResolver(store, nil).Link(ctx, []lore.Document{commit, ticket}); err != nil {
 		t.Fatalf("Link: %v", err)
 	}
 
@@ -215,13 +216,13 @@ func TestLinkResolverPointsAGitHubCommitAtItsJiraTicket(t *testing.T) {
 	xrefAssertEdges(t, "corpus edges", xrefEdges(t, store, xrefCommitID, xrefTicketID), want)
 	xrefAssertPending(t, "pending refs", xrefPending(t, store), nil)
 
-	inbound, err := store.Neighbors(ctx, []entities.DocID{xrefTicketID}, nil, entities.DirIn)
+	inbound, err := store.Neighbors(ctx, []lore.DocID{xrefTicketID}, nil, entities.DirIn)
 	if err != nil {
 		t.Fatalf("Neighbors in: %v", err)
 	}
 	xrefAssertEdges(t, "edges into the ticket", inbound, want)
 
-	outbound, err := store.Neighbors(ctx, []entities.DocID{xrefTicketID}, nil, entities.DirOut)
+	outbound, err := store.Neighbors(ctx, []lore.DocID{xrefTicketID}, nil, entities.DirOut)
 	if err != nil {
 		t.Fatalf("Neighbors out: %v", err)
 	}
@@ -232,12 +233,12 @@ func TestLinkResolverLeavesAnUnmatchedTicketKeyPending(t *testing.T) {
 	ctx := context.Background()
 	store := xrefStore(t)
 
-	ref := entities.RawRef{Kind: entities.RefKindTicketKey, Value: xrefMissingKey}
+	ref := lore.RawRef{Kind: lore.RefKindTicketKey, Value: xrefMissingKey}
 	commit := xrefCommit("Groundwork for "+xrefMissingKey+", which nothing has filed yet.", ref)
 	ticket := xrefTicket()
 	xrefIngest(t, store, commit, ticket)
 
-	if err := NewLinkResolver(store, nil).Link(ctx, []entities.Document{commit, ticket}); err != nil {
+	if err := NewLinkResolver(store, nil).Link(ctx, []lore.Document{commit, ticket}); err != nil {
 		t.Fatalf("Link: %v", err)
 	}
 
@@ -251,26 +252,26 @@ func TestLinkResolverResolvesADeferredRefOnALaterSyncRound(t *testing.T) {
 	store := xrefStore(t)
 	resolver := NewLinkResolver(store, nil)
 
-	keyRef := entities.RawRef{Kind: entities.RefKindTicketKey, Value: xrefLateKey}
-	urlRef := entities.RawRef{Kind: entities.RefKindURL, Value: xrefLateURL}
-	page := entities.Document{
+	keyRef := lore.RawRef{Kind: lore.RefKindTicketKey, Value: xrefLateKey}
+	urlRef := lore.RawRef{Kind: lore.RefKindURL, Value: xrefLateURL}
+	page := lore.Document{
 		ID:     xrefPageID,
 		Source: "notion",
-		Type:   entities.DocTypePage,
+		Type:   lore.DocTypePage,
 		Title:  "Auth rollout decision",
 		Body: "We chose the staged rollout tracked by " + xrefLateKey +
 			", see " + xrefLateURL + " for the acceptance criteria.",
 		Author: "dana",
 		URL:    "https://notion.so/design/auth-rollout",
-		Refs:   []entities.RawRef{keyRef, urlRef},
+		Refs:   []lore.RawRef{keyRef, urlRef},
 	}
 
 	xrefIngest(t, store, page)
-	if err := resolver.Link(ctx, []entities.Document{page}); err != nil {
+	if err := resolver.Link(ctx, []lore.Document{page}); err != nil {
 		t.Fatalf("round 1 Link: %v", err)
 	}
 
-	corpus := []entities.DocID{xrefPageID, xrefLateID}
+	corpus := []lore.DocID{xrefPageID, xrefLateID}
 	deferred := []entities.PendingRef{
 		{SourceDoc: xrefPageID, Ref: keyRef},
 		{SourceDoc: xrefPageID, Ref: urlRef},
@@ -278,10 +279,10 @@ func TestLinkResolverResolvesADeferredRefOnALaterSyncRound(t *testing.T) {
 	xrefAssertEdges(t, "round 1 edges", xrefEdges(t, store, corpus...), nil)
 	xrefAssertPending(t, "round 1 pending refs", xrefPending(t, store), deferred)
 
-	xrefIngest(t, store, entities.Document{
+	xrefIngest(t, store, lore.Document{
 		ID:     xrefLateID,
 		Source: "jira",
-		Type:   entities.DocTypeTicket,
+		Type:   lore.DocTypeTicket,
 		Title:  "Stage the auth rollout behind a flag",
 		Body:   "Enable the new provider one tenant at a time.",
 		Author: "sam",
@@ -320,20 +321,20 @@ func TestLinkResolverAnchorsAPathToEveryCommitThatTouchedIt(t *testing.T) {
 	fixed := clone.commit("package auth\n\nfunc Check(s Session) bool { return s.Tenant != \"\" }\n",
 		"2024-05-08T10:00:00Z", fixSubject)
 
-	page := entities.Document{
+	page := lore.Document{
 		ID:     xrefPageID,
 		Source: "notion",
-		Type:   entities.DocTypePage,
+		Type:   lore.DocTypePage,
 		Title:  "Auth rollout decision",
 		Body:   "The tenant check lives in " + xrefFile + ".",
 		Author: "dana",
 		URL:    "https://notion.so/design/auth-rollout",
-		Refs:   []entities.RawRef{{Kind: entities.RefKindFilePath, Value: xrefFile}},
+		Refs:   []lore.RawRef{{Kind: lore.RefKindFilePath, Value: xrefFile}},
 	}
 	xrefIngest(t, store, page, xrefCommitDoc(added, addSubject), xrefCommitDoc(fixed, fixSubject))
 
 	repos := []CodeRepo{{Path: clone.root, Remote: "github:" + xrefSlug, Git: gitrepo.New(clone.root)}}
-	if err := NewLinkResolver(store, repos).Link(ctx, []entities.Document{page}); err != nil {
+	if err := NewLinkResolver(store, repos).Link(ctx, []lore.Document{page}); err != nil {
 		t.Fatalf("Link: %v", err)
 	}
 
@@ -345,7 +346,7 @@ func TestLinkResolverAnchorsAPathToEveryCommitThatTouchedIt(t *testing.T) {
 	xrefAssertEdges(t, "corpus edges", xrefEdges(t, store, xrefPageID), want)
 	xrefAssertPending(t, "pending refs", xrefPending(t, store), nil)
 
-	inbound, err := store.Neighbors(ctx, []entities.DocID{xrefCommitDocID(fixed)}, nil, entities.DirIn)
+	inbound, err := store.Neighbors(ctx, []lore.DocID{xrefCommitDocID(fixed)}, nil, entities.DirIn)
 	if err != nil {
 		t.Fatalf("Neighbors in: %v", err)
 	}

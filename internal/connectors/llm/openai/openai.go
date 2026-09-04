@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
-var _ llm.LLM = (*Client)(nil)
+var _ lore.Completer = (*Client)(nil)
 
 const DefaultBaseURL = "https://api.openai.com"
 
@@ -23,7 +23,7 @@ type Client struct {
 	model    string
 	endpoint string
 	header   http.Header
-	call     httpretry.Client
+	call     httpx.Client
 }
 
 type Option func(*Client)
@@ -38,7 +38,7 @@ func WithHTTPClient(client *http.Client) Option {
 
 // New builds a client for model at baseURL; empty baseURL means DefaultBaseURL.
 func New(apiKey, model, baseURL string, opts ...Option) (*Client, error) {
-	return NewCompatible("openai", apiKey, model, httpretry.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
+	return NewCompatible("openai", apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
 }
 
 // NewCompatible builds a client for another provider serving this same protocol
@@ -59,8 +59,8 @@ func NewCompatible(provider, apiKey, model, endpoint string, opts ...Option) (*C
 		model:    model,
 		endpoint: endpoint,
 		header:   header,
-		call: httpretry.Client{
-			HTTP:   &http.Client{Timeout: llm.RequestTimeout},
+		call: httpx.Client{
+			HTTP:   &http.Client{Timeout: lore.CompleteTimeout},
 			Op:     provider + ": chat completions",
 			Secret: apiKey,
 		},

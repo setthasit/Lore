@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/conformance"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 const (
@@ -34,28 +34,28 @@ const (
 
 // Documents the fixtures are expected to produce, in stream order.
 const (
-	proj101ID   entities.DocID = "jira:ticket:PROJ-101"
-	proj101c1ID entities.DocID = "jira:ticket_comment:PROJ-101#10001"
-	proj101c2ID entities.DocID = "jira:ticket_comment:PROJ-101#10002"
-	proj101c3ID entities.DocID = "jira:ticket_comment:PROJ-101#10003"
-	proj102ID   entities.DocID = "jira:ticket:PROJ-102"
-	proj123ID   entities.DocID = "jira:ticket:PROJ-123"
-	proj123c1ID entities.DocID = "jira:ticket_comment:PROJ-123#10010"
-	infra7ID    entities.DocID = "jira:ticket:INFRA-7"
+	proj101ID   lore.DocID = "jira:ticket:PROJ-101"
+	proj101c1ID lore.DocID = "jira:ticket_comment:PROJ-101#10001"
+	proj101c2ID lore.DocID = "jira:ticket_comment:PROJ-101#10002"
+	proj101c3ID lore.DocID = "jira:ticket_comment:PROJ-101#10003"
+	proj102ID   lore.DocID = "jira:ticket:PROJ-102"
+	proj123ID   lore.DocID = "jira:ticket:PROJ-123"
+	proj123c1ID lore.DocID = "jira:ticket_comment:PROJ-123#10010"
+	infra7ID    lore.DocID = "jira:ticket:INFRA-7"
 )
 
 func fixtureProjects() []string { return []string{"PROJ", "INFRA"} }
 
-func wantBatchedIDs() [][]entities.DocID {
-	return [][]entities.DocID{
+func wantBatchedIDs() [][]lore.DocID {
+	return [][]lore.DocID{
 		{proj101ID, proj101c1ID, proj101c2ID, proj101c3ID},
 		{proj102ID, proj123ID, proj123c1ID},
 		{infra7ID},
 	}
 }
 
-func wantCursors() []entities.Cursor {
-	return []entities.Cursor{
+func wantCursors() []lore.Cursor {
+	return []lore.Cursor{
 		{"updated_at": "2024-05-01T09:30:00Z", "doc_id": string(proj101ID)},
 		{"updated_at": "2024-05-03T12:00:00.5Z", "doc_id": string(proj123ID)},
 		{"updated_at": "2024-05-04T08:00:00Z", "doc_id": string(infra7ID)},
@@ -194,14 +194,14 @@ func (s *stub) waits() []time.Duration {
 }
 
 type stream struct {
-	batches  []entities.Batch
+	batches  []lore.Batch
 	err      error
 	afterErr int // yields observed after the first error: must stay 0
 }
 
 // drain consumes the whole iterator without breaking, so a yield after an error
 // would be observed rather than hidden by an early return.
-func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
+func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
 	for batch, err := range c.Changes(context.Background(), cursor) {
@@ -221,10 +221,10 @@ func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
 	return got
 }
 
-func batchedIDs(batches []entities.Batch) [][]entities.DocID {
-	out := make([][]entities.DocID, 0, len(batches))
+func batchedIDs(batches []lore.Batch) [][]lore.DocID {
+	out := make([][]lore.DocID, 0, len(batches))
 	for _, b := range batches {
-		ids := make([]entities.DocID, 0, len(b.Docs))
+		ids := make([]lore.DocID, 0, len(b.Docs))
 		for _, d := range b.Docs {
 			ids = append(ids, d.ID)
 		}
@@ -233,21 +233,21 @@ func batchedIDs(batches []entities.Batch) [][]entities.DocID {
 	return out
 }
 
-func sameIDs(a, b [][]entities.DocID) bool {
-	return slices.EqualFunc(a, b, func(x, y []entities.DocID) bool { return slices.Equal(x, y) })
+func sameIDs(a, b [][]lore.DocID) bool {
+	return slices.EqualFunc(a, b, func(x, y []lore.DocID) bool { return slices.Equal(x, y) })
 }
 
-func allDocs(batches []entities.Batch) []entities.Document {
-	var docs []entities.Document
+func allDocs(batches []lore.Batch) []lore.Document {
+	var docs []lore.Document
 	for _, b := range batches {
 		docs = append(docs, b.Docs...)
 	}
 	return docs
 }
 
-func docsByID(t *testing.T, batches []entities.Batch) map[entities.DocID]entities.Document {
+func docsByID(t *testing.T, batches []lore.Batch) map[lore.DocID]lore.Document {
 	t.Helper()
-	docs := make(map[entities.DocID]entities.Document)
+	docs := make(map[lore.DocID]lore.Document)
 	for _, d := range allDocs(batches) {
 		if _, ok := docs[d.ID]; ok {
 			t.Errorf("%s yielded twice", d.ID)
@@ -263,7 +263,7 @@ func TestConformance(t *testing.T) {
 	for _, batch := range wantBatchedIDs() {
 		docs += len(batch)
 	}
-	conformance.Run(t, func() entities.Connector { return s.connector() }, conformance.Fixture{
+	conform.Run(t, func() lore.Connector { return s.connector() }, conform.Fixture{
 		Docs:             docs,
 		ResumeAfterBatch: 1,
 	})
@@ -282,9 +282,9 @@ func TestChangesStreamsOldestFirstInUnitBatches(t *testing.T) {
 
 	// Oldest-first orders the issues. A comment keeps its own (older) edit time and
 	// travels with the issue whose update surfaced it.
-	var last entities.Document
+	var last lore.Document
 	for _, d := range allDocs(got.batches) {
-		if d.Type != entities.DocTypeTicket {
+		if d.Type != lore.DocTypeTicket {
 			continue
 		}
 		if !last.UpdatedAt.IsZero() && d.UpdatedAt.Before(last.UpdatedAt) {
@@ -442,8 +442,8 @@ func TestDocumentMetadata(t *testing.T) {
 	docs := docsByID(t, got.batches)
 
 	tests := []struct {
-		id        entities.DocID
-		docType   entities.DocType
+		id        lore.DocID
+		docType   lore.DocType
 		title     string
 		author    string
 		path      string
@@ -452,7 +452,7 @@ func TestDocumentMetadata(t *testing.T) {
 		updatedAt string
 	}{
 		{
-			id: proj101ID, docType: entities.DocTypeTicket,
+			id: proj101ID, docType: lore.DocTypeTicket,
 			title:  "PROJ-101: Auth timeout on cold start",
 			author: "Ada Lovelace",
 			path:   "/browse/PROJ-101",
@@ -461,7 +461,7 @@ func TestDocumentMetadata(t *testing.T) {
 			createdAt: "2024-04-28T08:05:00Z", updatedAt: "2024-05-01T09:30:00Z",
 		},
 		{
-			id: proj101c1ID, docType: entities.DocTypeTicketComment,
+			id: proj101c1ID, docType: lore.DocTypeTicketComment,
 			title:  "Comment on PROJ-101",
 			author: "Grace Hopper",
 			path:   "/browse/PROJ-101?focusedCommentId=10001",
@@ -471,7 +471,7 @@ func TestDocumentMetadata(t *testing.T) {
 		},
 		{
 			// No updated field: the created time fills it.
-			id: proj101c2ID, docType: entities.DocTypeTicketComment,
+			id: proj101c2ID, docType: lore.DocTypeTicketComment,
 			title:     "Comment on PROJ-101",
 			author:    "Alan Turing",
 			path:      "/browse/PROJ-101?focusedCommentId=10002",
@@ -479,7 +479,7 @@ func TestDocumentMetadata(t *testing.T) {
 			createdAt: "2024-04-30T14:20:00Z", updatedAt: "2024-04-30T14:20:00Z",
 		},
 		{
-			id: proj101c3ID, docType: entities.DocTypeTicketComment,
+			id: proj101c3ID, docType: lore.DocTypeTicketComment,
 			title:     "Comment on PROJ-101",
 			author:    "Ada Lovelace",
 			path:      "/browse/PROJ-101?focusedCommentId=10003",
@@ -488,7 +488,7 @@ func TestDocumentMetadata(t *testing.T) {
 		},
 		{
 			// A null description is an empty body, never an error.
-			id: proj102ID, docType: entities.DocTypeTicket,
+			id: proj102ID, docType: lore.DocTypeTicket,
 			title:     "PROJ-102: Document the retry budget",
 			author:    "Grace Hopper",
 			path:      "/browse/PROJ-102",
@@ -496,7 +496,7 @@ func TestDocumentMetadata(t *testing.T) {
 			createdAt: "2024-04-30T10:00:00Z", updatedAt: "2024-05-02T11:15:00Z",
 		},
 		{
-			id: proj123ID, docType: entities.DocTypeTicket,
+			id: proj123ID, docType: lore.DocTypeTicket,
 			title:  "PROJ-123: Decide the queue backpressure policy",
 			author: "Alan Turing",
 			path:   "/browse/PROJ-123",
@@ -505,7 +505,7 @@ func TestDocumentMetadata(t *testing.T) {
 			createdAt: "2024-05-02T13:20:00Z", updatedAt: "2024-05-03T12:00:00.5Z",
 		},
 		{
-			id: proj123c1ID, docType: entities.DocTypeTicketComment,
+			id: proj123c1ID, docType: lore.DocTypeTicketComment,
 			title:     "Comment on PROJ-123",
 			author:    "Katherine Johnson",
 			path:      "/browse/PROJ-123?focusedCommentId=10010",
@@ -514,7 +514,7 @@ func TestDocumentMetadata(t *testing.T) {
 		},
 		{
 			// No reporter: an unassigned author is empty, not an error.
-			id: infra7ID, docType: entities.DocTypeTicket,
+			id: infra7ID, docType: lore.DocTypeTicket,
 			title:     "INFRA-7: Provision the retry queue",
 			author:    "",
 			path:      "/browse/INFRA-7",
@@ -568,17 +568,17 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 	docs := docsByID(t, got.batches)
 
 	tests := []struct {
-		id   entities.DocID
-		want []entities.RawRef
+		id   lore.DocID
+		want []lore.RawRef
 	}{
 		{
 			// PROJ-101 names itself in its own description: a self-edge is dropped,
 			// the cross-project key survives.
 			id: proj101ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "INFRA-7"},
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Rollout-Note-4f21"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Rollout-Note-4f21"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
 			},
 		},
 		{
@@ -587,38 +587,38 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 		},
 		{
 			id: proj123ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-101"},
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Backpressure-9c4d"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Backpressure-9c4d"},
 			},
 		},
 		{
 			// The parent issue comes first, before anything the text matched.
 			id: proj101c1ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-101"},
-				{Kind: entities.RefKindTicketKey, Value: "INFRA-7"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
 			},
 		},
 		{
 			// The body repeats the parent key; the explicit relation already covers it.
 			id: proj101c2ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-101"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
 			},
 		},
 		{
 			id: proj101c3ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-101"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/retry.go"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/retry.go"},
 			},
 		},
 		{
 			id: proj123c1ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindTicketKey, Value: "INFRA-7"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
 			},
 		},
 		{
@@ -647,7 +647,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
 	}
-	want := [][]entities.DocID{{proj102ID, proj123ID, proj123c1ID}, {infra7ID}}
+	want := [][]lore.DocID{{proj102ID, proj123ID, proj123c1ID}, {infra7ID}}
 	if ids := batchedIDs(resumed.batches); !sameIDs(ids, want) {
 		t.Fatalf("resumed batches\n got %v\nwant %v", ids, want)
 	}
@@ -667,12 +667,12 @@ func TestCursorTiebreakSkipsTheWatermarkUnitOnly(t *testing.T) {
 	s := newStub(t)
 	// PROJ-123's own second with a document id sorting above it: the tie is broken
 	// lexicographically, so PROJ-123 stays covered.
-	cursor := entities.Cursor{"updated_at": "2024-05-03T12:00:00.5Z", "doc_id": "jira:ticket:ZZZZ-1"}
+	cursor := lore.Cursor{"updated_at": "2024-05-03T12:00:00.5Z", "doc_id": "jira:ticket:ZZZZ-1"}
 	got := drain(t, s.connector(), cursor)
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)
 	}
-	want := [][]entities.DocID{{infra7ID}}
+	want := [][]lore.DocID{{infra7ID}}
 	if ids := batchedIDs(got.batches); !sameIDs(ids, want) {
 		t.Fatalf("batches\n got %v\nwant %v", ids, want)
 	}
@@ -680,7 +680,7 @@ func TestCursorTiebreakSkipsTheWatermarkUnitOnly(t *testing.T) {
 
 func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 	s := newStub(t)
-	got := drain(t, s.connector(), entities.Cursor{"updated_at": "last tuesday"})
+	got := drain(t, s.connector(), lore.Cursor{"updated_at": "last tuesday"})
 	if got.err == nil {
 		t.Fatal("Changes accepted a malformed watermark")
 	}
@@ -694,7 +694,7 @@ func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 
 func TestCursorIsCopiedPerBatch(t *testing.T) {
 	s := newStub(t)
-	caller := entities.Cursor{"updated_at": "2024-05-01T09:30:00Z", "doc_id": string(proj101ID)}
+	caller := lore.Cursor{"updated_at": "2024-05-01T09:30:00Z", "doc_id": string(proj101ID)}
 	got := drain(t, s.connector(), caller)
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)

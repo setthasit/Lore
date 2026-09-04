@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // A URL match and a ticket-key match produce the same edge at different confidences,
@@ -54,7 +55,7 @@ func (s *Store) UpsertEdges(ctx context.Context, edges []entities.Edge) error {
 
 func (s *Store) Neighbors(
 	ctx context.Context,
-	ids []entities.DocID,
+	ids []lore.DocID,
 	kinds []entities.EdgeKind,
 	dir entities.Direction,
 ) ([]entities.Edge, error) {
@@ -113,8 +114,8 @@ func scanEdges(rows *sql.Rows) ([]entities.Edge, error) {
 			return nil, fmt.Errorf("sqlite: scan edge: %w", err)
 		}
 		edges = append(edges, entities.Edge{
-			Src:        entities.DocID(src),
-			Dst:        entities.DocID(dst),
+			Src:        lore.DocID(src),
+			Dst:        lore.DocID(dst),
 			Kind:       entities.EdgeKind(kind),
 			Confidence: float32(confidence),
 		})
@@ -139,8 +140,8 @@ func (s *Store) PendingRefs(ctx context.Context) ([]entities.PendingRef, error) 
 			return nil, fmt.Errorf("sqlite: scan pending ref: %w", err)
 		}
 		refs = append(refs, entities.PendingRef{
-			SourceDoc: entities.DocID(srcDoc),
-			Ref:       entities.RawRef{Kind: entities.RefKind(kind), Value: value},
+			SourceDoc: lore.DocID(srcDoc),
+			Ref:       lore.RawRef{Kind: lore.RefKind(kind), Value: value},
 		})
 	}
 	if err := rows.Err(); err != nil {

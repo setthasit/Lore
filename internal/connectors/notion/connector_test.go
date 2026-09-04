@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/conformance"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 const fakeToken = "secret_test-token"
@@ -39,14 +39,14 @@ const (
 )
 
 const (
-	rootID      entities.DocID = "notion:page:" + rootPageID
-	decisionID  entities.DocID = "notion:page:" + decisionPageID
-	runbookID   entities.DocID = "notion:page:" + runbookPageID
-	trashedID   entities.DocID = "notion:page:" + trashedPageID
-	marketingID entities.DocID = "notion:page:" + marketingPageID
-	tieHighID   entities.DocID = "notion:page:" + tieHighPageID
-	tieLowID    entities.DocID = "notion:page:" + tieLowPageID
-	tieLateID   entities.DocID = "notion:page:" + tieLatePageID
+	rootID      lore.DocID = "notion:page:" + rootPageID
+	decisionID  lore.DocID = "notion:page:" + decisionPageID
+	runbookID   lore.DocID = "notion:page:" + runbookPageID
+	trashedID   lore.DocID = "notion:page:" + trashedPageID
+	marketingID lore.DocID = "notion:page:" + marketingPageID
+	tieHighID   lore.DocID = "notion:page:" + tieHighPageID
+	tieLowID    lore.DocID = "notion:page:" + tieLowPageID
+	tieLateID   lore.DocID = "notion:page:" + tieLatePageID
 )
 
 const (
@@ -66,12 +66,12 @@ const (
 	runbookBody = "Runbook for the auth rollout.\n- [x] Verify staging\n- [ ] Verify prod"
 )
 
-func wantBatchedIDs() [][]entities.DocID {
-	return [][]entities.DocID{{rootID, decisionID}, {runbookID}}
+func wantBatchedIDs() [][]lore.DocID {
+	return [][]lore.DocID{{rootID, decisionID}, {runbookID}}
 }
 
-func wantCursors() []entities.Cursor {
-	return []entities.Cursor{
+func wantCursors() []lore.Cursor {
+	return []lore.Cursor{
 		{"last_edited_at": "2024-05-02T10:30:00.123Z", "doc_id": string(decisionID)},
 		{"last_edited_at": "2024-05-03T08:00:00Z", "doc_id": string(runbookID)},
 	}
@@ -227,12 +227,12 @@ func (s *stub) headers() (auth, version string) {
 }
 
 type stream struct {
-	batches        []entities.Batch
+	batches        []lore.Batch
 	err            error
 	yieldsAfterErr int
 }
 
-func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
+func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
 	for batch, err := range c.Changes(context.Background(), cursor) {
@@ -252,36 +252,36 @@ func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
 	return got
 }
 
-func idsOf(docs []entities.Document) []entities.DocID {
-	out := make([]entities.DocID, 0, len(docs))
+func idsOf(docs []lore.Document) []lore.DocID {
+	out := make([]lore.DocID, 0, len(docs))
 	for _, d := range docs {
 		out = append(out, d.ID)
 	}
 	return out
 }
 
-func batchedIDs(batches []entities.Batch) [][]entities.DocID {
-	out := make([][]entities.DocID, 0, len(batches))
+func batchedIDs(batches []lore.Batch) [][]lore.DocID {
+	out := make([][]lore.DocID, 0, len(batches))
 	for _, b := range batches {
 		out = append(out, idsOf(b.Docs))
 	}
 	return out
 }
 
-func sameIDs(a, b [][]entities.DocID) bool {
-	return slices.EqualFunc(a, b, func(x, y []entities.DocID) bool { return slices.Equal(x, y) })
+func sameIDs(a, b [][]lore.DocID) bool {
+	return slices.EqualFunc(a, b, func(x, y []lore.DocID) bool { return slices.Equal(x, y) })
 }
 
-func allDocs(batches []entities.Batch) []entities.Document {
-	var docs []entities.Document
+func allDocs(batches []lore.Batch) []lore.Document {
+	var docs []lore.Document
 	for _, b := range batches {
 		docs = append(docs, b.Docs...)
 	}
 	return docs
 }
 
-func docsByID(batches []entities.Batch) map[entities.DocID]entities.Document {
-	out := make(map[entities.DocID]entities.Document)
+func docsByID(batches []lore.Batch) map[lore.DocID]lore.Document {
+	out := make(map[lore.DocID]lore.Document)
 	for _, d := range allDocs(batches) {
 		out[d.ID] = d
 	}
@@ -290,7 +290,7 @@ func docsByID(batches []entities.Batch) map[entities.DocID]entities.Document {
 
 func TestConformance(t *testing.T) {
 	s := newStub(t)
-	conformance.Run(t, func() entities.Connector { return s.connector([]string{rootPageID}) }, conformance.Fixture{
+	conform.Run(t, func() lore.Connector { return s.connector([]string{rootPageID}) }, conform.Fixture{
 		Docs:             3,
 		ResumeAfterBatch: 0,
 	})
@@ -323,7 +323,7 @@ func TestTrashedAndOutOfScopePagesAreSkipped(t *testing.T) {
 	}
 
 	docs := docsByID(got.batches)
-	for _, id := range []entities.DocID{trashedID, marketingID} {
+	for _, id := range []lore.DocID{trashedID, marketingID} {
 		if _, ok := docs[id]; ok {
 			t.Errorf("%s reached the stream", id)
 		}
@@ -353,7 +353,7 @@ func TestEmptyRootPagesIndexesEveryVisiblePage(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)
 	}
-	want := [][]entities.DocID{{rootID, decisionID}, {runbookID, marketingID}}
+	want := [][]lore.DocID{{rootID, decisionID}, {runbookID, marketingID}}
 	if diff := batchedIDs(got.batches); !sameIDs(diff, want) {
 		t.Fatalf("batches\n got %v\nwant %v", diff, want)
 	}
@@ -508,7 +508,7 @@ func TestChangesResumesFromCursorWithoutReplay(t *testing.T) {
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
 	}
-	want := [][]entities.DocID{{runbookID}}
+	want := [][]lore.DocID{{runbookID}}
 	if diff := batchedIDs(resumed.batches); !sameIDs(diff, want) {
 		t.Fatalf("resumed batches\n got %v\nwant %v", diff, want)
 	}
@@ -538,7 +538,7 @@ func TestBatchNeverClosesInsideOneEditTimestamp(t *testing.T) {
 	if full.err != nil {
 		t.Fatalf("Changes: %v", full.err)
 	}
-	want := [][]entities.DocID{{tieHighID, tieLowID}, {tieLateID}}
+	want := [][]lore.DocID{{tieHighID, tieLowID}, {tieLateID}}
 	if diff := batchedIDs(full.batches); !sameIDs(diff, want) {
 		t.Fatalf("batches\n got %v\nwant %v", diff, want)
 	}
@@ -557,12 +557,12 @@ func TestBatchNeverClosesInsideOneEditTimestamp(t *testing.T) {
 
 func TestMillisecondWatermarkDoesNotReplayTheSameSecond(t *testing.T) {
 	s := newStub(t)
-	cursor := entities.Cursor{"last_edited_at": "2024-05-02T10:30:00.123Z", "doc_id": string(decisionID)}
+	cursor := lore.Cursor{"last_edited_at": "2024-05-02T10:30:00.123Z", "doc_id": string(decisionID)}
 	got := drain(t, s.connector([]string{rootPageID}), cursor)
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)
 	}
-	want := [][]entities.DocID{{runbookID}}
+	want := [][]lore.DocID{{runbookID}}
 	if diff := batchedIDs(got.batches); !sameIDs(diff, want) {
 		t.Fatalf("batches\n got %v\nwant %v", diff, want)
 	}
@@ -577,7 +577,7 @@ func TestDocumentMetadata(t *testing.T) {
 	docs := docsByID(got.batches)
 
 	tests := []struct {
-		id        entities.DocID
+		id        lore.DocID
 		title     string
 		body      string
 		url       string
@@ -616,7 +616,7 @@ func TestDocumentMetadata(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s missing from the stream", tt.id)
 			}
-			if d.Source != sourceName || d.Type != entities.DocTypePage {
+			if d.Source != sourceName || d.Type != lore.DocTypePage {
 				t.Errorf("source %q type %q", d.Source, d.Type)
 			}
 			if d.RepoRef != "" {
@@ -651,11 +651,11 @@ func TestReferenceExtraction(t *testing.T) {
 		t.Fatalf("Changes: %v", got.err)
 	}
 
-	want := []entities.RawRef{
-		{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-		{Kind: entities.RefKindTicketKey, Value: "PROJ-456"},
-		{Kind: entities.RefKindURL, Value: "https://acme.atlassian.net/browse/PROJ-123"},
-		{Kind: entities.RefKindFilePath, Value: "internal/auth/session.go"},
+	want := []lore.RawRef{
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-456"},
+		{Kind: lore.RefKindURL, Value: "https://acme.atlassian.net/browse/PROJ-123"},
+		{Kind: lore.RefKindFilePath, Value: "internal/auth/session.go"},
 	}
 	if refs := docsByID(got.batches)[decisionID].Refs; !slices.Equal(refs, want) {
 		t.Errorf("refs of %s\n got %v\nwant %v", decisionID, refs, want)
@@ -664,7 +664,7 @@ func TestReferenceExtraction(t *testing.T) {
 
 func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 	s := newStub(t)
-	got := drain(t, s.connector([]string{rootPageID}), entities.Cursor{"last_edited_at": "last tuesday"})
+	got := drain(t, s.connector([]string{rootPageID}), lore.Cursor{"last_edited_at": "last tuesday"})
 	if got.err == nil {
 		t.Fatal("Changes accepted a malformed watermark")
 	}
@@ -678,7 +678,7 @@ func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 
 func TestCursorIsCopiedPerBatch(t *testing.T) {
 	s := newStub(t)
-	caller := entities.Cursor{"last_edited_at": "2020-01-01T00:00:00Z", "doc_id": "notion:page:older"}
+	caller := lore.Cursor{"last_edited_at": "2020-01-01T00:00:00Z", "doc_id": "notion:page:older"}
 	got := drain(t, s.connector([]string{rootPageID}), caller)
 	if got.err != nil {
 		t.Fatalf("Changes: %v", got.err)

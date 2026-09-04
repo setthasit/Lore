@@ -1,37 +1,37 @@
-package entities_test
+package lore_test
 
 import (
 	"testing"
 
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestNewDocID(t *testing.T) {
 	tests := []struct {
 		name       string
 		source     string
-		docType    entities.DocType
+		docType    lore.DocType
 		externalID string
-		want       entities.DocID
+		want       lore.DocID
 	}{
 		{
 			name:       "commit",
 			source:     "github",
-			docType:    entities.DocTypeCommit,
+			docType:    lore.DocTypeCommit,
 			externalID: "abc123",
 			want:       "github:commit:abc123",
 		},
 		{
 			name:       "ticket comment with colons in external id",
 			source:     "jira",
-			docType:    entities.DocTypeTicketComment,
+			docType:    lore.DocTypeTicketComment,
 			externalID: "PROJ-123:10042",
 			want:       "jira:ticket_comment:PROJ-123:10042",
 		},
 		{
 			name:       "unknown doc type stays as given",
 			source:     "slack",
-			docType:    entities.DocType("message"),
+			docType:    lore.DocType("message"),
 			externalID: "C01/1712345678.000100",
 			want:       "slack:message:C01/1712345678.000100",
 		},
@@ -45,7 +45,7 @@ func TestNewDocID(t *testing.T) {
 		{
 			name:       "empty external id",
 			source:     "notion",
-			docType:    entities.DocTypePage,
+			docType:    lore.DocTypePage,
 			externalID: "",
 			want:       "notion:page:",
 		},
@@ -53,7 +53,7 @@ func TestNewDocID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := entities.NewDocID(tt.source, tt.docType, tt.externalID); got != tt.want {
+			if got := lore.NewDocID(tt.source, tt.docType, tt.externalID); got != tt.want {
 				t.Errorf("NewDocID(%q, %q, %q) = %q, want %q",
 					tt.source, tt.docType, tt.externalID, got, tt.want)
 			}
@@ -62,9 +62,9 @@ func TestNewDocID(t *testing.T) {
 }
 
 func TestDocIDsAreUniquePerSourceAndType(t *testing.T) {
-	pr := entities.NewDocID("github", entities.DocTypePR, "1")
-	issue := entities.NewDocID("github", entities.DocTypeIssue, "1")
-	otherSource := entities.NewDocID("gitlab", entities.DocTypePR, "1")
+	pr := lore.NewDocID("github", lore.DocTypePR, "1")
+	issue := lore.NewDocID("github", lore.DocTypeIssue, "1")
+	otherSource := lore.NewDocID("gitlab", lore.DocTypePR, "1")
 
 	if pr == issue {
 		t.Errorf("pr and issue with the same external id collide: %q", pr)
@@ -76,18 +76,18 @@ func TestDocIDsAreUniquePerSourceAndType(t *testing.T) {
 
 func TestDocTypeConstants(t *testing.T) {
 	tests := []struct {
-		docType entities.DocType
+		docType lore.DocType
 		want    string
 	}{
-		{entities.DocTypeCommit, "commit"},
-		{entities.DocTypePR, "pr"},
-		{entities.DocTypePRReview, "pr_review"},
-		{entities.DocTypeReviewComment, "review_comment"},
-		{entities.DocTypeIssue, "issue"},
-		{entities.DocTypeIssueComment, "issue_comment"},
-		{entities.DocTypePage, "page"},
-		{entities.DocTypeTicket, "ticket"},
-		{entities.DocTypeTicketComment, "ticket_comment"},
+		{lore.DocTypeCommit, "commit"},
+		{lore.DocTypePR, "pr"},
+		{lore.DocTypePRReview, "pr_review"},
+		{lore.DocTypeReviewComment, "review_comment"},
+		{lore.DocTypeIssue, "issue"},
+		{lore.DocTypeIssueComment, "issue_comment"},
+		{lore.DocTypePage, "page"},
+		{lore.DocTypeTicket, "ticket"},
+		{lore.DocTypeTicketComment, "ticket_comment"},
 	}
 
 	for _, tt := range tests {
@@ -98,7 +98,7 @@ func TestDocTypeConstants(t *testing.T) {
 		})
 	}
 
-	seen := make(map[entities.DocType]struct{}, len(tests))
+	seen := make(map[lore.DocType]struct{}, len(tests))
 	for _, tt := range tests {
 		if _, dup := seen[tt.docType]; dup {
 			t.Errorf("duplicate DocType value %q", tt.docType)

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
 	"github.com/setthasit/Lore/internal/connectors/llm/openai"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 const (
@@ -78,7 +78,7 @@ func TestNewResolvesEndpoint(t *testing.T) {
 }
 
 func TestCompleteSpeaksChatCompletions(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if r.URL.Path != chatPath {
 			t.Errorf("path = %q, want %q", r.URL.Path, chatPath)
 		}
@@ -120,7 +120,7 @@ func TestCompleteSpeaksChatCompletions(t *testing.T) {
 			}
 		}
 
-		httpretrytest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"Because reads dominated."}}]}`)
+		httpxtest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"Because reads dominated."}}]}`)
 	})
 
 	c, err := New(fakeKey, testModel, ts.URL)
@@ -141,8 +141,8 @@ func TestCompleteFailsFastOnClientError(t *testing.T) {
 	// body is what reaches logs and user output.
 	echoBody := fmt.Sprintf(`{"error":{"code":"1002","message":"invalid api key: %s"}}`, fakeKey)
 
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusUnauthorized, echoBody)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusUnauthorized, echoBody)
 	})
 
 	c, err := New(fakeKey, testModel, ts.URL)

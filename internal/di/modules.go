@@ -13,24 +13,22 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/setthasit/Lore/internal/config"
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/connectors/embedder/ollama"
 	"github.com/setthasit/Lore/internal/connectors/embedder/openai"
 	"github.com/setthasit/Lore/internal/connectors/github"
 	"github.com/setthasit/Lore/internal/connectors/gitlab"
 	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/connectors/jira"
-	"github.com/setthasit/Lore/internal/connectors/llm"
 	llmanthropic "github.com/setthasit/Lore/internal/connectors/llm/anthropic"
 	llmollama "github.com/setthasit/Lore/internal/connectors/llm/ollama"
 	llmopenai "github.com/setthasit/Lore/internal/connectors/llm/openai"
 	llmzai "github.com/setthasit/Lore/internal/connectors/llm/zai"
 	"github.com/setthasit/Lore/internal/connectors/notion"
-	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func Workspace(configPath string) fx.Option {
@@ -54,7 +52,7 @@ var RepositoryModule = fx.Module("repository", fx.Provide(newIndexStore))
 
 var ConnectorModule = fx.Module("connectors", fx.Provide(newConnectors))
 
-var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedder))
+var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedder, newVectorSpace))
 
 var LLMModule = fx.Module("llm", fx.Provide(newLLM))
 
@@ -155,8 +153,8 @@ func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repo
 	return store, nil
 }
 
-func newConnectors(cfg *config.Config) ([]entities.Connector, error) {
-	var connectors []entities.Connector
+func newConnectors(cfg *config.Config) ([]lore.Connector, error) {
+	var connectors []lore.Connector
 
 	if gh := cfg.Sources.GitHub; gh != nil {
 		token, err := envValue("sources.github.token_env", gh.TokenEnv)
@@ -279,7 +277,13 @@ func knownModels() []string {
 	return slices.Sorted(maps.Keys(openAIModelDims))
 }
 
-func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
+// The vector-space identity is the host's to compose: the provider reports a
+// width, never a name, so it cannot claim another provider's vector space.
+func newVectorSpace(spec embedderSpec) services.VectorSpace {
+	return services.NewVectorSpace(spec.provider, spec.model, spec.dims)
+}
+
+func newEmbedder(spec embedderSpec) (lore.Embedder, error) {
 	if spec.provider == providerOllama {
 		emb, err := ollama.New(spec.model, spec.baseURL, spec.dims)
 		if err != nil {
@@ -311,15 +315,15 @@ const (
 	defaultLLMProvider = providerOpenAI
 )
 
-var llmProviders = map[string]func(key, model, baseURL string) (llm.LLM, error){
-	providerOpenAI:    func(key, model, baseURL string) (llm.LLM, error) { return llmopenai.New(key, model, baseURL) },
-	providerAnthropic: func(key, model, baseURL string) (llm.LLM, error) { return llmanthropic.New(key, model, baseURL) },
-	providerZAI:       func(key, model, baseURL string) (llm.LLM, error) { return llmzai.New(key, model, baseURL) },
-	providerOllama:    func(_, model, baseURL string) (llm.LLM, error) { return llmollama.New(model, baseURL) },
+var llmProviders = map[string]func(key, model, baseURL string) (lore.Completer, error){
+	providerOpenAI:    func(key, model, baseURL string) (lore.Completer, error) { return llmopenai.New(key, model, baseURL) },
+	providerAnthropic: func(key, model, baseURL string) (lore.Completer, error) { return llmanthropic.New(key, model, baseURL) },
+	providerZAI:       func(key, model, baseURL string) (lore.Completer, error) { return llmzai.New(key, model, baseURL) },
+	providerOllama:    func(_, model, baseURL string) (lore.Completer, error) { return llmollama.New(model, baseURL) },
 }
 
 // A workspace with no llm: block resolves to a nil LLM: only synthesis then fails, and it says why.
-func newLLM(cfg *config.Config) (llm.LLM, error) {
+func newLLM(cfg *config.Config) (lore.Completer, error) {
 	if cfg.LLM == nil {
 		return nil, nil
 	}
@@ -362,7 +366,7 @@ func knownLLMProviders() []string {
 	return slices.Sorted(maps.Keys(llmProviders))
 }
 
-func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {
+func newQueryService(store repositories.IndexStore, emb lore.Embedder, cfg *config.Config) services.QueryService {
 	return services.NewQueryService(store, emb, services.QueryConfig{
 		TopK:        cfg.Query.TopK,
 		WalkDepth:   cfg.Query.WalkDepth,
@@ -370,7 +374,7 @@ func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *
 	})
 }
 
-func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.ImpactService {
+func newImpactService(store repositories.IndexStore, emb lore.Embedder, cfg *config.Config) services.ImpactService {
 	return services.NewImpactService(store, emb, services.QueryConfig{
 		TopK:        cfg.Query.TopK,
 		WalkDepth:   cfg.Query.WalkDepth,
@@ -393,7 +397,7 @@ func newCodeRepos(cfg *config.Config) []services.CodeRepo {
 
 func newWhyService(
 	store repositories.IndexStore,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	cfg *config.Config,
 	repos []services.CodeRepo,
 ) services.WhyService {

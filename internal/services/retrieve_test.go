@@ -10,8 +10,9 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -28,7 +29,7 @@ var (
 
 type retrieveMocks struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
+	emb   *mock_lore.MockEmbedder
 }
 
 func newRetrieveMocks(t *testing.T) retrieveMocks {
@@ -38,15 +39,15 @@ func newRetrieveMocks(t *testing.T) retrieveMocks {
 
 	return retrieveMocks{
 		store: mock_repositories.NewMockIndexStore(ctrl),
-		emb:   mock_embedder.NewMockEmbedder(ctrl),
+		emb:   mock_lore.NewMockEmbedder(ctrl),
 	}
 }
 
 func retrieveMeta(id string) entities.DocumentMeta {
 	return entities.DocumentMeta{
-		ID:        entities.DocID(id),
+		ID:        lore.DocID(id),
 		Source:    "github",
-		Type:      entities.DocTypeIssue,
+		Type:      lore.DocTypeIssue,
 		Title:     "decision " + id,
 		URL:       "https://example.test/" + id,
 		CreatedAt: time.Date(2025, time.March, 12, 9, 0, 0, 0, time.UTC),
@@ -86,7 +87,7 @@ func assertClose(t *testing.T, what string, got, want float32) {
 func TestHybridSearchFusesBothSearchesRunWithTheSameFiltersAndK(t *testing.T) {
 	t.Parallel()
 
-	filters := entities.Filters{Source: "github", RepoRef: "acme/lore", DocType: entities.DocTypePR}
+	filters := entities.Filters{Source: "github", RepoRef: "acme/lore", DocType: lore.DocTypePR}
 
 	m := newRetrieveMocks(t)
 	m.emb.EXPECT().Embed(gomock.Any(), []string{retrieveQuery}).Return([][]float32{retrieveVector}, nil)
@@ -192,7 +193,7 @@ func TestLiftDocumentsKeepsOneCitableSeedPerDocumentInFusionOrder(t *testing.T) 
 
 	m := newRetrieveMocks(t)
 	m.store.EXPECT().
-		DocumentsByID(gomock.Any(), []entities.DocID{"docA", "docB", "docC", "docD"}).
+		DocumentsByID(gomock.Any(), []lore.DocID{"docA", "docB", "docC", "docD"}).
 		Return([]entities.DocumentMeta{retrieveMeta("docB"), urlless, retrieveMeta("docA")}, nil).
 		Times(1)
 
@@ -249,7 +250,7 @@ func TestLiftDocumentsClassifiesHydrationFailure(t *testing.T) {
 	t.Parallel()
 
 	m := newRetrieveMocks(t)
-	m.store.EXPECT().DocumentsByID(gomock.Any(), []entities.DocID{"docA"}).Return(nil, errRetrieveStore)
+	m.store.EXPECT().DocumentsByID(gomock.Any(), []lore.DocID{"docA"}).Return(nil, errRetrieveStore)
 
 	seeds, err := liftDocuments(context.Background(), m.store, []fusedChunk{retrieveFused("docA", 0, 0.9)})
 	if seeds != nil {

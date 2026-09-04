@@ -1,6 +1,6 @@
-// Package httpretrytest hosts the httptest scaffolding shared by the connector
-// tests that drive httpretry.Client.
-package httpretrytest
+// Package httpxtest hosts the httptest scaffolding shared by the connector
+// tests that drive httpx.Client.
+package httpxtest
 
 import (
 	"context"

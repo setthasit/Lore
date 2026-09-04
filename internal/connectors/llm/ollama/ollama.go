@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/llm"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
-var _ llm.LLM = (*Client)(nil)
+var _ lore.Completer = (*Client)(nil)
 
 const DefaultBaseURL = "http://127.0.0.1:11434"
 
@@ -23,7 +23,7 @@ type Client struct {
 	model    string
 	endpoint string
 	header   http.Header
-	call     httpretry.Client
+	call     httpx.Client
 }
 
 type Option func(*Client)
@@ -45,10 +45,10 @@ func New(model, baseURL string, opts ...Option) (*Client, error) {
 
 	c := &Client{
 		model:    model,
-		endpoint: httpretry.Endpoint(baseURL, DefaultBaseURL, chatPath),
+		endpoint: httpx.Endpoint(baseURL, DefaultBaseURL, chatPath),
 		header:   http.Header{"Content-Type": {"application/json"}},
-		call: httpretry.Client{
-			HTTP: &http.Client{Timeout: llm.RequestTimeout},
+		call: httpx.Client{
+			HTTP: &http.Client{Timeout: lore.CompleteTimeout},
 			Op:   "ollama: chat",
 		},
 	}

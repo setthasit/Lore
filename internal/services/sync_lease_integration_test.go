@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -72,11 +72,11 @@ func leaseStore(t *testing.T) (*sqlite.Store, *leaseClock) {
 	return s, clock
 }
 
-func leaseDoc(slug, title string) entities.Document {
-	return entities.Document{
-		ID:      entities.NewDocID("github", entities.DocTypeCommit, leaseSlug+"/commit/"+slug),
+func leaseDoc(slug, title string) lore.Document {
+	return lore.Document{
+		ID:      lore.NewDocID("github", lore.DocTypeCommit, leaseSlug+"/commit/"+slug),
 		Source:  "github",
-		Type:    entities.DocTypeCommit,
+		Type:    lore.DocTypeCommit,
 		RepoRef: "github:" + leaseSlug,
 		Title:   title,
 		Body:    title + ", and left this body behind for the index to chunk.",
@@ -87,9 +87,9 @@ func leaseDoc(slug, title string) entities.Document {
 
 type leaseEmbedder struct{}
 
-var _ embedder.Embedder = leaseEmbedder{}
+var _ lore.Embedder = leaseEmbedder{}
 
-func (leaseEmbedder) Identity() string { return embedder.FormatIdentity("fake", "lease", leaseDims) }
+func (leaseEmbedder) Dimensions() int { return leaseDims }
 
 func (leaseEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	vectors := make([][]float32, len(texts))
@@ -104,18 +104,18 @@ func (leaseEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 // held, when set, is closed once the batch is durable and the round then parks
 // on resume, keeping its lease alive for a contender to run against.
 type leaseSource struct {
-	doc    entities.Document
+	doc    lore.Document
 	held   chan struct{}
 	resume chan struct{}
 }
 
 func (s *leaseSource) Name() string { return leaseConnector }
 
-func (s *leaseSource) Changes(ctx context.Context, _ entities.Cursor) iter.Seq2[entities.Batch, error] {
-	return func(yield func(entities.Batch, error) bool) {
-		batch := entities.Batch{
-			Docs:   []entities.Document{s.doc},
-			Cursor: entities.Cursor{"since": string(s.doc.ID)},
+func (s *leaseSource) Changes(ctx context.Context, _ lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
+		batch := lore.Batch{
+			Docs:   []lore.Document{s.doc},
+			Cursor: lore.Cursor{"since": string(s.doc.ID)},
 		}
 		if !yield(batch, nil) || s.held == nil {
 			return
@@ -132,7 +132,7 @@ func (s *leaseSource) Changes(ctx context.Context, _ entities.Cursor) iter.Seq2[
 func leaseRound(store repositories.IndexStore, clock *leaseClock, holder string, source *leaseSource) *syncOrchestrator {
 	return &syncOrchestrator{
 		store:      store,
-		connectors: []entities.Connector{source},
+		connectors: []lore.Connector{source},
 		chunker:    NewChunker(),
 		emb:        leaseEmbedder{},
 		links:      NewLinkResolver(store, nil),
@@ -142,7 +142,7 @@ func leaseRound(store repositories.IndexStore, clock *leaseClock, holder string,
 	}
 }
 
-func leaseIndexed(t *testing.T, store *sqlite.Store, ids ...entities.DocID) []entities.DocID {
+func leaseIndexed(t *testing.T, store *sqlite.Store, ids ...lore.DocID) []lore.DocID {
 	t.Helper()
 
 	docs, err := store.DocumentsByID(context.Background(), ids)
@@ -150,7 +150,7 @@ func leaseIndexed(t *testing.T, store *sqlite.Store, ids ...entities.DocID) []en
 		t.Fatalf("DocumentsByID: %v", err)
 	}
 
-	got := make([]entities.DocID, len(docs))
+	got := make([]lore.DocID, len(docs))
 	for i, doc := range docs {
 		got[i] = doc.ID
 	}
@@ -205,7 +205,7 @@ func TestSyncLandsOnlyTheWinningRoundsDocuments(t *testing.T) {
 		t.Errorf("the refused round = %v, want it to wrap ErrSyncLocked", refused)
 	}
 
-	want := []entities.DocID{leaseWinnerDoc.ID}
+	want := []lore.DocID{leaseWinnerDoc.ID}
 	got := leaseIndexed(t, store, leaseWinnerDoc.ID, leaseLoserDoc.ID)
 	if !slices.Equal(got, want) {
 		t.Errorf("indexed documents = %v, want only the winner's %v", got, want)
@@ -233,7 +233,7 @@ func TestSyncTakesOverALeaseLeftDeadPastItsTTL(t *testing.T) {
 	}
 
 	indexed := leaseIndexed(t, store, leaseTakerDoc.ID)
-	if !slices.Equal(indexed, []entities.DocID{leaseTakerDoc.ID}) {
+	if !slices.Equal(indexed, []lore.DocID{leaseTakerDoc.ID}) {
 		t.Errorf("indexed documents = %v, want the taker's round to have landed", indexed)
 	}
 }

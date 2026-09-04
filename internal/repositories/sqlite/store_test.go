@@ -11,6 +11,7 @@ import (
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const testDims = 3
@@ -128,11 +129,11 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 	ctx := context.Background()
 
 	created := time.Date(2025, 3, 12, 9, 30, 0, 0, time.UTC)
-	docID := entities.NewDocID("github", entities.DocTypeCommit, "ABCDEF0123456789abcdef0123456789abcdef01")
-	doc := entities.Document{
+	docID := lore.NewDocID("github", lore.DocTypeCommit, "ABCDEF0123456789abcdef0123456789abcdef01")
+	doc := lore.Document{
 		ID:        docID,
 		Source:    "github",
-		Type:      entities.DocTypeCommit,
+		Type:      lore.DocTypeCommit,
 		RepoRef:   "github:acme/lore",
 		Title:     "Pick SQLite for the workspace index",
 		Body:      "Zero external infra, single-file portability, offline queries.",
@@ -142,13 +143,13 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 		UpdatedAt: created.Add(time.Hour),
 	}
 
-	if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+	if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
 		t.Fatalf("UpsertDocuments: %v", err)
 	}
 
 	// Keyed by DocID: a second write updates in place.
 	doc.Title = "Pick SQLite (revised)"
-	if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+	if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
 		t.Fatalf("UpsertDocuments (update): %v", err)
 	}
 
@@ -248,7 +249,7 @@ func TestUpsertDocumentsAndReplaceChunks(t *testing.T) {
 func TestReplaceChunksRejectsWrongVectorWidthAndUnknownDocument(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	docID := entities.NewDocID("github", entities.DocTypeIssue, "42")
+	docID := lore.NewDocID("github", lore.DocTypeIssue, "42")
 
 	err := s.ReplaceChunks(ctx, docID, []entities.Chunk{{DocID: docID, Text: "x", Embedding: []float32{1, 2}}})
 	if err == nil {
@@ -267,11 +268,11 @@ func TestDocumentsByID(t *testing.T) {
 	ctx := context.Background()
 
 	created := time.Date(2025, 6, 1, 8, 0, 0, 0, time.UTC)
-	docs := []entities.Document{
+	docs := []lore.Document{
 		{
-			ID:        entities.NewDocID("github", entities.DocTypeIssue, "7"),
+			ID:        lore.NewDocID("github", lore.DocTypeIssue, "7"),
 			Source:    "github",
-			Type:      entities.DocTypeIssue,
+			Type:      lore.DocTypeIssue,
 			RepoRef:   "github:acme/lore",
 			Title:     "Hybrid retrieval returns duplicates",
 			Body:      "Body text the metadata read must not carry.",
@@ -281,9 +282,9 @@ func TestDocumentsByID(t *testing.T) {
 			UpdatedAt: created.Add(90 * time.Minute),
 		},
 		{
-			ID:        entities.NewDocID("notion", entities.DocTypePage, "design/retrieval"),
+			ID:        lore.NewDocID("notion", lore.DocTypePage, "design/retrieval"),
 			Source:    "notion",
-			Type:      entities.DocTypePage,
+			Type:      lore.DocTypePage,
 			Title:     "Retrieval design",
 			Body:      "RRF over two ranked lists.",
 			Author:    "architect@example.test",
@@ -296,7 +297,7 @@ func TestDocumentsByID(t *testing.T) {
 		t.Fatalf("UpsertDocuments: %v", err)
 	}
 
-	ids := []entities.DocID{docs[0].ID, docs[1].ID}
+	ids := []lore.DocID{docs[0].ID, docs[1].ID}
 	metas, err := s.DocumentsByID(ctx, ids)
 	if err != nil {
 		t.Fatalf("DocumentsByID: %v", err)
@@ -305,7 +306,7 @@ func TestDocumentsByID(t *testing.T) {
 		t.Fatalf("DocumentsByID returned %d metas, want %d", len(metas), len(docs))
 	}
 
-	byID := make(map[entities.DocID]entities.DocumentMeta, len(metas))
+	byID := make(map[lore.DocID]entities.DocumentMeta, len(metas))
 	for _, m := range metas {
 		byID[m.ID] = m
 	}
@@ -325,7 +326,7 @@ func TestDocumentsByID(t *testing.T) {
 		}
 	}
 
-	metas, err = s.DocumentsByID(ctx, []entities.DocID{docs[1].ID, "github:issue:does-not-exist"})
+	metas, err = s.DocumentsByID(ctx, []lore.DocID{docs[1].ID, "github:issue:does-not-exist"})
 	if err != nil {
 		t.Fatalf("DocumentsByID (subset): %v", err)
 	}
@@ -347,10 +348,10 @@ func TestDocumentsWithBody(t *testing.T) {
 	ctx := context.Background()
 
 	created := time.Date(2025, 7, 4, 10, 30, 0, 0, time.UTC)
-	doc := entities.Document{
-		ID:        entities.NewDocID("github", entities.DocTypePR, "acme/lore/pull/12"),
+	doc := lore.Document{
+		ID:        lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/12"),
 		Source:    "github",
-		Type:      entities.DocTypePR,
+		Type:      lore.DocTypePR,
 		RepoRef:   "github:acme/lore",
 		Title:     "Resolve refs after the batch commits",
 		Body:      "Supersedes #4.\nCloses acme/lore#9.",
@@ -358,13 +359,13 @@ func TestDocumentsWithBody(t *testing.T) {
 		URL:       "https://github.com/acme/lore/pull/12",
 		CreatedAt: created,
 		UpdatedAt: created.Add(time.Hour),
-		Refs:      []entities.RawRef{{Kind: entities.RefKindPRNumber, Value: "acme/lore#9"}},
+		Refs:      []lore.RawRef{{Kind: lore.RefKindPRNumber, Value: "acme/lore#9"}},
 	}
-	if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+	if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
 		t.Fatalf("UpsertDocuments: %v", err)
 	}
 
-	ids := []entities.DocID{doc.ID, "github:pr:acme/lore/pull/999"}
+	ids := []lore.DocID{doc.ID, "github:pr:acme/lore/pull/999"}
 	docs, err := s.DocumentsWithBody(ctx, ids)
 	if err != nil {
 		t.Fatalf("DocumentsWithBody: %v", err)
@@ -393,15 +394,15 @@ func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
 	ctx := context.Background()
 
 	created := time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC)
-	first := entities.NewDocID("github", entities.DocTypeIssue, "11")
-	second := entities.NewDocID("github", entities.DocTypeIssue, "12")
-	for _, id := range []entities.DocID{first, second} {
-		doc := entities.Document{
-			ID: id, Source: "github", Type: entities.DocTypeIssue,
+	first := lore.NewDocID("github", lore.DocTypeIssue, "11")
+	second := lore.NewDocID("github", lore.DocTypeIssue, "12")
+	for _, id := range []lore.DocID{first, second} {
+		doc := lore.Document{
+			ID: id, Source: "github", Type: lore.DocTypeIssue,
 			Title: "t", Body: "b", Author: "a", URL: "https://example.test/" + string(id),
 			CreatedAt: created, UpdatedAt: created,
 		}
-		if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+		if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
 			t.Fatalf("UpsertDocuments: %v", err)
 		}
 		chunk := entities.Chunk{
@@ -435,7 +436,7 @@ func TestWipeChunksClearsEveryChunkTableAndKeepsDocuments(t *testing.T) {
 
 	rebuilt := entities.Chunk{
 		DocID: first, Ordinal: 0, Text: "rebuilt after re-embed",
-		Source: "github", DocType: entities.DocTypeIssue, Author: "a",
+		Source: "github", DocType: lore.DocTypeIssue, Author: "a",
 		CreatedAt: created, UpdatedAt: created,
 		Embedding: []float32{0.4, 0.5, 0.6},
 	}

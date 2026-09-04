@@ -1,4 +1,4 @@
-package entities
+package lore
 
 import "time"
 
@@ -6,7 +6,8 @@ import "time"
 // "<source>:<type>:<external_id>".
 type DocID string
 
-// NewDocID builds a DocID from its three parts.
+// NewDocID builds a DocID from its three parts. A connector never spells its
+// own name here: the host supplies the instance id through SourceConfig.DocID.
 func NewDocID(source string, t DocType, externalID string) DocID {
 	return DocID(source + ":" + string(t) + ":" + externalID)
 }
@@ -31,7 +32,7 @@ const (
 // Document is the single shape every connector normalizes its source to.
 type Document struct {
 	ID        DocID
-	Source    string // "github", "notion", "jira", …
+	Source    string // the instance id that produced it — "github", "jira-acme", …
 	Type      DocType
 	RepoRef   string // "github:owner/repo"; empty for non-repo documents
 	Title     string
@@ -43,7 +44,8 @@ type Document struct {
 	Refs      []RawRef  // unresolved references found in the body
 }
 
-// RefKind classifies the textual form of an unresolved reference.
+// RefKind classifies the textual form of an unresolved reference. The
+// vocabulary is closed: an unknown kind is rejected at ingest, never dropped.
 type RefKind string
 
 const (
@@ -54,9 +56,25 @@ const (
 	RefKindPRNumber  RefKind = "pr_number"
 )
 
-// RawRef is a reference emitted by a connector before the LinkResolver turns it
-// into an Edge.
+// RefKinds is the closed vocabulary, in the order errors list it.
+func RefKinds() []RefKind {
+	return []RefKind{RefKindURL, RefKindTicketKey, RefKindCommitSHA, RefKindFilePath, RefKindPRNumber}
+}
+
+// RawRef is a reference emitted by a connector before the host turns it into an
+// edge.
 type RawRef struct {
 	Kind  RefKind
 	Value string // "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
+}
+
+// Cursor is an opaque per-instance sync position; only the connector that
+// produced it interprets its keys.
+type Cursor map[string]string
+
+// Batch is the checkpoint unit of a sync round: Cursor becomes durable once Docs
+// are durably committed. Every batch carries a cursor, empty ones included.
+type Batch struct {
+	Docs   []Document
+	Cursor Cursor
 }

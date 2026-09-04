@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const syncLockID = 1
@@ -27,7 +27,7 @@ INSERT INTO meta (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value`
 )
 
-func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, error) {
+func (s *Store) Cursor(ctx context.Context, connector string) (lore.Cursor, error) {
 	var payload string
 	err := s.db.QueryRowContext(ctx, selectCursorSQL, connector).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -37,7 +37,7 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 		return nil, fmt.Errorf("sqlite: read cursor of %q: %w", connector, err)
 	}
 
-	var c entities.Cursor
+	var c lore.Cursor
 	if err := json.Unmarshal([]byte(payload), &c); err != nil {
 		return nil, fmt.Errorf("sqlite: decode cursor of %q: %w", connector, err)
 	}
@@ -45,7 +45,7 @@ func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, 
 }
 
 // The stored timestamp is the store clock, not one read out of the Cursor.
-func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
+func (s *Store) SetCursor(ctx context.Context, connector string, c lore.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("sqlite: encode cursor of %q: %w", connector, err)

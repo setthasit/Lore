@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/setthasit/Lore/sdk"
 )
 
 // awkwardSubject packs every delimiter a naive split would trip over.
@@ -22,7 +24,7 @@ func TestLogFollowsRenamesNewestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Log: %v", err)
 	}
-	want := []CommitRef{
+	want := []lore.CommitRef{
 		{SHA: shaRename, Author: authorAda, Time: mustTime(t, "2024-04-03T00:00:00Z"), Subject: "rename old to new"},
 		{SHA: shaEdit, Author: authorGrace, Time: mustTime(t, "2024-04-02T08:15:00+02:00"), Subject: awkwardSubject},
 		{SHA: shaAdd, Author: authorAda, Time: mustTime(t, "2024-04-01T00:00:00Z"), Subject: "add old"},

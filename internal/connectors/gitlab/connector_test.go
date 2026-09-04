@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/conformance"
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 const (
@@ -36,22 +36,22 @@ const (
 
 // Documents the fixtures are expected to produce, in stream order.
 const (
-	commit1ID  entities.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha1
-	mr7ID      entities.DocID = "gitlab:pr:" + projectPath + "/pull/7"
-	review7ID  entities.DocID = "gitlab:pr_review:" + projectPath + "/pull/7#note_1001"
-	reply7ID   entities.DocID = "gitlab:review_comment:" + projectPath + "/pull/7#note_1002"
-	single7ID  entities.DocID = "gitlab:review_comment:" + projectPath + "/pull/7#note_1003"
-	commit2ID  entities.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha2
-	issue12ID  entities.DocID = "gitlab:issue:" + projectPath + "/issues/12"
-	note12ID   entities.DocID = "gitlab:issue_comment:" + projectPath + "/issues/12#note_2001"
-	mr8ID      entities.DocID = "gitlab:pr:" + projectPath + "/pull/8"
-	single8ID  entities.DocID = "gitlab:review_comment:" + projectPath + "/pull/8#note_1010"
-	commit3ID  entities.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha3
-	repoRefAll                = "gitlab:" + projectPath
+	commit1ID  lore.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha1
+	mr7ID      lore.DocID = "gitlab:pr:" + projectPath + "/pull/7"
+	review7ID  lore.DocID = "gitlab:pr_review:" + projectPath + "/pull/7#note_1001"
+	reply7ID   lore.DocID = "gitlab:review_comment:" + projectPath + "/pull/7#note_1002"
+	single7ID  lore.DocID = "gitlab:review_comment:" + projectPath + "/pull/7#note_1003"
+	commit2ID  lore.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha2
+	issue12ID  lore.DocID = "gitlab:issue:" + projectPath + "/issues/12"
+	note12ID   lore.DocID = "gitlab:issue_comment:" + projectPath + "/issues/12#note_2001"
+	mr8ID      lore.DocID = "gitlab:pr:" + projectPath + "/pull/8"
+	single8ID  lore.DocID = "gitlab:review_comment:" + projectPath + "/pull/8#note_1010"
+	commit3ID  lore.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha3
+	repoRefAll            = "gitlab:" + projectPath
 )
 
-func wantBatchedIDs() [][]entities.DocID {
-	return [][]entities.DocID{
+func wantBatchedIDs() [][]lore.DocID {
+	return [][]lore.DocID{
 		{commit1ID, mr7ID, review7ID, reply7ID, single7ID},
 		{commit2ID, issue12ID, note12ID},
 		{mr8ID, single8ID},
@@ -59,8 +59,8 @@ func wantBatchedIDs() [][]entities.DocID {
 	}
 }
 
-func wantCursors() []entities.Cursor {
-	return []entities.Cursor{
+func wantCursors() []lore.Cursor {
+	return []lore.Cursor{
 		{projectPath + ":updated_at": "2024-05-01T09:30:00Z", projectPath + ":doc_id": string(mr7ID)},
 		{projectPath + ":updated_at": "2024-05-02T15:00:00Z", projectPath + ":doc_id": string(issue12ID)},
 		{projectPath + ":updated_at": "2024-05-03T12:00:00Z", projectPath + ":doc_id": string(mr8ID)},
@@ -225,14 +225,14 @@ func (s *stub) waits() []time.Duration {
 }
 
 type stream struct {
-	batches  []entities.Batch
+	batches  []lore.Batch
 	err      error
 	afterErr int // yields observed after the first error: must stay 0
 }
 
 // drain consumes the whole iterator without breaking, so a yield after an error
 // would be observed rather than hidden by an early return.
-func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
+func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
 	for batch, err := range c.Changes(context.Background(), cursor) {
@@ -252,10 +252,10 @@ func drain(t *testing.T, c *Connector, cursor entities.Cursor) stream {
 	return got
 }
 
-func batchedIDs(batches []entities.Batch) [][]entities.DocID {
-	out := make([][]entities.DocID, 0, len(batches))
+func batchedIDs(batches []lore.Batch) [][]lore.DocID {
+	out := make([][]lore.DocID, 0, len(batches))
 	for _, b := range batches {
-		ids := make([]entities.DocID, 0, len(b.Docs))
+		ids := make([]lore.DocID, 0, len(b.Docs))
 		for _, d := range b.Docs {
 			ids = append(ids, d.ID)
 		}
@@ -264,21 +264,21 @@ func batchedIDs(batches []entities.Batch) [][]entities.DocID {
 	return out
 }
 
-func sameIDs(a, b [][]entities.DocID) bool {
-	return slices.EqualFunc(a, b, func(x, y []entities.DocID) bool { return slices.Equal(x, y) })
+func sameIDs(a, b [][]lore.DocID) bool {
+	return slices.EqualFunc(a, b, func(x, y []lore.DocID) bool { return slices.Equal(x, y) })
 }
 
-func allDocs(batches []entities.Batch) []entities.Document {
-	var docs []entities.Document
+func allDocs(batches []lore.Batch) []lore.Document {
+	var docs []lore.Document
 	for _, b := range batches {
 		docs = append(docs, b.Docs...)
 	}
 	return docs
 }
 
-func docsByID(t *testing.T, batches []entities.Batch) map[entities.DocID]entities.Document {
+func docsByID(t *testing.T, batches []lore.Batch) map[lore.DocID]lore.Document {
 	t.Helper()
-	docs := make(map[entities.DocID]entities.Document)
+	docs := make(map[lore.DocID]lore.Document)
 	for _, d := range allDocs(batches) {
 		if _, ok := docs[d.ID]; ok {
 			t.Errorf("%s yielded twice", d.ID)
@@ -294,10 +294,10 @@ func TestConformance(t *testing.T) {
 	for _, batch := range wantBatchedIDs() {
 		docs += len(batch)
 	}
-	conformance.Run(t, func() entities.Connector { return s.connector() }, conformance.Fixture{
+	conform.Run(t, func() lore.Connector { return s.connector() }, conform.Fixture{
 		Docs:             docs,
 		ResumeAfterBatch: 1,
-		ReplayableTypes:  []entities.DocType{entities.DocTypeCommit},
+		ReplayableTypes:  []lore.DocType{lore.DocTypeCommit},
 	})
 }
 
@@ -314,10 +314,10 @@ func TestChangesStreamsOldestFirstInUnitBatches(t *testing.T) {
 
 	// Commits, merge requests and issues interleave by their own watermark. A note
 	// keeps its own (older) edit time and travels with the parent that surfaced it.
-	tops := map[entities.DocType]bool{
-		entities.DocTypeCommit: true, entities.DocTypePR: true, entities.DocTypeIssue: true,
+	tops := map[lore.DocType]bool{
+		lore.DocTypeCommit: true, lore.DocTypePR: true, lore.DocTypeIssue: true,
 	}
-	var last entities.Document
+	var last lore.Document
 	for _, d := range allDocs(got.batches) {
 		if !tops[d.Type] {
 			continue
@@ -365,7 +365,7 @@ func TestCommitHistoryFollowsThePageHeader(t *testing.T) {
 		}
 	}
 	docs := docsByID(t, got.batches)
-	for _, id := range []entities.DocID{commit1ID, commit2ID, commit3ID} {
+	for _, id := range []lore.DocID{commit1ID, commit2ID, commit3ID} {
 		if _, ok := docs[id]; !ok {
 			t.Errorf("%s is missing: the second page was not read", id)
 		}
@@ -403,7 +403,7 @@ func TestWatermarkIsSentAsAServerSideFilter(t *testing.T) {
 	}
 
 	resumed := newStub(t)
-	cursor := entities.Cursor{
+	cursor := lore.Cursor{
 		projectPath + ":updated_at": "2024-05-02T15:00:00Z",
 		projectPath + ":doc_id":     string(issue12ID),
 	}
@@ -446,7 +446,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
 	}
-	want := [][]entities.DocID{{mr8ID, single8ID}, {commit3ID}}
+	want := [][]lore.DocID{{mr8ID, single8ID}, {commit3ID}}
 	if ids := batchedIDs(resumed.batches); !sameIDs(ids, want) {
 		t.Fatalf("resumed batches\n got %v\nwant %v", ids, want)
 	}
@@ -457,7 +457,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 		t.Fatalf("exhausted pass: %v", exhausted.err)
 	}
 	// The last cursor sits on a commit's own second, which replays by design.
-	if ids := batchedIDs(exhausted.batches); !sameIDs(ids, [][]entities.DocID{{commit3ID}}) {
+	if ids := batchedIDs(exhausted.batches); !sameIDs(ids, [][]lore.DocID{{commit3ID}}) {
 		t.Errorf("resuming from the final cursor yielded %v, want the watermark commit alone", ids)
 	}
 }
@@ -469,12 +469,12 @@ func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 	tests := []struct {
 		name      string
 		updatedAt string
-		want      [][]entities.DocID
+		want      [][]lore.DocID
 	}{
 		{
 			name:      "a commit on the watermark second is replayed",
 			updatedAt: "2024-05-02T10:00:00Z",
-			want: [][]entities.DocID{
+			want: [][]lore.DocID{
 				{commit2ID, issue12ID, note12ID},
 				{mr8ID, single8ID},
 				{commit3ID},
@@ -483,13 +483,13 @@ func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 		{
 			name:      "a merge request on the watermark second is skipped",
 			updatedAt: "2024-05-03T12:00:00Z",
-			want:      [][]entities.DocID{{commit3ID}},
+			want:      [][]lore.DocID{{commit3ID}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newStub(t)
-			cursor := entities.Cursor{
+			cursor := lore.Cursor{
 				projectPath + ":updated_at": tt.updatedAt,
 				// Sorts above every fixture document id, so the tiebreak alone decides.
 				projectPath + ":doc_id": "gitlab:zzzz",
@@ -518,8 +518,8 @@ func TestDocumentMetadata(t *testing.T) {
 	issueURL := s.server.URL + "/" + projectPath + "/-/issues/12"
 
 	tests := []struct {
-		id      entities.DocID
-		typ     entities.DocType
+		id      lore.DocID
+		typ     lore.DocType
 		title   string
 		author  string
 		url     string
@@ -527,42 +527,42 @@ func TestDocumentMetadata(t *testing.T) {
 		updated string
 	}{
 		{
-			id: commit2ID, typ: entities.DocTypeCommit,
+			id: commit2ID, typ: lore.DocTypeCommit,
 			title: "Cap the auth retry loop at five attempts", author: "Dana Lin",
 			url:     fixtureWeb + "/-/commit/" + sha2,
 			created: "2024-05-02T09:55:00Z", updated: "2024-05-02T10:00:00Z",
 		},
 		{
-			id: mr7ID, typ: entities.DocTypePR,
+			id: mr7ID, typ: lore.DocTypePR,
 			title: "Cap auth retries", author: "dana",
 			url:     fixtureWeb + "/-/merge_requests/7",
 			created: "2024-05-01T08:00:00Z", updated: "2024-05-01T09:30:00Z",
 		},
 		{
-			id: review7ID, typ: entities.DocTypePRReview,
+			id: review7ID, typ: lore.DocTypePRReview,
 			title: "Review thread (resolved) on acme/widgets!7", author: "sam",
 			url:     fixtureWeb + "/-/merge_requests/7#note_1001",
 			created: "2024-05-01T09:00:00Z", updated: "2024-05-01T09:05:00Z",
 		},
 		{
-			id: reply7ID, typ: entities.DocTypeReviewComment,
+			id: reply7ID, typ: lore.DocTypeReviewComment,
 			title: "Review comment on acme/widgets!7", author: "dana",
 			url:     fixtureWeb + "/-/merge_requests/7#note_1002",
 			created: "2024-05-01T09:20:00Z", updated: "2024-05-01T09:20:00Z",
 		},
 		{
-			id: single8ID, typ: entities.DocTypeReviewComment,
+			id: single8ID, typ: lore.DocTypeReviewComment,
 			title: "Review comment on acme/widgets!8", author: "sam",
 			url:     fixtureWeb + "/-/merge_requests/8#note_1010",
 			created: "2024-05-03T11:45:00Z", updated: "2024-05-03T11:45:00Z",
 		},
 		{
-			id: issue12ID, typ: entities.DocTypeIssue,
+			id: issue12ID, typ: lore.DocTypeIssue,
 			title: "Auth retries hammer the provider", author: "sam", url: issueURL,
 			created: "2024-04-28T10:00:00Z", updated: "2024-05-02T15:00:00Z",
 		},
 		{
-			id: note12ID, typ: entities.DocTypeIssueComment,
+			id: note12ID, typ: lore.DocTypeIssueComment,
 			title: "Comment on acme/widgets#12", author: "ravi", url: issueURL + "#note_2001",
 			created: "2024-05-01T10:00:00Z", updated: "2024-05-01T10:00:00Z",
 		},
@@ -617,7 +617,7 @@ func TestNoteIDsStripToTheirThread(t *testing.T) {
 		t.Fatalf("Changes: %v", got.err)
 	}
 
-	parents := map[entities.DocID]string{
+	parents := map[lore.DocID]string{
 		review7ID: projectPath + "/pull/7",
 		reply7ID:  projectPath + "/pull/7",
 		single7ID: projectPath + "/pull/7",
@@ -665,88 +665,88 @@ func TestReferenceExtraction(t *testing.T) {
 	docs := docsByID(t, got.batches)
 
 	tests := []struct {
-		id   entities.DocID
-		want []entities.RawRef
+		id   lore.DocID
+		want []lore.RawRef
 	}{
 		{
 			// Diff paths first, then whatever the message names.
 			id: commit1ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#12"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
 			},
 		},
 		{
 			// A rename contributes both of its paths.
 			id: commit2ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth_client.go"},
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/old_auth.go"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth_client.go"},
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/old_auth.go"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
 			},
 		},
 		{
 			id: commit3ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "docs/auth.md"},
-				{Kind: entities.RefKindCommitSHA, Value: "9f8e7d6"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "docs/auth.md"},
+				{Kind: lore.RefKindCommitSHA, Value: "9f8e7d6"},
 			},
 		},
 		{
 			// Every commit on the branch, the merge commit, then the prose.
 			id: mr7ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindCommitSHA, Value: sha1},
-				{Kind: entities.RefKindCommitSHA, Value: sha2},
-				{Kind: entities.RefKindCommitSHA, Value: sha3},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
-				{Kind: entities.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#12"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindCommitSHA, Value: sha1},
+				{Kind: lore.RefKindCommitSHA, Value: sha2},
+				{Kind: lore.RefKindCommitSHA, Value: sha3},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindURL, Value: "https://www.notion.so/acme/Auth-spec-abc123"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
 			},
 		},
 		{
 			// A diff note is anchored to its file and to the merge request it argues about.
 			id: review7ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#12"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
 			},
 		},
 		{
 			id: reply7ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
-				{Kind: entities.RefKindCommitSHA, Value: "9f8e7d6"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindCommitSHA, Value: "9f8e7d6"},
 			},
 		},
 		{
 			id: single7ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
-				{Kind: entities.RefKindTicketKey, Value: "PROJ-123"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 			},
 		},
 		{
 			// "!7" and "#7" name different things in GitLab prose, and the same pair of
 			// candidates to the resolver, so both qualify to the project path.
 			id: mr8ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindCommitSHA, Value: sha3},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindCommitSHA, Value: sha3},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
 			},
 		},
 		{
 			id:   issue12ID,
-			want: []entities.RawRef{{Kind: entities.RefKindTicketKey, Value: "PROJ-123"}},
+			want: []lore.RawRef{{Kind: lore.RefKindTicketKey, Value: "PROJ-123"}},
 		},
 		{
 			id: note12ID,
-			want: []entities.RawRef{
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#12"},
-				{Kind: entities.RefKindPRNumber, Value: "acme/widgets#7"},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
 			},
 		},
 	}
@@ -765,7 +765,7 @@ func TestReferenceExtraction(t *testing.T) {
 
 func TestMalformedCursorIsRejectedWithoutFetching(t *testing.T) {
 	s := newStub(t)
-	got := drain(t, s.connector(), entities.Cursor{projectPath + ":updated_at": "last tuesday"})
+	got := drain(t, s.connector(), lore.Cursor{projectPath + ":updated_at": "last tuesday"})
 	if got.err == nil {
 		t.Fatal("Changes accepted a malformed watermark")
 	}
@@ -793,7 +793,7 @@ func TestInvalidProjectIsRejectedWithoutFetching(t *testing.T) {
 
 func TestCursorIsCopiedPerBatch(t *testing.T) {
 	s := newStub(t)
-	caller := entities.Cursor{
+	caller := lore.Cursor{
 		projectPath + ":updated_at": "2024-05-01T09:30:00Z",
 		projectPath + ":doc_id":     string(mr7ID),
 	}

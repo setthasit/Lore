@@ -1,10 +1,10 @@
-package refscan
+package refs
 
 import (
 	"regexp"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 var (
@@ -24,26 +24,26 @@ const urlTrailing = ".,;:!?"
 
 // Set drops duplicates while keeping first-seen order.
 type Set struct {
-	seen map[entities.RawRef]struct{}
-	refs []entities.RawRef
+	seen map[lore.RawRef]struct{}
+	refs []lore.RawRef
 }
 
-func (s *Set) Add(kind entities.RefKind, value string) {
+func (s *Set) Add(kind lore.RefKind, value string) {
 	if value == "" {
 		return
 	}
-	ref := entities.RawRef{Kind: kind, Value: value}
+	ref := lore.RawRef{Kind: kind, Value: value}
 	if _, ok := s.seen[ref]; ok {
 		return
 	}
 	if s.seen == nil {
-		s.seen = make(map[entities.RawRef]struct{}, 8)
+		s.seen = make(map[lore.RawRef]struct{}, 8)
 	}
 	s.seen[ref] = struct{}{}
 	s.refs = append(s.refs, ref)
 }
 
-func (s *Set) AddAll(kind entities.RefKind, values []string) {
+func (s *Set) AddAll(kind lore.RefKind, values []string) {
 	for _, v := range values {
 		s.Add(kind, v)
 	}
@@ -51,19 +51,19 @@ func (s *Set) AddAll(kind entities.RefKind, values []string) {
 
 func (s *Set) AddTicketKeys(text string) {
 	for _, m := range ticketKeyPattern.FindAllString(text, -1) {
-		s.Add(entities.RefKindTicketKey, m)
+		s.Add(lore.RefKindTicketKey, m)
 	}
 }
 
 func (s *Set) AddURLs(text string) {
 	for _, m := range urlPattern.FindAllString(text, -1) {
-		s.Add(entities.RefKindURL, strings.TrimRight(m, urlTrailing))
+		s.Add(lore.RefKindURL, strings.TrimRight(m, urlTrailing))
 	}
 }
 
 func (s *Set) AddCommitSHAs(text string) {
 	for _, m := range commitSHAPattern.FindAllString(text, -1) {
-		s.Add(entities.RefKindCommitSHA, m)
+		s.Add(lore.RefKindCommitSHA, m)
 	}
 }
 
@@ -71,8 +71,8 @@ func (s *Set) AddFilePaths(text string) {
 	// A URL's path is not a workspace path, and its host would leak into the match.
 	masked := urlPattern.ReplaceAllLiteralString(text, " ")
 	for _, m := range filePathPattern.FindAllString(masked, -1) {
-		s.Add(entities.RefKindFilePath, m)
+		s.Add(lore.RefKindFilePath, m)
 	}
 }
 
-func (s *Set) Refs() []entities.RawRef { return s.refs }
+func (s *Set) Refs() []lore.RawRef { return s.refs }

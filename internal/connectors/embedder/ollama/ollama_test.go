@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
+	"github.com/setthasit/Lore/sdk/httpx"
 )
 
 const (
@@ -291,11 +291,11 @@ func TestEmbedRetriesADeadDaemonThenReports(t *testing.T) {
 		t.Fatal("Embed succeeded, want error")
 	}
 
-	if want := fmt.Sprintf("after %d attempts", httpretry.MaxAttempts); !strings.Contains(err.Error(), want) {
+	if want := fmt.Sprintf("after %d attempts", httpx.MaxAttempts); !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err, want)
 	}
-	if waits := rec.recorded(); len(waits) != httpretry.MaxAttempts-1 {
-		t.Errorf("waits = %v, want %d entries", waits, httpretry.MaxAttempts-1)
+	if waits := rec.recorded(); len(waits) != httpx.MaxAttempts-1 {
+		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
 }
 
@@ -342,36 +342,23 @@ func TestEmbedRespectsContextCancel(t *testing.T) {
 	})
 }
 
-func TestIdentityNeedsNoRequest(t *testing.T) {
+func TestDimensionsNeedsNoRequest(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, _ int, _ request) {
-		t.Error("server called, want Identity to answer offline")
+		t.Error("server called, want Dimensions to answer offline")
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	e, _ := newTestEmbedder(t, ts.URL, 768)
 
-	const want = "ollama/nomic-embed-text/768"
-	if got := e.Identity(); got != want {
-		t.Fatalf("Identity = %q, want %q", got, want)
-	}
-	if again := e.Identity(); again != want {
-		t.Errorf("Identity (second call) = %q, want %q", again, want)
+	if got := e.Dimensions(); got != 768 {
+		t.Fatalf("Dimensions = %d, want 768", got)
 	}
 	if n := ts.requests(); n != 0 {
 		t.Errorf("requests = %d, want none", n)
 	}
 
-	// Every component is load-bearing: a different model or width is a
-	// different vector space, and must not read as the same identity.
 	narrower, _ := newTestEmbedder(t, ts.URL, 256)
-	if narrower.Identity() == want {
-		t.Errorf("Identity for 256 dims = %q, want a distinct value", narrower.Identity())
-	}
-	other, err := New("mxbai-embed-large", "", 768)
-	if err != nil {
-		t.Fatalf("New (other model): %v", err)
-	}
-	if other.Identity() == want {
-		t.Errorf("Identity for another model = %q, want a distinct value", other.Identity())
+	if got := narrower.Dimensions(); got != 256 {
+		t.Errorf("Dimensions = %d, want 256", got)
 	}
 }
 

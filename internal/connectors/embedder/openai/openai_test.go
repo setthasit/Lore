@@ -502,36 +502,24 @@ func TestErrorsOmitAPIKey(t *testing.T) {
 	}
 }
 
-func TestIdentity(t *testing.T) {
+func TestDimensionsReportsTheConfiguredWidth(t *testing.T) {
 	e, err := New(fakeKey, testModel, "", 1536)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	const want = "openai/text-embedding-3-small/1536"
-	if got := e.Identity(); got != want {
-		t.Fatalf("Identity = %q, want %q", got, want)
-	}
-	if again := e.Identity(); again != want {
-		t.Errorf("Identity (second call) = %q, want %q", again, want)
+	if got := e.Dimensions(); got != 1536 {
+		t.Fatalf("Dimensions = %d, want 1536", got)
 	}
 
-	// Every component is load-bearing: a different model or width is a
-	// different vector space, and must not read as the same identity.
+	// The width is the only vector-space component the provider owns; the host
+	// composes the identity, so a narrower client must report the narrower width.
 	narrower, err := New(fakeKey, testModel, "", 512)
 	if err != nil {
 		t.Fatalf("New (narrower): %v", err)
 	}
-	if narrower.Identity() == want {
-		t.Errorf("Identity for 512 dims = %q, want a distinct value", narrower.Identity())
-	}
-
-	other, err := New(fakeKey, "text-embedding-3-large", "", 1536)
-	if err != nil {
-		t.Fatalf("New (other model): %v", err)
-	}
-	if other.Identity() == want {
-		t.Errorf("Identity for another model = %q, want a distinct value", other.Identity())
+	if got := narrower.Dimensions(); got != 512 {
+		t.Errorf("Dimensions = %d, want 512", got)
 	}
 }
 

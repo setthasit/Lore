@@ -1,8 +1,8 @@
 package openai
 
-import "github.com/setthasit/Lore/internal/connectors/httpretry"
+import "github.com/setthasit/Lore/sdk/httpx"
 
 const (
-	maxAttempts = httpretry.MaxAttempts
-	baseBackoff = httpretry.BaseBackoff
+	maxAttempts = httpx.MaxAttempts
+	baseBackoff = httpx.BaseBackoff
 )

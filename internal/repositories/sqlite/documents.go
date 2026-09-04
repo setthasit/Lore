@@ -10,6 +10,7 @@ import (
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // Long enough to be unique in any real repository, short enough that
@@ -34,7 +35,7 @@ ON CONFLICT(doc_id) DO UPDATE SET
 	external_key = excluded.external_key,
 	sha_prefix   = excluded.sha_prefix`
 
-func (s *Store) UpsertDocuments(ctx context.Context, docs []entities.Document) error {
+func (s *Store) UpsertDocuments(ctx context.Context, docs []lore.Document) error {
 	if len(docs) == 0 {
 		return nil
 	}
@@ -77,7 +78,7 @@ FROM documents
 WHERE doc_id IN (%s)`
 
 // The body column is deliberately not read.
-func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
+func (s *Store) DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -91,7 +92,7 @@ func (s *Store) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]enti
 	return scanDocumentMetas(rows, len(ids))
 }
 
-func (s *Store) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error) {
+func (s *Store) DocumentsWithBody(ctx context.Context, ids []lore.DocID) ([]lore.Document, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -105,7 +106,7 @@ func (s *Store) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]
 	return scanDocuments(rows, len(ids))
 }
 
-func (s *Store) queryDocuments(ctx context.Context, columns string, ids []entities.DocID) (*sql.Rows, error) {
+func (s *Store) queryDocuments(ctx context.Context, columns string, ids []lore.DocID) (*sql.Rows, error) {
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = string(id)
@@ -135,8 +136,8 @@ func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, e
 			return nil, fmt.Errorf("sqlite: scan document meta: %w", err)
 		}
 
-		m.ID = entities.DocID(docID)
-		m.Type = entities.DocType(docType)
+		m.ID = lore.DocID(docID)
+		m.Type = lore.DocType(docType)
 		if m.CreatedAt, m.UpdatedAt, err = documentTimes(m.ID, createdAt, updatedAt); err != nil {
 			return nil, err
 		}
@@ -148,11 +149,11 @@ func scanDocumentMetas(rows *sql.Rows, sizeHint int) ([]entities.DocumentMeta, e
 	return metas, nil
 }
 
-func scanDocuments(rows *sql.Rows, sizeHint int) ([]entities.Document, error) {
-	docs := make([]entities.Document, 0, sizeHint)
+func scanDocuments(rows *sql.Rows, sizeHint int) ([]lore.Document, error) {
+	docs := make([]lore.Document, 0, sizeHint)
 	for rows.Next() {
 		var (
-			d         entities.Document
+			d         lore.Document
 			docID     string
 			docType   string
 			createdAt string
@@ -164,8 +165,8 @@ func scanDocuments(rows *sql.Rows, sizeHint int) ([]entities.Document, error) {
 			return nil, fmt.Errorf("sqlite: scan document: %w", err)
 		}
 
-		d.ID = entities.DocID(docID)
-		d.Type = entities.DocType(docType)
+		d.ID = lore.DocID(docID)
+		d.Type = lore.DocType(docType)
 		if d.CreatedAt, d.UpdatedAt, err = documentTimes(d.ID, createdAt, updatedAt); err != nil {
 			return nil, err
 		}
@@ -177,7 +178,7 @@ func scanDocuments(rows *sql.Rows, sizeHint int) ([]entities.Document, error) {
 	return docs, nil
 }
 
-func documentTimes(id entities.DocID, createdAt, updatedAt string) (time.Time, time.Time, error) {
+func documentTimes(id lore.DocID, createdAt, updatedAt string) (time.Time, time.Time, error) {
 	created, err := parseTime(createdAt)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("sqlite: document %q: %w", id, err)
@@ -212,7 +213,7 @@ INSERT INTO chunks (
 
 // chunks_fts and chunk_vectors are keyed by the chunk's rowid, so both derived
 // rows are written with the id SQLite assigned the chunk.
-func (s *Store) ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error {
+func (s *Store) ReplaceChunks(ctx context.Context, docID lore.DocID, chunks []entities.Chunk) error {
 	for i := range chunks {
 		if n := len(chunks[i].Embedding); n != 0 && n != s.vectorDims {
 			return fmt.Errorf("sqlite: chunk %d of %q has %d vector dimensions, store expects %d",
@@ -244,7 +245,7 @@ func (s *Store) ReplaceChunks(ctx context.Context, docID entities.DocID, chunks 
 
 // The ids are deleted one by one on purpose: rowid equality is the one
 // constraint every virtual-table implementation handles.
-func deleteDerivedChunkRows(ctx context.Context, tx *sql.Tx, docID entities.DocID) error {
+func deleteDerivedChunkRows(ctx context.Context, tx *sql.Tx, docID lore.DocID) error {
 	ids, err := chunkIDs(ctx, tx, docID)
 	if err != nil {
 		return err
@@ -276,7 +277,7 @@ func deleteDerivedChunkRows(ctx context.Context, tx *sql.Tx, docID entities.DocI
 	return nil
 }
 
-func chunkIDs(ctx context.Context, tx *sql.Tx, docID entities.DocID) ([]int64, error) {
+func chunkIDs(ctx context.Context, tx *sql.Tx, docID lore.DocID) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx, selectChunkIDsSQL, string(docID))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: read chunk ids of %q: %w", docID, err)
@@ -297,7 +298,7 @@ func chunkIDs(ctx context.Context, tx *sql.Tx, docID entities.DocID) ([]int64, e
 	return ids, nil
 }
 
-func insertChunks(ctx context.Context, tx *sql.Tx, docID entities.DocID, chunks []entities.Chunk) error {
+func insertChunks(ctx context.Context, tx *sql.Tx, docID lore.DocID, chunks []entities.Chunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -378,7 +379,7 @@ func (s *Store) WipeChunks(ctx context.Context) error {
 // Returns the third segment of a "<source>:<type>:<external_id>" DocID. The
 // external id may itself contain colons (URLs, Notion paths), so only the first
 // two separators count; a DocID without them yields "".
-func externalID(id entities.DocID) string {
+func externalID(id lore.DocID) string {
 	rest := string(id)
 	for range 2 {
 		i := strings.IndexByte(rest, ':')
@@ -392,8 +393,8 @@ func externalID(id entities.DocID) string {
 
 // Connectors build a commit external key as "<owner>/<repo>/commit/<oid>", so the
 // SHA is its trailing segment; lowercased so a lookup does not depend on casing.
-func shaPrefix(t entities.DocType, externalKey string) string {
-	if t != entities.DocTypeCommit {
+func shaPrefix(t lore.DocType, externalKey string) string {
+	if t != lore.DocTypeCommit {
 		return ""
 	}
 	sha := externalKey[strings.LastIndexByte(externalKey, '/')+1:]

@@ -11,13 +11,12 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
-	mock_gitrepo "github.com/setthasit/Lore/internal/mocks/gitrepo"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -46,11 +45,11 @@ const (
 )
 
 const (
-	whyCommitAID entities.DocID = "github:commit:aaa"
-	whyCommitBID entities.DocID = "github:commit:bbb"
-	whyPRID      entities.DocID = "github:pr:42"
-	whyIssueID   entities.DocID = "github:issue:7"
-	whyPageID    entities.DocID = "notion:page:auth-design"
+	whyCommitAID lore.DocID = "github:commit:aaa"
+	whyCommitBID lore.DocID = "github:commit:bbb"
+	whyPRID      lore.DocID = "github:pr:42"
+	whyIssueID   lore.DocID = "github:issue:7"
+	whyPageID    lore.DocID = "notion:page:auth-design"
 )
 
 const whyDay = 24 * time.Hour
@@ -62,11 +61,11 @@ var whyVector = []float32{0.25, -0.5, 0.75}
 var whyAt = time.Date(2025, 3, 12, 9, 0, 0, 0, time.UTC)
 
 var (
-	whyCommitAMeta = whyMeta(whyCommitAID, entities.DocTypeCommit, "tighten the cold-start token check", whyAt)
-	whyCommitBMeta = whyMeta(whyCommitBID, entities.DocTypeCommit, "close the auth guard", whyAt.Add(whyDay))
-	whyPRMeta      = whyMeta(whyPRID, entities.DocTypePR, "harden auth on cold start", whyAt.Add(-2*whyDay))
-	whyIssueMeta   = whyMeta(whyIssueID, entities.DocTypeIssue, "auth times out on cold start", whyAt.Add(-5*whyDay))
-	whyPageMeta    = whyMeta(whyPageID, entities.DocTypePage, "auth design", whyAt.Add(-10*whyDay))
+	whyCommitAMeta = whyMeta(whyCommitAID, lore.DocTypeCommit, "tighten the cold-start token check", whyAt)
+	whyCommitBMeta = whyMeta(whyCommitBID, lore.DocTypeCommit, "close the auth guard", whyAt.Add(whyDay))
+	whyPRMeta      = whyMeta(whyPRID, lore.DocTypePR, "harden auth on cold start", whyAt.Add(-2*whyDay))
+	whyIssueMeta   = whyMeta(whyIssueID, lore.DocTypeIssue, "auth times out on cold start", whyAt.Add(-5*whyDay))
+	whyPageMeta    = whyMeta(whyPageID, lore.DocTypePage, "auth design", whyAt.Add(-10*whyDay))
 )
 
 var (
@@ -90,7 +89,7 @@ var (
 	}
 )
 
-func whyMeta(id entities.DocID, docType entities.DocType, title string, createdAt time.Time) entities.DocumentMeta {
+func whyMeta(id lore.DocID, docType lore.DocType, title string, createdAt time.Time) entities.DocumentMeta {
 	return entities.DocumentMeta{
 		ID:        id,
 		Source:    "github",
@@ -103,12 +102,12 @@ func whyMeta(id entities.DocID, docType entities.DocType, title string, createdA
 	}
 }
 
-func whyEdge(src, dst entities.DocID) entities.Edge {
+func whyEdge(src, dst lore.DocID) entities.Edge {
 	return entities.Edge{Src: src, Dst: dst, Kind: entities.EdgeKindReferencesDoc, Confidence: 1}
 }
 
-func whyBlamed(sha string, start, end int, lines ...string) gitrepo.BlameSpan {
-	return gitrepo.BlameSpan{
+func whyBlamed(sha string, start, end int, lines ...string) lore.BlameSpan {
+	return lore.BlameSpan{
 		SHA:       sha,
 		LineStart: start,
 		LineEnd:   end,
@@ -118,7 +117,7 @@ func whyBlamed(sha string, start, end int, lines ...string) gitrepo.BlameSpan {
 	}
 }
 
-func whyHit(id entities.DocID, docType entities.DocType) entities.ChunkHit {
+func whyHit(id lore.DocID, docType lore.DocType) entities.ChunkHit {
 	return entities.ChunkHit{
 		Chunk: entities.Chunk{
 			DocID:   id,
@@ -130,7 +129,7 @@ func whyHit(id entities.DocID, docType entities.DocType) entities.ChunkHit {
 	}
 }
 
-func whyCode(spans ...gitrepo.BlameSpan) string {
+func whyCode(spans ...lore.BlameSpan) string {
 	var lines []string
 	for _, span := range spans {
 		lines = append(lines, span.Lines...)
@@ -157,8 +156,8 @@ func whyUnsyncedGap(sha string) string {
 
 type whyFixture struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
-	git   *mock_gitrepo.MockGitRepo
+	emb   *mock_lore.MockEmbedder
+	git   *mock_lore.MockCodeRepo
 	svc   services.WhyService
 }
 
@@ -167,8 +166,8 @@ func newWhyFixture(t *testing.T) whyFixture {
 
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
-	emb := mock_embedder.NewMockEmbedder(ctrl)
-	git := mock_gitrepo.NewMockGitRepo(ctrl)
+	emb := mock_lore.NewMockEmbedder(ctrl)
+	git := mock_lore.NewMockCodeRepo(ctrl)
 	cfg := services.QueryConfig{TopK: whyTopK, WalkDepth: whyWalkDepth}
 	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
 
@@ -180,7 +179,7 @@ func newWhyFixture(t *testing.T) whyFixture {
 	}
 }
 
-func (f whyFixture) expectBlame(start, end int, spans ...gitrepo.BlameSpan) {
+func (f whyFixture) expectBlame(start, end int, spans ...lore.BlameSpan) {
 	f.git.EXPECT().HasFileAtHEAD(gomock.Any(), whyFile).Return(true, nil)
 	f.git.EXPECT().Blame(gomock.Any(), whyFile, start, end).Return(spans, nil)
 }
@@ -189,11 +188,11 @@ func (f whyFixture) expectResolve(sha string, candidates ...entities.DocumentMet
 	return f.store.EXPECT().ResolveRef(gomock.Any(), sha).Return(candidates, nil)
 }
 
-func (f whyFixture) expectMetas(ids []entities.DocID, metas ...entities.DocumentMeta) *gomock.Call {
+func (f whyFixture) expectMetas(ids []lore.DocID, metas ...entities.DocumentMeta) *gomock.Call {
 	return f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil)
 }
 
-func (f whyFixture) expectNeighbors(ids []entities.DocID, edges ...entities.Edge) *gomock.Call {
+func (f whyFixture) expectNeighbors(ids []lore.DocID, edges ...entities.Edge) *gomock.Call {
 	return f.store.EXPECT().Neighbors(gomock.Any(), ids, nil, entities.DirBoth).Return(edges, nil)
 }
 
@@ -213,7 +212,7 @@ func whyRoles(nodes []entities.EvidenceNode) []string {
 	return roles
 }
 
-func assertWhyNodes(t *testing.T, nodes []entities.EvidenceNode, want []entities.DocID) {
+func assertWhyNodes(t *testing.T, nodes []entities.EvidenceNode, want []lore.DocID) {
 	t.Helper()
 
 	if got := nodeIDs(nodes); !slices.Equal(got, want) {
@@ -229,7 +228,7 @@ func assertWhyRoles(t *testing.T, nodes []entities.EvidenceNode, want []string) 
 	}
 }
 
-func assertWhyChains(t *testing.T, got, want [][]entities.DocID) {
+func assertWhyChains(t *testing.T, got, want [][]lore.DocID) {
 	t.Helper()
 
 	if !slices.EqualFunc(got, want, slices.Equal) {
@@ -369,26 +368,26 @@ func TestWhyChainsBlamedCommitsToTheirDiscussion(t *testing.T) {
 	f.expectResolve(whyShaA, whyCommitAMeta)
 	f.expectResolve(whyShaB, whyCommitBMeta)
 
-	seeds := []entities.DocID{whyCommitAID, whyCommitBID}
+	seeds := []lore.DocID{whyCommitAID, whyCommitBID}
 	f.expectMetas(seeds, whyCommitAMeta, whyCommitBMeta)
 	f.expectNeighbors(seeds, whyPRTouchesCommitA, whyIssueTouchesCommitB)
-	f.expectMetas([]entities.DocID{whyPRID, whyIssueID}, whyPRMeta, whyIssueMeta)
-	f.expectNeighbors([]entities.DocID{whyPRID, whyIssueID})
+	f.expectMetas([]lore.DocID{whyPRID, whyIssueID}, whyPRMeta, whyIssueMeta)
+	f.expectNeighbors([]lore.DocID{whyPRID, whyIssueID})
 
 	// The blamed code is grouped per commit, not left in collapsed-span order.
 	f.expectSearch(
 		whyEmbedText(whyAsked,
 			commitACode+"\n"+whyCode(whyOnlyB),
 			whyCommitAMeta.Title+"\n"+whyCommitBMeta.Title),
-		whyHit(whyPageID, entities.DocTypePage))
-	f.expectMetas([]entities.DocID{whyPageID}, whyPageMeta)
+		whyHit(whyPageID, lore.DocTypePage))
+	f.expectMetas([]lore.DocID{whyPageID}, whyPageMeta)
 
 	bundle, err := f.svc.Why(context.Background(), whyRequest())
 	if err != nil {
 		t.Fatalf("Why: %v", err)
 	}
 
-	assertWhyNodes(t, bundle.Nodes, []entities.DocID{
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{
 		whyCommitBID, whyCommitAID, whyPageID, whyPRID, whyIssueID,
 	})
 	assertWhyRoles(t, bundle.Nodes, []string{
@@ -421,7 +420,7 @@ func TestWhyChainsBlamedCommitsToTheirDiscussion(t *testing.T) {
 		t.Errorf("Question = %q, want the asked question %q", bundle.Question, whyAsked)
 	}
 	assertWhyAnchor(t, bundle.Anchor, whyLineEnd, []string{whyShaA, whyShaB})
-	assertWhyChains(t, bundle.Chains, [][]entities.DocID{
+	assertWhyChains(t, bundle.Chains, [][]lore.DocID{
 		{whyCommitAID, whyPRID},
 		{whyCommitBID, whyIssueID},
 	})
@@ -437,10 +436,10 @@ func TestWhyReportsAnUnsyncedCommitAsAGapAndKeepsTheRest(t *testing.T) {
 	// A non-commit candidate is not a blamed commit, so this SHA still ends the trail.
 	f.expectResolve(whyShaC, whyPRMeta)
 
-	f.expectMetas([]entities.DocID{whyCommitAID}, whyCommitAMeta)
-	f.expectNeighbors([]entities.DocID{whyCommitAID}, whyPRTouchesCommitA)
-	f.expectMetas([]entities.DocID{whyPRID}, whyPRMeta)
-	f.expectNeighbors([]entities.DocID{whyPRID})
+	f.expectMetas([]lore.DocID{whyCommitAID}, whyCommitAMeta)
+	f.expectNeighbors([]lore.DocID{whyCommitAID}, whyPRTouchesCommitA)
+	f.expectMetas([]lore.DocID{whyPRID}, whyPRMeta)
+	f.expectNeighbors([]lore.DocID{whyPRID})
 
 	f.expectSearch(whyEmbedText(whyAsked,
 		whyCode(whyFirstA)+"\n"+whyCode(whyOnlyC),
@@ -451,8 +450,8 @@ func TestWhyReportsAnUnsyncedCommitAsAGapAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("Why: %v", err)
 	}
 
-	assertWhyNodes(t, bundle.Nodes, []entities.DocID{whyCommitAID, whyPRID})
-	assertWhyChains(t, bundle.Chains, [][]entities.DocID{{whyCommitAID, whyPRID}})
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{whyCommitAID, whyPRID})
+	assertWhyChains(t, bundle.Chains, [][]lore.DocID{{whyCommitAID, whyPRID}})
 	assertGaps(t, bundle.Gaps, []string{whyUnsyncedGap(whyShaC)})
 	assertWhyAnchor(t, bundle.Anchor, whyLineEnd, []string{whyShaA, whyShaC})
 }
@@ -487,8 +486,8 @@ func TestWhyReportsAStandaloneBlamedCommitAsAGap(t *testing.T) {
 	f := newWhyFixture(t)
 	f.expectBlame(whyLineStart, whyLineEnd, whyFirstA)
 	f.expectResolve(whyShaA, whyCommitAMeta)
-	f.expectMetas([]entities.DocID{whyCommitAID}, whyCommitAMeta)
-	f.expectNeighbors([]entities.DocID{whyCommitAID})
+	f.expectMetas([]lore.DocID{whyCommitAID}, whyCommitAMeta)
+	f.expectNeighbors([]lore.DocID{whyCommitAID})
 	f.expectSearch(whyEmbedText(whyAsked, whyCode(whyFirstA), whyCommitAMeta.Title))
 
 	bundle, err := f.svc.Why(context.Background(), whyRequest())
@@ -496,7 +495,7 @@ func TestWhyReportsAStandaloneBlamedCommitAsAGap(t *testing.T) {
 		t.Fatalf("Why: %v", err)
 	}
 
-	assertWhyNodes(t, bundle.Nodes, []entities.DocID{whyCommitAID})
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{whyCommitAID})
 	want := whyCommitAMeta.Title + " (" + string(whyCommitAID) + ") stands alone; no linked discussion"
 	assertGaps(t, bundle.Gaps, []string{want})
 }
@@ -568,21 +567,21 @@ func TestWhyCitesADoublyFoundDocumentOnce(t *testing.T) {
 	f := newWhyFixture(t)
 	f.expectBlame(whyLineStart, whyLineEnd, whyFirstA)
 	f.expectResolve(whyShaA, whyCommitAMeta)
-	f.expectMetas([]entities.DocID{whyCommitAID}, whyCommitAMeta)
-	f.expectNeighbors([]entities.DocID{whyCommitAID}, whyPRTouchesCommitA)
-	f.expectMetas([]entities.DocID{whyPRID}, whyPRMeta)
-	f.expectNeighbors([]entities.DocID{whyPRID})
+	f.expectMetas([]lore.DocID{whyCommitAID}, whyCommitAMeta)
+	f.expectNeighbors([]lore.DocID{whyCommitAID}, whyPRTouchesCommitA)
+	f.expectMetas([]lore.DocID{whyPRID}, whyPRMeta)
+	f.expectNeighbors([]lore.DocID{whyPRID})
 
 	f.expectSearch(whyEmbedText(whyAsked, whyCode(whyFirstA), whyCommitAMeta.Title),
-		whyHit(whyPRID, entities.DocTypePR))
-	f.expectMetas([]entities.DocID{whyPRID}, whyPRMeta)
+		whyHit(whyPRID, lore.DocTypePR))
+	f.expectMetas([]lore.DocID{whyPRID}, whyPRMeta)
 
 	bundle, err := f.svc.Why(context.Background(), whyRequest())
 	if err != nil {
 		t.Fatalf("Why: %v", err)
 	}
 
-	assertWhyNodes(t, bundle.Nodes, []entities.DocID{whyCommitAID, whyPRID})
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{whyCommitAID, whyPRID})
 	assertWhyRoles(t, bundle.Nodes, []string{entities.RoleBlamedCommit, entities.RoleLinkedChange})
 	if bundle.Nodes[1].Excerpt != "" {
 		t.Errorf("walked node excerpt = %q, want the walk's node, not the retrieval hit", bundle.Nodes[1].Excerpt)
@@ -593,15 +592,15 @@ func TestWhyBlamesTheCloneTheRequestNames(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
-	named := mock_gitrepo.NewMockGitRepo(ctrl)
+	named := mock_lore.NewMockCodeRepo(ctrl)
 	// The first clone is given no expectations: naming the second must not blame it.
 	repos := []services.CodeRepo{
-		{Path: whyPath, Remote: whyRemote, Git: mock_gitrepo.NewMockGitRepo(ctrl)},
+		{Path: whyPath, Remote: whyRemote, Git: mock_lore.NewMockCodeRepo(ctrl)},
 		{Path: otherPath, Git: named},
 	}
 	svc := services.NewWhyService(
 		mock_repositories.NewMockIndexStore(ctrl),
-		mock_embedder.NewMockEmbedder(ctrl),
+		mock_lore.NewMockEmbedder(ctrl),
 		services.QueryConfig{},
 		repos,
 	)
@@ -623,11 +622,11 @@ func TestWhyKeepsTheReposItWasConstructedWith(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
-	git := mock_gitrepo.NewMockGitRepo(ctrl)
+	git := mock_lore.NewMockCodeRepo(ctrl)
 	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
 	svc := services.NewWhyService(
 		mock_repositories.NewMockIndexStore(ctrl),
-		mock_embedder.NewMockEmbedder(ctrl),
+		mock_lore.NewMockEmbedder(ctrl),
 		services.QueryConfig{},
 		repos,
 	)

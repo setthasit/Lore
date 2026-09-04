@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/httpretry"
-	"github.com/setthasit/Lore/internal/connectors/httpretry/httpretrytest"
+	"github.com/setthasit/Lore/sdk/httpx"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 const (
@@ -21,14 +21,14 @@ const (
 	testUser   = "Why was the cache added?"
 )
 
-func newTestClient(t *testing.T, baseURL string) (*Client, *httpretrytest.WaitRecorder) {
+func newTestClient(t *testing.T, baseURL string) (*Client, *httpxtest.WaitRecorder) {
 	t.Helper()
 
 	c, err := New(testModel, baseURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	rec := &httpretrytest.WaitRecorder{}
+	rec := &httpxtest.WaitRecorder{}
 	c.call.Sleep = rec.Sleep
 	return c, rec
 }
@@ -48,7 +48,7 @@ func TestCompleteSendsChatRequest(t *testing.T) {
 		} `json:"messages"`
 	}
 
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
 		}
@@ -64,7 +64,7 @@ func TestCompleteSendsChatRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("Because reads dominated."))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("Because reads dominated."))
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -102,11 +102,11 @@ func TestCompleteOmitsEmptySystemPrompt(t *testing.T) {
 	var got struct {
 		Messages []message `json:"messages"`
 	}
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("ok"))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("ok"))
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -119,13 +119,13 @@ func TestCompleteOmitsEmptySystemPrompt(t *testing.T) {
 }
 
 func TestCompleteRetriesRateLimitHonoringRetryAfter(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 		if attempt == 1 {
 			w.Header().Set("Retry-After", "2")
-			httpretrytest.WriteJSON(w, http.StatusTooManyRequests, `{"error":"too many requests"}`)
+			httpxtest.WriteJSON(w, http.StatusTooManyRequests, `{"error":"too many requests"}`)
 			return
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("second try"))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("second try"))
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -145,12 +145,12 @@ func TestCompleteRetriesRateLimitHonoringRetryAfter(t *testing.T) {
 }
 
 func TestCompleteRetriesServerError(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
 		if attempt == 1 {
-			httpretrytest.WriteJSON(w, http.StatusInternalServerError, `{"error":"llama runner process has terminated"}`)
+			httpxtest.WriteJSON(w, http.StatusInternalServerError, `{"error":"llama runner process has terminated"}`)
 			return
 		}
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("recovered"))
+		httpxtest.WriteJSON(w, http.StatusOK, answer("recovered"))
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -170,8 +170,8 @@ func TestCompleteRetriesServerError(t *testing.T) {
 }
 
 func TestCompleteFailsFastOnClientError(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusBadRequest, `{"error":"model 'llama-fake' not found"}`)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusBadRequest, `{"error":"model 'llama-fake' not found"}`)
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -226,8 +226,8 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-				httpretrytest.WriteJSON(w, http.StatusOK, tc.body)
+			ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+				httpxtest.WriteJSON(w, http.StatusOK, tc.body)
 			})
 
 			c, _ := newTestClient(t, ts.URL)
@@ -241,7 +241,7 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 
 			wantAttempts := 1
 			if tc.wantRetries {
-				wantAttempts = httpretry.MaxAttempts
+				wantAttempts = httpx.MaxAttempts
 			}
 			if n := ts.Attempts(); n != wantAttempts {
 				t.Errorf("attempts = %d, want %d", n, wantAttempts)
@@ -253,8 +253,8 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 func TestCompleteSurfacesDaemonErrorUnderOK(t *testing.T) {
 	const daemonMessage = "model requires more system memory than is available"
 
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusOK, fmt.Sprintf(`{"error":%q}`, daemonMessage))
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusOK, fmt.Sprintf(`{"error":%q}`, daemonMessage))
 	})
 
 	c, _ := newTestClient(t, ts.URL)
@@ -274,8 +274,8 @@ func TestCompleteSurfacesDaemonErrorUnderOK(t *testing.T) {
 }
 
 func TestCompleteStopsAfterAttemptBudget(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusServiceUnavailable, `{"error":"server busy"}`)
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusServiceUnavailable, `{"error":"server busy"}`)
 	})
 
 	c, rec := newTestClient(t, ts.URL)
@@ -283,13 +283,13 @@ func TestCompleteStopsAfterAttemptBudget(t *testing.T) {
 	if err == nil {
 		t.Fatal("Complete succeeded, want error")
 	}
-	if n := ts.Attempts(); n != httpretry.MaxAttempts {
-		t.Errorf("attempts = %d, want %d", n, httpretry.MaxAttempts)
+	if n := ts.Attempts(); n != httpx.MaxAttempts {
+		t.Errorf("attempts = %d, want %d", n, httpx.MaxAttempts)
 	}
-	if waits := rec.Recorded(); len(waits) != httpretry.MaxAttempts-1 {
-		t.Errorf("waits = %v, want %d entries", waits, httpretry.MaxAttempts-1)
+	if waits := rec.Recorded(); len(waits) != httpx.MaxAttempts-1 {
+		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
-	for _, want := range []string{fmt.Sprintf("after %d attempts", httpretry.MaxAttempts), "503"} {
+	for _, want := range []string{fmt.Sprintf("after %d attempts", httpx.MaxAttempts), "503"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -297,8 +297,8 @@ func TestCompleteStopsAfterAttemptBudget(t *testing.T) {
 }
 
 func TestCompleteReportsUnreachableDaemon(t *testing.T) {
-	ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		httpretrytest.WriteJSON(w, http.StatusOK, answer("unreachable"))
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		httpxtest.WriteJSON(w, http.StatusOK, answer("unreachable"))
 	})
 	url := ts.URL
 	ts.Close()
@@ -312,8 +312,8 @@ func TestCompleteReportsUnreachableDaemon(t *testing.T) {
 		t.Errorf("error %q does not name the failing call", err)
 	}
 	// A dead local daemon may be mid-restart, so the transport error is retried.
-	if waits := rec.Recorded(); len(waits) != httpretry.MaxAttempts-1 {
-		t.Errorf("waits = %v, want %d entries", waits, httpretry.MaxAttempts-1)
+	if waits := rec.Recorded(); len(waits) != httpx.MaxAttempts-1 {
+		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
 }
 
@@ -322,9 +322,9 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 			t.Error("server called, want no request")
-			httpretrytest.WriteJSON(w, http.StatusOK, answer("unreachable"))
+			httpxtest.WriteJSON(w, http.StatusOK, answer("unreachable"))
 		})
 
 		c, _ := newTestClient(t, ts.URL)
@@ -337,9 +337,9 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		ts := httpretrytest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+		ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 			w.Header().Set("Retry-After", "600")
-			httpretrytest.WriteJSON(w, http.StatusTooManyRequests, `{"error":"slow down"}`)
+			httpxtest.WriteJSON(w, http.StatusTooManyRequests, `{"error":"slow down"}`)
 		})
 
 		c, err := New(testModel, ts.URL)
