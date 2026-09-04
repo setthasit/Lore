@@ -251,11 +251,13 @@ func newCodeRepos(cfg *config.Config, reg *registry.Registry) ([]services.CodeRe
 	return repos, nil
 }
 
-// newStartupWarnings asks the built connectors which remotes they ingest rather
-// than switching on a forge name, so a third-party forge plugin keeps the
-// unmatched-clone warning working by implementing lore.RemoteMatcher.
-func newStartupWarnings(cfg *config.Config, sources []lore.Connector) registry.Warnings {
-	return registry.UnmatchedRemotes(clones(cfg), sources)
+// newStartupWarnings collects everything worth telling the operator that is not
+// worth refusing to start over. The unmatched-clone half asks the built
+// connectors which remotes they ingest rather than switching on a forge name,
+// so a third-party forge plugin keeps that warning working by implementing
+// lore.RemoteMatcher.
+func newStartupWarnings(cfg *config.Config, sources []lore.Connector, ext externals) registry.Warnings {
+	return append(ext.warnings, registry.UnmatchedRemotes(clones(cfg), sources)...)
 }
 
 func sourceInstances(cfg *config.Config) ([]registry.Instance, error) {
