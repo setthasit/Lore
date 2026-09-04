@@ -221,16 +221,20 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
 
 | `kind` | Host action |
 |---|---|
-| `invalid_config` | fail the round immediately; no retry, no backoff |
-| `auth` | fail the round immediately; credentials do not fix themselves |
+| `invalid_config` | fail this instance immediately; no retry, no backoff |
+| `auth` | fail this instance immediately; credentials do not fix themselves |
 | `rate_limit` | back off, resume from the last committed cursor |
-| `not_found` | fail this connector; the round continues with the others |
-| `internal` | fail this connector; the round continues with the others |
+| `not_found` | fail this instance |
+| `internal` | fail this instance |
 
 Any error with `retryable: true` is backed off and resumed from the last
 committed cursor whatever its `kind`; `rate_limit` implies it, an unknown
 `kind` is treated as `internal`, and `retryable` is authoritative for
-scheduling. A plugin MUST NOT exit non-zero as its way of reporting a business
+scheduling. A failing instance never stops the others — instances fail
+independently ([04](04-connectors-and-sync.md#sync-round)) and the round
+reports partial failure.
+
+A plugin MUST NOT exit non-zero as its way of reporting a business
 error: a non-zero exit means *the process died*, and the host reports it as a
 crash naming the instance and the last op. Every expected failure — bad
 credentials, missing resource, throttling — is an `error` frame on stdout,
