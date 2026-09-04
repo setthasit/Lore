@@ -64,6 +64,7 @@ multi-line objects, which are pretty-printed for readability.
 |---|---|---|---|---|
 | `manifest` | all | request/response | — | `manifest` |
 | `changes` | `KindSource` | request/**stream** | `instance`, `config`, `secrets`, `cursor` | `batch` frames, then `done` |
+| `matches_remote` | `KindSource` (RepoRemotes) | request/response | `instance`, `config`, `secrets`, `remote` | `matches` |
 | `embed` | `KindProvider` (Embed) | request/response | `config`, `secrets`, `model`, `texts` | `vectors`, `dimensions` |
 | `complete` | `KindProvider` (Complete) | request/response | `config`, `secrets`, `model`, `system`, `user` | `text` |
 | `blame` | `KindCode` | request/response | `path`, `start_line`, `end_line` | `spans` |
@@ -123,6 +124,27 @@ The host commits the documents, **then** persists that frame's cursor — the
 batch is the checkpoint unit, exactly as for in-process connectors
 ([04](04-connectors-and-sync.md)). A stream that emits documents and defers its
 cursor to `done` is malformed: it makes crash-safe resume unimplementable.
+
+### matches_remote
+
+Answered only by a `KindSource` whose manifest declares `repo_remotes`. The
+host asks it once per registered local clone at startup, to decide whether the
+clone's `remote:` names something this instance ingests.
+
+```json
+{ "v": 1, "id": "8", "op": "matches_remote", "instance": "github", "config": { "repos": ["acme/app"] }, "secrets": {}, "remote": "github:ACME/App" }
+{ "v": 1, "id": "8", "ok": true, "matches": true }
+```
+
+It is an operation rather than a comparison the host performs itself, because
+only the plugin knows how its own repository identifiers compare: GitHub's
+owner and repository names are case-insensitive, a GitLab path is not and may
+nest through subgroups. Without it the capability would belong to compiled
+plugins alone, and the warning it powers would be a privilege of our own code.
+
+The answer only decides a **warning**, so a plugin that errors or cannot be
+reached reads as `false`: a startup warning must never be the reason a
+workspace fails to start.
 
 ### embed
 
@@ -267,7 +289,7 @@ re-ingest is idempotent by `id`.
 | Operation | Timeout |
 |---|---|
 | `manifest` | 10s |
-| `embed`, `blame`, `log`, `has_file` | 60s |
+| `embed`, `blame`, `log`, `has_file`, `matches_remote` | 60s |
 | `complete` | 120s, matching the in-process `lore.CompleteTimeout` |
 | `changes` | none while frames keep arriving; 300s idle |
 | `shutdown` | 5s, then the escalation above |

@@ -259,13 +259,57 @@ func TestManifestIsRequiredBeforeAnyOperation(t *testing.T) {
 	}
 }
 
-func TestRepoRemotesIsRefusedBecauseThereIsNoOpForIt(t *testing.T) {
+// A source declaring repo_remotes answers remote questions over its own op, so
+// the capability works the same out of process as in. Refusing it to external
+// plugins would have made the unmatched-clone warning a privilege of compiled
+// code, which is exactly the asymmetry the plugin contract exists to prevent.
+func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 	claims := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
 		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[]}}`
 
-	_, err := openScript(t, script(claims, shutdownOK))
-	if err == nil || !strings.Contains(err.Error(), "repo_remotes") {
-		t.Fatalf("open error = %v, want a refusal naming repo_remotes", err)
+	tests := []struct {
+		name    string
+		answer  string
+		matches bool
+	}{
+		{name: "the instance ingests it", answer: `{"v":1,"id":"$ID","ok":true,"matches":true}`, matches: true},
+		{name: "the instance does not", answer: `{"v":1,"id":"$ID","ok":true,"matches":false}`, matches: false},
+		{
+			// A startup warning must never be the reason a workspace fails to
+			// start, so a plugin that cannot answer reads as "not mine" and the
+			// operator gets the warning instead of an error.
+			name:    "the plugin cannot answer",
+			answer:  `{"v":1,"id":"$ID","error":{"message":"no idea","retryable":false,"kind":"internal"}}`,
+			matches: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conn := connectorOf(t,
+				script(claims, "matches_remote emit "+test.answer, shutdownOK),
+				lore.SourceConfig{Instance: "scripted"})
+
+			matcher, ok := conn.(lore.RemoteMatcher)
+			if !ok {
+				t.Fatalf("connector %T does not answer remote questions", conn)
+			}
+			if got := matcher.MatchesRemote("scripted:acme/app"); got != test.matches {
+				t.Errorf("MatchesRemote = %v, want %v", got, test.matches)
+			}
+		})
+	}
+}
+
+// An empty remote is never anybody's: a clone with no remote: entry is not a
+// question worth spawning a process for.
+func TestAnEmptyRemoteNeverReachesThePlugin(t *testing.T) {
+	claims := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
+		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[]}}`
+
+	conn := connectorOf(t, script(claims, shutdownOK), lore.SourceConfig{Instance: "scripted"})
+	if conn.(lore.RemoteMatcher).MatchesRemote("") {
+		t.Error("MatchesRemote(\"\") = true, want false")
 	}
 }
 

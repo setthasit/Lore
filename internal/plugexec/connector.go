@@ -90,3 +90,39 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 		}
 	}
 }
+
+// MatchesRemote answers whether a registered clone's remote is one this
+// instance ingests. It exists so a source's repo_remotes capability works the
+// same out of process as in: the alternative was refusing the capability to
+// external plugins, which would have made the unmatched-clone warning a
+// privilege of compiled code.
+//
+// The question is asked over its own op rather than derived from the config,
+// because only the plugin knows how its own repository identifiers compare —
+// GitHub's are case-insensitive, GitLab's are not.
+func (c *connector) MatchesRemote(remote string) bool {
+	if remote == "" {
+		return false
+	}
+
+	// A startup warning must never be the reason a workspace fails to start, so
+	// an unreachable or unhelpful plugin reads as "not mine" and the operator
+	// gets the warning rather than an error.
+	frame, err := c.unary(context.Background(), c.instance, opRemote, c.tuning.unary, func(env envelope) any {
+		return remoteRequest{
+			envelope: env,
+			Instance: c.instance,
+			Config:   c.config,
+			Secrets:  c.secrets,
+			Remote:   remote,
+		}
+	})
+	if err != nil {
+		if c.host.Log != nil {
+			c.host.Log.Debug("plugin could not answer whether it ingests a clone's remote",
+				"instance", c.instance, "remote", remote, "error", err)
+		}
+		return false
+	}
+	return frame.Matches
+}

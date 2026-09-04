@@ -16,6 +16,7 @@ const (
 	opBlame    = "blame"
 	opLog      = "log"
 	opHasFile  = "has_file"
+	opRemote   = "matches_remote"
 	opShutdown = "shutdown"
 )
 
@@ -85,6 +86,14 @@ type pathRequest struct {
 	Path string `json:"path"`
 }
 
+type remoteRequest struct {
+	envelope
+	Instance string            `json:"instance"`
+	Config   json.RawMessage   `json:"config"`
+	Secrets  map[string]string `json:"secrets"`
+	Remote   string            `json:"remote"`
+}
+
 // frame is every response the protocol defines, in one type: a plugin answers
 // one op at a time, so the fields a given op does not use are absent. Decoding
 // with the standard library ignores unknown fields, which is what makes the
@@ -106,6 +115,7 @@ type frame struct {
 	Spans   []lore.BlameSpan `json:"spans"`
 	Commits []lore.CommitRef `json:"commits"`
 	Present bool             `json:"present"`
+	Matches bool             `json:"matches"`
 }
 
 // wireBatch keeps Cursor a pointer so an absent cursor is distinguishable from

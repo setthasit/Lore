@@ -36,15 +36,6 @@ func open(binary string, host lore.Host, tune tuning) (lore.Plugin, error) {
 	ext := external{binary: binary, host: host, manifest: manifest, tuning: tune}
 	switch manifest.Kind {
 	case lore.KindSource:
-		// repo_remotes requires a connector that answers MatchesRemote, and the
-		// protocol has no op to ask a subprocess that question. Refusing here
-		// names the gap; accepting would build a connector whose silent "no"
-		// turns the unmatched-clone warning off for every registered clone.
-		if manifest.Capabilities.RepoRemotes {
-			return nil, protocolError(label, opManifest,
-				"plugin %q declares repo_remotes, which an external plugin cannot serve: the protocol has no remote-matching op",
-				manifest.Name)
-		}
 		return &sourcePlugin{external: ext}, nil
 	case lore.KindProvider:
 		return &providerPlugin{external: ext}, nil

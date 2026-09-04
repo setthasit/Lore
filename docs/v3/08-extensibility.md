@@ -247,7 +247,13 @@ the plugin.
 `Capabilities.RepoRemotes` replaces the hardcoded forge check behind the
 startup warning that a registered local clone has no matching ingest source: a
 third-party forge plugin keeps that warning working by declaring the capability
-and implementing `MatchesRemote(string) bool`.
+and implementing `MatchesRemote(string) bool`. It is a question the plugin
+answers rather than a comparison the host performs, because only the plugin
+knows how its own repository identifiers compare — GitHub's are
+case-insensitive, a GitLab path is not. An external plugin answers the same
+question over the `matches_remote` op
+([09](09-plugin-protocol.md#matches_remote)), so the capability is not a
+privilege of compiled code.
 
 ### Construction
 
