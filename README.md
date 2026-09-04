@@ -80,8 +80,9 @@ lore status                        # index counts, cursor ages, sync lock
 lore ask "why did we pick sqlite?" # prose answer; needs an llm: block
 ```
 
-`lore init` writes credential **variable names**, never credentials, and scaffolds the
-GitHub source; `lore source add notion|jira|gitlab` appends the rest interactively.
+`lore init` writes credential **variable names**, never credentials, and scaffolds one
+starter source instance from its plugin's manifest; `lore source add <plugin>` appends
+another instance of any source plugin this build registers.
 `lore --version` prints the build stamp plus the embedder identity of the workspace.
 
 ### What an answer looks like
@@ -191,8 +192,8 @@ is why **no LLM key is needed for MCP usage** — only an embedding key.
 
 | Command | Purpose |
 |---|---|
-| `lore init` · `lore source add <notion\|jira\|gitlab>` | scaffold and grow `lore.yaml` |
-| `lore sync [--source <name>] [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
+| `lore init` · `lore source add <plugin>` | scaffold and grow `lore.yaml` |
+| `lore sync [--source <instance>] [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
 | `lore status` | index counts, per-source cursor ages, sync lock state |
 | `lore ask <question>` | synthesized prose; `--around --source --repo --doc-type --since --until --raw` |
 | `lore why <file>:<L1>-<L2>` | blame-anchored trail; `--repo --explain --raw` |
@@ -200,6 +201,7 @@ is why **no LLM key is needed for MCP usage** — only an embedding key.
 | `lore impact <ref \| "query">` | consequences timeline; `--question --explain --raw` |
 | `lore history <path>` | file timeline; `--limit --before` pagination; `--explain --raw` |
 | `lore mcp` · `lore serve` | MCP stdio · MCP streamable HTTP + `lore.v1` gRPC + scheduler |
+| `lore plugin list\|install\|update\|remove\|verify\|search` · `lore build --with <module>@<version>` | inspect the plugins this build has; add third-party ones |
 
 Every command takes `--config` (default `./lore.yaml`).
 
@@ -223,7 +225,7 @@ flowchart TB
     T["Transport — MCP stdio · MCP HTTP · gRPC · CLI"]
     S["Service — Query · Why · Trace · Impact · History · Synthesis · SyncOrchestrator · LinkResolver"]
     R["Repository — IndexStore (SQLite: FTS5 + sqlite-vec)"]
-    C["Connectors — GitHub · GitLab · Notion · Jira · local git · embedder · LLM"]
+    C["Plugins — source · code · provider instances, built from lore.yaml against a registry"]
     T --> S
     S --> R
     S --> C
@@ -257,17 +259,18 @@ The design documents in [`docs/v3/`](docs/v3/) are the source of truth:
 |---|---|
 | Config loading, validation, FX wiring | ✅ implemented |
 | SQLite IndexStore — FTS5 + sqlite-vec, RRF fusion in Go | ✅ implemented |
-| GitHub, GitLab, Notion, Jira connectors + shared conformance suite | ✅ implemented |
+| GitHub, GitLab, Notion, Jira source plugins + shared conformance suite | ✅ implemented |
 | Link resolver, edge graph, `pending_refs` retry | ✅ implemented |
 | `find_decision`, `trace`, `impact_of` + event resolution | ✅ implemented |
 | Code anchoring — `why`, `history_of` via local-clone blame/log | ✅ implemented |
 | Sync lease, background scheduler, `sync_now` / `sync_status` | ✅ implemented |
 | MCP stdio + MCP streamable HTTP (`lore serve`) | ✅ implemented |
-| Embedder providers | ✅ OpenAI and Ollama — Ollama also needs `embedder.dimensions`, the model's native width (`ollama show <model>` reports it); an unimplemented provider is refused at startup |
+| Embedder providers | ✅ the shipped provider plugins serving embeddings are `openai`, `ollama` and `openai-compatible` — Ollama also needs `embedder.dimensions`, the model's native width (`ollama show <model>` reports it); a provider name this build neither compiles in nor finds under `plugins:` is refused at startup |
 | gRPC API (`lore.v1`) + mTLS | ✅ implemented |
 | LLM synthesis — `lore ask`, `--explain`, gRPC `synthesize` | ✅ implemented; needs the `llm:` block in `lore.yaml` |
 | Ollama fully-local pipeline | ✅ implemented — set `embedder.provider: ollama` (with `dimensions`) and `llm.provider: ollama`; both default to `http://127.0.0.1:11434` and take no API key |
 | Release binaries | ✅ `make build.matrix` cross-compiles linux/darwin/windows × amd64/arm64 with `CGO_ENABLED=0` |
+| Plugin registry — `plugins:`, `lore plugin`, `lore build --with` | ✅ implemented — sources, code and providers are plugin instances, and a workspace may declare external ones |
 
 The CLI synthesizes for `lore ask` and `--explain`; gRPC synthesizes unless a request
 sets `synthesize: false`. MCP always returns the evidence bundle itself — the host model

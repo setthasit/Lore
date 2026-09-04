@@ -13,7 +13,7 @@ fails, and it says so.
 
 | Mode | What leaves | To which endpoint | What stays |
 |---|---|---|---|
-| `embedder: openai` + `llm: openai\|anthropic\|zai` | Chunk text at sync (batched, ≤512 inputs per request) and question text at query; then the whole evidence bundle for synthesis — question, anchor summary, and per cited document its title, source, type, role, author, creation time, URL and excerpt, plus the provenance chain lines and gap list | `https://api.openai.com/v1/embeddings` for vectors; synthesis to `https://api.openai.com/v1/chat/completions`, `https://api.anthropic.com/v1/messages` or `https://api.z.ai/api/paas/v4/chat/completions` | Index file, BM25 lexical search, vector KNN, graph walk, `git blame`/`git log` |
+| `embedder: openai` + `llm: openai\|anthropic\|openai-compatible` | Chunk text at sync (batched, ≤512 inputs per request) and question text at query; then the whole evidence bundle for synthesis — question, anchor summary, and per cited document its title, source, type, role, author, creation time, URL and excerpt, plus the provenance chain lines and gap list | `https://api.openai.com/v1/embeddings` for vectors; synthesis to `https://api.openai.com/v1/chat/completions`, `https://api.anthropic.com/v1/messages`, or the chat URL of the `openai-compatible` preset you bound — `https://api.z.ai/api/paas/v4/chat/completions` for `preset: zai` | Index file, BM25 lexical search, vector KNN, graph walk, `git blame`/`git log` |
 | `embedder: openai`, no `llm:` block | Chunk text at sync, question text at query. Nothing else — no evidence bundle, no document bodies | `https://api.openai.com/v1/embeddings` only | Everything above, and every answer: `lore ask --raw`, and `why`/`trace`/`impact`/`history` without `--explain`, return the evidence bundle without contacting an LLM |
 | `embedder: ollama`, no `llm:` block | Nothing leaves the machine (loopback only) | `http://127.0.0.1:11434/api/embed` | Everything |
 | `embedder: ollama` + `llm.provider: ollama` | Nothing leaves the machine (loopback only) | `/api/embed` and `/api/chat` on `http://127.0.0.1:11434` | Everything, synthesis included |
@@ -25,12 +25,12 @@ mode; only `--explain` on top of them reaches the configured LLM.
 **Source connectors are inbound-only reads.** Nothing in Lore writes to a hosted service.
 A sync sends the configured token and query parameters, and reads pages of results back:
 
-| Source | Endpoint | Direction |
+| Source plugin | Endpoint | Direction |
 |---|---|---|
-| `sources.github` | `https://api.github.com` | read only |
-| `sources.notion` | `https://api.notion.com` | read only |
-| `sources.jira` | your `sources.jira.base_url` | read only |
-| `sources.gitlab` | your `sources.gitlab.base_url` (default `https://gitlab.com`) | read only |
+| `use: github` | `https://api.github.com` | read only |
+| `use: notion` | `https://api.notion.com` | read only |
+| `use: jira` | that instance's `with.base_url` | read only |
+| `use: gitlab` | that instance's `with.base_url` (default `https://gitlab.com`) | read only |
 
 Source traffic is orthogonal to the model traffic above: an Ollama-only workspace still
 reaches GitHub to *ingest*, and an air-gapped workspace with zero sources is valid — set
@@ -66,16 +66,19 @@ your own machine, since a re-tagged model can differ):
 
 ```yaml
 embedder:
-  provider: ollama
+  provider: ollama            # a providers[] id, or a provider plugin used with its defaults
   model: nomic-embed-text
   dimensions: 768             # what `ollama show nomic-embed-text` reports
-  # base_url: http://127.0.0.1:11434   # optional; this is the default
 
 llm:
   provider: ollama
   model: llama3.1:8b
-  # base_url: http://127.0.0.1:11434   # optional; this is the default
-  # no api_key_env: the daemon is unauthenticated and Lore never reads a key for ollama
+
+# providers:                              # optional: omit it and `ollama` runs on its defaults
+#   - use: ollama
+#     with:
+#       base_url: http://127.0.0.1:11434  # this is the default
+# no api_key_env anywhere: the ollama plugin declares no secret, so Lore never reads a key for it
 ```
 
 `lore init` writes `llm:` commented out, so a fresh workspace has no synthesis until you
@@ -84,31 +87,82 @@ add that block by hand.
 Two rules to keep straight, because they are opposite per provider:
 
 - `dimensions` **required** for `ollama`. Omit it and startup fails with:
-  > embedder.dimensions must be set to the vector width of nomic-embed-text for the ollama provider; `ollama show nomic-embed-text` reports it
+  > ollama: embedder.dimensions must be set to the vector width of nomic-embed-text: an Ollama model does not imply one; `ollama show nomic-embed-text` reports it
 - `dimensions` **forbidden** for `openai`, where the model implies the width:
-  > embedder.dimensions must not be set for the openai provider: the vector width follows from embedder.model
+  > openai: embedder.dimensions must not be set for this provider: the vector width follows from embedder.model
 
 If the number is wrong, the first embed call catches it rather than storing garbage:
 `ollama: model "nomic-embed-text" returned 768 dimensions for input 0, want 1024`.
 
-An unimplemented provider name is refused at startup too — the embedder accepts only
-`openai` and `ollama`, and the LLM only `anthropic`, `ollama`, `openai`, `zai`.
+A provider name the build does not have is refused at startup too. Providers are plugins,
+and each manifest declares the capabilities it serves, so a role bound to a provider that
+does not serve it is refused just as hard — `embedder binds provider "anthropic", which
+does not serve embed; it serves complete`. What this build ships:
+
+| Provider plugin | Serves | Credential | Endpoint |
+|---|---|---|---|
+| `openai` | embeddings, completions | `api_key_env`, defaulting to `OPENAI_API_KEY` | `https://api.openai.com` + `/v1/embeddings`, `/v1/chat/completions` |
+| `anthropic` | completions | `api_key_env`, defaulting to `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1/messages` |
+| `ollama` | embeddings, completions | none — the daemon is unauthenticated | `http://127.0.0.1:11434` + `/api/embed`, `/api/chat` |
+| `openai-compatible` | embeddings, completions — per preset, see below | `api_key_env`, no default: every vendor names its own variable | the preset's base URL + its paths |
+
+`zai` is no longer a provider name. Z.AI is one preset of the `openai-compatible` driver,
+alongside the vendors it also reaches:
+
+| `preset` | Base URL | Chat path | Embeddings path |
+|---|---|---|---|
+| `zai` | `https://api.z.ai/api` | `/paas/v4/chat/completions` | none published |
+| `openrouter` | `https://openrouter.ai/api` | `/v1/chat/completions` | `/v1/embeddings` |
+| `moonshot` | `https://api.moonshot.ai` | `/v1/chat/completions` | none published |
+| `deepseek` | `https://api.deepseek.com` | `/chat/completions` | none published |
+| `groq` | `https://api.groq.com/openai` | `/v1/chat/completions` | none published |
+| `together` | `https://api.together.ai` | `/v1/chat/completions` | `/v1/embeddings` |
+| `vllm` | `http://localhost:8000` | `/v1/chat/completions` | `/v1/embeddings` |
+| `lmstudio` | `http://localhost:1234` | `/v1/chat/completions` | `/v1/embeddings` |
+
+A row with no published embeddings endpoint refuses an `embedder:` binding by name rather
+than guessing a path: `openai-compatible: preset zai serves no OpenAI-compatible
+embeddings endpoint; bind embedder to a provider that does, or set embeddings_path if this
+vendor has since published one`. So Z.AI as the synthesis half is:
+
+```yaml
+providers:
+  - id: zai
+    use: openai-compatible
+    with:
+      preset: zai
+      api_key_env: LORE_ZAI_KEY
+
+llm:
+  provider: zai
+  model: glm-4.6
+```
+
+The last two rows are self-hosted, and their default base URLs are loopback, so a `vllm`
+or `lmstudio` preset left at its default reaches nothing off the machine — the same
+property the `ollama` rows in the table above have. `base_url` overrides the port, or the
+host, when you serve them elsewhere.
 
 ## Remote but private
 
-`base_url` accepts any host, so a shared GPU box works:
+`base_url` is a key on the provider instance, and it accepts any host, so a shared GPU box
+works. One instance serves both roles here — an embedding connection and a chat connection
+are built separately from it, but they are configured once:
 
 ```yaml
+providers:
+  - use: ollama
+    with:
+      base_url: http://gpu-box.internal:11434
+
 embedder:
   provider: ollama
   model: nomic-embed-text
   dimensions: 768
-  base_url: http://gpu-box.internal:11434
 
 llm:
   provider: ollama
   model: llama3.1:8b
-  base_url: http://gpu-box.internal:11434
 ```
 
 Be honest with yourself about what this changes. The privacy claim becomes "nothing leaves
@@ -119,21 +173,35 @@ reach that port can use that model and read those requests. Treat the daemon as 
 service behind a network boundary or a TLS-terminating proxy; `base_url` will take an
 `https://` URL.
 
-The same field is the escape hatch for an OpenAI-protocol gateway inside your own
-perimeter: `embedder.provider: openai` with `base_url: https://gateway.internal` sends
+The same key is the escape hatch for an OpenAI-protocol gateway inside your own
+perimeter: an `openai` instance carrying `base_url: https://gateway.internal` sends
 vectors to your gateway, not to `api.openai.com`. The API key still comes from
-`OPENAI_API_KEY`.
+`OPENAI_API_KEY`:
+
+```yaml
+providers:
+  - id: gateway
+    use: openai
+    with:
+      base_url: https://gateway.internal
+
+embedder:
+  provider: gateway
+  model: text-embedding-3-small
+```
 
 ## Switching an existing workspace to Ollama
 
-The embedder identity is `provider/model/dimensions`, recorded in the index's `meta`
+The embedder identity is `plugin/model/dimensions` — the provider *plugin*, not the
+instance id you bound, so renaming an instance does not invalidate an index. It is
+recorded in the index's `meta`
 table under `embedder_identity` at the first sync. Vectors from one embedder are
 meaningless to another, so the next sync refuses to mix them:
 
 > embedder identity mismatch: this index was built with "openai/text-embedding-3-small/1536" but the workspace is now configured for "ollama/nomic-embed-text/768" — vectors from one embedder are meaningless to another, so run `lore sync --reembed` to wipe the chunk layer and rebuild it with "ollama/nomic-embed-text/768"
 
 `lore sync --reembed` rewinds every cursor, wipes the chunk layer and re-reads every
-source from the beginning. `lore sync --source <name>` exists for ordinary sync rounds,
+source from the beginning. `lore sync --source <instance>` exists for ordinary sync rounds,
 but combining it with `--reembed` is refused: "cannot re-embed a single source: a
 re-embed wipes every source's chunks and rewinds every cursor, so it must run across the
 whole workspace". A re-embed is always workspace-wide.
@@ -216,8 +284,9 @@ block. A workspace with no `llm:` block answers with:
 
 > synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — add one naming the provider, the model and the api_key_env that holds its key
 
-The `api_key_env` part of that remedy does not apply to `provider: ollama`, which needs
-only a model.
+The `api_key_env` that remedy names is a key on the provider instance rather than on the
+`llm:` block, and the `ollama` plugin declares no secret at all, so an Ollama synthesis
+block needs only a provider and a model.
 
 The first Ollama call after a `pull` loads the model, which can take tens of seconds; the
 embedder allows 120s per request and the chat client the same, and both retry a 429, a 5xx

@@ -3,13 +3,13 @@
 Per-source setup: what each connector reads, the smallest credential that lets
 it read, and the command that proves the credential works.
 
-Lore is **read-only toward every external source**. No source connector
+Lore is **read-only toward every external source**. No source plugin
 package contains a write verb: GitLab and Jira are `GET`-only, and the only
-non-GET requests among the four source connectors are GitHub's GraphQL
-*query* POST (`plugins/sources/github/client.go:138`) and Notion's
+non-GET requests among the four source plugins this build ships are GitHub's
+GraphQL *query* POST (`plugins/sources/github/client.go:138`) and Notion's
 `POST /v1/search` (`plugins/sources/notion/client.go:212`), both read
 endpoints. There is no `mutation`, `PUT`, `PATCH` or `DELETE` in any source
-connector. (The embedder and LLM clients do POST — to their model
+plugin. (The embedder and LLM clients do POST — to their model
 endpoints, through the shared `post()` helper,
 `sdk/httpx/httpx.go:78-79` — but that is the
 outbound traffic [Fully local](fully-local.md) covers, not a source
@@ -22,36 +22,52 @@ See also: [Quickstart — MCP](quickstart-mcp.md) ·
 
 ## At a glance
 
-| Source | `lore.yaml` key | Environment variables (names only) | Ingest scope | DocTypes produced |
+| Source | `use:` | Environment variables (names only) | Ingest scope | DocTypes produced |
 |---|---|---|---|---|
-| GitHub | `sources.github` | `LORE_GITHUB_TOKEN` | `repos: ["owner/name"]` | `commit`, `pr`, `pr_review`, `review_comment`, `issue`, `issue_comment` |
-| GitLab | `sources.gitlab` | `LORE_GITLAB_TOKEN` | `projects: ["group/project"]` | `commit`, `pr`, `pr_review`, `review_comment`, `issue`, `issue_comment` |
-| Notion | `sources.notion` | `LORE_NOTION_TOKEN` | `root_pages` subtrees; empty = every page shared with the integration | `page` |
-| Jira | `sources.jira` | `LORE_JIRA_EMAIL`, `LORE_JIRA_TOKEN` | `projects: ["PROJ"]`; empty = every project the account can browse | `ticket`, `ticket_comment` |
+| GitHub | `github` | `LORE_GITHUB_TOKEN` | `repos: ["owner/name"]` | `commit`, `pr`, `pr_review`, `review_comment`, `issue`, `issue_comment` |
+| GitLab | `gitlab` | `LORE_GITLAB_TOKEN` | `projects: ["group/project"]` | `commit`, `pr`, `pr_review`, `review_comment`, `issue`, `issue_comment` |
+| Notion | `notion` | `LORE_NOTION_TOKEN` | `root_pages` subtrees; empty = every page shared with the integration | `page` |
+| Jira | `jira` | `LORE_JIRA_EMAIL`, `LORE_JIRA_TOKEN` | `projects: ["PROJ"]`; empty = every project the account can browse | `ticket`, `ticket_comment` |
 
-Those variable names are only the defaults `lore init` and `lore source add`
-suggest. Any name matching `^[A-Za-z_][A-Za-z0-9_]*$` is accepted
-(`internal/transport/cli/source.go:23`).
+`sources:` is a **sequence of instances**, not a mapping of source names: one
+item per configured use of a plugin, `use:` naming the plugin and `with:`
+holding that plugin's own keys. Two Jira sites are two items, told apart by an
+`id:`; an instance with no `id:` is identified by its `use:`
+(`internal/config/config.go:99-107`). That identity is what `--source` takes,
+what every document's `source` field carries, and what prefixes its DocID.
+`lore plugin list` names the plugins this build has.
+
+Those four are the source plugins compiled into an official build. A workspace
+that needs another declares it under `plugins:` with the module it comes from,
+and `lore plugin install` resolves and verifies it; `lore build --with` compiles
+one in instead. Everything below is about the four this build ships.
+
+Those variable names are only the defaults each plugin's manifest declares and
+`lore init` and `lore source add` suggest. Any name matching
+`^[A-Za-z_][A-Za-z0-9_]*$` is accepted
+(`internal/transport/cli/source.go:26`, `internal/registry/build.go:537-540`).
 
 Rules that hold for all four:
 
-- **Every source is optional** (`internal/config/config.go:41-46`). A workspace
+- **Every source is optional** (`internal/config/config.go:36-48`). A workspace
   needs at least one source *or* one local clone, else load fails with
   `at least one of sources or repos must be configured`
-  (`internal/config/validate.go:25-27`).
+  (`internal/config/validate.go:29-31`).
 - **`*_env` holds a variable name, never a secret.** If the named variable is
   unset, startup stops with
-  `sources.<name>.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set`
-  — enforced twice, at config validation
-  (`internal/config/validate.go:179-186`) and again when the connector is
-  constructed (`envValue` in `internal/di/modules.go`).
+  `sources[<id>].with.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set`
+  — resolved against the plugin's declared secrets when the instance is built,
+  before it issues a request (`internal/registry/build.go:517-550`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
-  silently ignored setting: `invalid configuration at ./lore.yaml: …`
-  (`internal/config/config.go:167-173`).
-- **DocIDs are `<source>:<type>:<external_id>`**
+  silently ignored setting: `invalid configuration at ./lore.yaml: …` for a key
+  the engine does not have (`internal/config/config.go:211-222`), and
+  `sources[github].with.reposs is not a key plugin "github" accepts; it accepts
+  repos, token_env` for one the plugin does not
+  (`internal/registry/build.go:378-391`).
+- **DocIDs are `<instance id>:<type>:<external_id>`**
   (`sdk/document.go:5-13`), and `Document.URL` is always the
   canonical web URL — the thing a citation points a human at
-  (`sdk/document.go:41`).
+  (`sdk/document.go:43`).
 - All examples below use obviously fake placeholders: `acme/myproject`,
   `https://acme.atlassian.net`, `PROJ`. Substitute your own.
 - Every claim about *what Lore requests* is read out of this repository and
@@ -73,7 +89,8 @@ Rules that hold for all four:
 | Issue | `issue` | issue body | `github:owner/name` |
 | Issue comment | `issue_comment` | comment body | `github:owner/name` |
 
-Evidence: `plugins/sources/github/connector.go:251-393`; the default-branch
+Evidence: `plugins/sources/github/connector.go:282-424`, with `RepoRef` staying
+forge-scoped rather than instance-scoped (`connector.go:426-435`); the default-branch
 restriction is `defaultBranchRef` in the commits query
 (`plugins/sources/github/client.go:524-547`).
 
@@ -118,37 +135,55 @@ private repositories is `repo`, which is read **and write** across every
 repository you can see [vendor]. Prefer fine-grained.
 
 GitHub Enterprise Server: the connector accepts an API root
-(`NewConnector(token, repos, baseURL)` — `connector.go:67-79`), but
-`lore.yaml` exposes no key for it and the wiring passes an empty string
-(`newConnectors` in `internal/di/modules.go`), so today only `github.com` is
+(`NewConnector(instance, token, repos, baseURL)` — `connector.go:78-89`), but the
+manifest declares no key for it and the plugin passes an empty string
+(`plugins/sources/github/plugin.go:41-51`), so today only `github.com` is
 reachable.
 
 ### `lore.yaml`
 
 ```yaml
 sources:
-  github:
-    token_env: LORE_GITHUB_TOKEN   # env var NAME; a fine-grained read-only PAT
-    repos:
-      - acme/myproject             # "owner/name"; no local clone required
-      - acme/myproject-infra
+  - use: github
+    with:
+      token_env: LORE_GITHUB_TOKEN   # env var NAME; a fine-grained read-only PAT
+      repos:
+        - acme/myproject             # "owner/name"; no local clone required
+        - acme/myproject-infra
 ```
 
-### `lore source add`
+### `lore source add github`
 
-There is nothing to walk through: `lore init` already scaffolds this block
-(`internal/transport/cli/init.go:74-80`), so the subcommand refuses the name
-and tells you where to edit —
+`lore init` already scaffolds a `github` item, so this command is for the second
+one — a different org, a different token. It asks for an `id` first, because two
+instances may not share an identity:
 
 ```console
 $ lore source add github
-lore: `lore init` already scaffolds sources.github — edit that block in lore.yaml; source add takes notion or jira or gitlab
+sources already has an instance called github, so this one needs its own id, for example github-2: github-infra
+name of the environment variable holding the github token — the name, never the value [LORE_GITHUB_TOKEN]: LORE_INFRA_GITHUB_TOKEN
+Repositories to ingest, each "owner/name": acme-infra/terraform
+added sources[github-infra] to ./lore.yaml
+next: export LORE_INFRA_GITHUB_TOKEN, then run `lore sync`
 ```
 
-exit code 2 (bad request). Verbatim from
-`internal/transport/cli/source.go:119-121`; the accepted-name list is built
-from the registered specs (`source.go:35-39, 130-136`), so it grows as
-sources are added.
+What lands in `lore.yaml`:
+
+```yaml
+  - id: github-infra
+    use: github
+    with:
+      token_env: LORE_INFRA_GITHUB_TOKEN
+      repos:
+        - acme-infra/terraform
+```
+
+On a workspace where no `github` item exists yet, the id question is skipped
+entirely and the item is written without an `id:`
+(`internal/transport/cli/source.go:204-227`). The prompts themselves come from
+the plugin's manifest — its secrets first, then its fields, in declaration order
+(`source.go:170-198`, `plugins/sources/github/plugin.go:21-37`) — so there is no
+per-source prompting code to fall out of date.
 
 ### Verify
 
@@ -167,9 +202,9 @@ sources:
 sync lock: free
 ```
 
-`lore sync --source github` limits the round to that one connector
-(`internal/transport/cli/sync.go:41-42`), passed through as
-`services.SyncOptions{Source: source}` (`sync.go:25`), so that pair of
+`lore sync --source github` limits the round to that one instance, by the id it
+has in `lore.yaml` (`internal/transport/cli/sync.go:47-48`), passed through as
+`services.SyncOptions{Source: source}` (`sync.go:28`), so that pair of
 commands is the end-to-end proof no matter what else is configured: the
 `github` line in `lore status` exists only after a batch committed
 (`internal/transport/cli/status.go:36-44`). An unknown name is refused:
@@ -180,16 +215,20 @@ every source's chunks and rewinds every cursor, so it must run across the
 whole workspace` (`Sync` in `internal/services/sync.go`). The MCP `sync_now`
 tool's `source` field and gRPC `Trigger`'s `source` field are the same filter.
 
-Failure looks like this (exit 1, and the token itself never appears):
+Failure is per instance: the ones that worked keep their committed batches, the
+round still exits 1, and the token itself never appears:
 
 ```console
 $ lore sync
-lore: connector github could not read changes: github acme/myproject: POST https://api.github.com/graphql: status 401: Bad credentials
+github failed at its last checkpoint — connector github could not read changes
+the remaining sources are committed; `lore status` for counts and cursor ages
+lore: 1 source did not finish this round: connector github could not read changes: github acme/myproject: fetch commits: POST https://api.github.com/graphql: status 401: Bad credentials
 ```
 
-The `connector github could not read changes` prefix is Lore's
-(`syncConnector` in `internal/services/sync.go`), `github acme/myproject` names
-the repository being walked (`plugins/sources/github/connector.go:101`), and
+The `connector github could not read changes` prefix is Lore's, naming the
+instance (`syncConnector` in `internal/services/sync.go`), `github acme/myproject`
+names the repository being walked
+(`plugins/sources/github/connector.go:132`), and
 the rest is the request line, the HTTP status and GitHub's own message
 (`plugins/sources/github/client.go:221`). Read it as:
 
@@ -203,7 +242,7 @@ Lore authors the prefix; what each status *means* is the provider's documented
 behavior, not something this repository decides [vendor].
 
 A missing variable is caught earlier, before any request:
-`sources.github.token_env names LORE_GITHUB_TOKEN, but that environment
+`sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment
 variable is not set` (exit 2).
 
 ### Rotate and revoke
@@ -212,14 +251,14 @@ Fine-grained PATs expire; a sync starts failing with 401 the moment one does.
 To rotate, mint the replacement, `export LORE_GITHUB_TOKEN=<new>`, re-run
 `lore sync`, then delete the old token. Nothing has to change in `lore.yaml`
 — it stores the variable name, not the value — and the index survives, since
-cursors are per-source and per-repo, not per-credential
-(`plugins/sources/github/connector.go:459-474`). Revoking is enough to
+cursors are per-instance and per-repo, not per-credential
+(`plugins/sources/github/connector.go:492-507`). Revoking is enough to
 stop all ingestion: with no valid token the connector cannot read, and Lore
 has no cached credential anywhere.
 
 ## GitLab
 
-Same shape as GitHub, one source name later: a merge request is the PR
+Same shape as GitHub, one plugin later: a merge request is the PR
 analogue, and MR discussion notes are the review analogue. No new DocTypes
 were introduced for it.
 
@@ -234,11 +273,12 @@ were introduced for it.
 | Issue | `issue` | `<base>/<group>/<project>/-/issues/<iid>` | `gitlab:group/project` |
 | Issue note | `issue_comment` | issue URL + `#note_<id>` | `gitlab:group/project` |
 
-`Document.Source` is `"gitlab"` and `RepoRef` is `gitlab:<group>/<project>`,
+`Document.Source` is the instance id — `"gitlab"` unless you gave the item its
+own `id:` — while `RepoRef` stays `gitlab:<group>/<project>`,
 so a subgroup path (`acme/platform/myproject`) round-trips intact. Each URL is
 GitLab's own `web_url` when the payload carries one, falling back to the
-constructed form above (`plugins/sources/gitlab/connector.go:172-182,
-272, 309, 419`). The sync watermark is GitLab's own filter on each list
+constructed form above (`plugins/sources/gitlab/connector.go:301, 338, 448`).
+The sync watermark is GitLab's own filter on each list
 endpoint — `updated_after` for merge requests and issues, `since` for commit
 history — checkpointed per batch like every other connector.
 
@@ -300,70 +340,81 @@ a server access log.
 
 ```yaml
 sources:
-  gitlab:
-    base_url: https://gitlab.com   # OPTIONAL — default https://gitlab.com;
-                                   # a self-managed instance passes its root
-    token_env: LORE_GITLAB_TOKEN   # env var NAME; a read_api token
-    projects:                      # namespaced paths, at least one
-      - acme/myproject
-      - acme/platform/myproject    # subgroups are fine
+  - use: gitlab
+    with:
+      base_url: https://gitlab.com   # OPTIONAL — default https://gitlab.com;
+                                     # a self-managed instance passes its root
+      token_env: LORE_GITLAB_TOKEN   # env var NAME; a read_api token
+      projects:                      # namespaced paths, at least one
+        - acme/myproject
+        - acme/platform/myproject    # subgroups are fine
 ```
 
-Validation at config load — the first rule broken is the one reported, before
-any request goes out (exit 2 — `internal/config/validate.go:71-83`):
+Validation happens when the instance is built from the plugin's manifest — the
+first rule broken is the one reported, before any request goes out (exit 2 —
+`internal/registry/build.go:368-403`, `:483-496`, `:517-550`):
 
 | Wrong | Message |
 |---|---|
-| `token_env` absent | `sources.gitlab.token_env must name an environment variable` |
-| the named variable unset | `sources.gitlab.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set` |
-| `projects` empty | `sources.gitlab.projects must list at least one "group/project" path` |
-| `base_url` not absolute http(s) | `sources.gitlab.base_url must be an absolute http(s) URL like https://gitlab.com, got ftp://gitlab.example.com` |
-| `base_url` unparseable | `sources.gitlab.base_url is not a URL: <value>` |
+| `token_env` present but empty | `sources[gitlab].with.token_env must name an environment variable` |
+| the named variable unset | `sources[gitlab].with.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set` |
+| `projects` absent | `sources[gitlab].with.projects must be set — Namespaced paths, matched verbatim: "acme/myproject", or "acme/platform/myproject" when the project nests through subgroups.` |
+| `base_url` not absolute http(s) | `sources[gitlab].with.base_url must be an absolute http(s) URL like https://gitlab.com, got ftp://gitlab.example.com` |
+| `base_url` unparseable | `sources[gitlab].with.base_url is not a URL: <value>` |
+
+The remedy text on a "must be set" line is the manifest's own `Doc` for that
+field (`internal/registry/build.go:398-410`), so it is the plugin, not this
+page, that says what the key wants.
 
 Unlike Jira, `base_url` is optional here: absent means `https://gitlab.com`.
 A project entry that is not a `group/project` path is caught one step later,
 by the connector rather than the loader:
 `gitlab: invalid project "myproject": want "group/project"`
-(`plugins/sources/gitlab/connector.go:151-153`).
+(`plugins/sources/gitlab/connector.go:178-182`).
 
 ### `lore source add gitlab`
 
 ```console
 $ lore source add gitlab
-GitLab base URL [https://gitlab.com]: 
-name of the environment variable holding the GitLab access token — the name, never the value [LORE_GITLAB_TOKEN]: 
-GitLab projects to sync, comma-separated, e.g. acme/myproject or acme/platform/myproject: acme/myproject, acme/platform/myproject
-added sources.gitlab to ./lore.yaml
+name of the environment variable holding the gitlab token — the name, never the value [LORE_GITLAB_TOKEN]: 
+GitLab instance URL [https://gitlab.com]: 
+Namespaced project paths to ingest, e.g. acme/myproject: acme/myproject, acme/platform/myproject
+added sources[gitlab] to ./lore.yaml
 next: export LORE_GITLAB_TOKEN, then run `lore sync`
 ```
 
-Prompts verbatim from `internal/transport/cli/source.go:279-307`. Both
+The order is the manifest's: declared secrets first, then declared fields
+(`internal/transport/cli/source.go:179-196`), and each question is that entry's
+own `Prompt` (`plugins/sources/gitlab/plugin.go:19-42`). Both
 bracketed defaults are taken by pressing Enter; the projects question is not
 optional — an empty answer stops there with
-`sources.gitlab.projects must list at least one entry` (exit 2,
-`source.go:198-209`), which is the same rule config load enforces later with
-its own wording. The credential is never typed: the prompt asks for the *name*
-of the variable holding it (`source.go:160-170`).
+`sources[gitlab].with.projects must list at least one entry` (exit 2,
+`source.go:374-383`), which is the same rule instance building enforces later
+with its own wording. The credential is never typed: the prompt asks for the
+*name* of the variable holding it (`source.go:320-334`).
 
 `base_url` is written out even when you accept the default, so a self-managed
-instance is a visible edit rather than an invisible assumption
-(`source.go:25-27`).
+instance is a visible edit rather than an invisible assumption — an optional
+field left *blank* stays out of the file entirely instead
+(`source.go:236-260`).
 
-What lands in `lore.yaml`, spliced in under the existing `sources:` line with
-every other line left untouched (`internal/transport/cli/source.go:339-352`):
+What lands in `lore.yaml`, appended to the existing `sources:` block with
+every other line left untouched (`internal/transport/cli/source.go:462-494`):
 
 ```yaml
-  gitlab:
-    base_url: https://gitlab.com
-    token_env: LORE_GITLAB_TOKEN
-    projects:
-      - acme/myproject
-      - acme/platform/myproject
+  - use: gitlab
+    with:
+      token_env: LORE_GITLAB_TOKEN
+      base_url: https://gitlab.com
+      projects:
+        - acme/myproject
+        - acme/platform/myproject
 ```
 
-Adding a source twice is refused rather than merged:
-`sources.gitlab is already configured in ./lore.yaml — edit that block
-directly` (exit 3 — `internal/transport/cli/source.go:85-87`).
+Adding a second GitLab instance is not refused: the command asks for an `id`
+that distinguishes it, and refuses only a duplicate of one already there —
+`sources already has an instance called gitlab; every id in sources must be
+unique` (`internal/transport/cli/source.go:204-227`).
 
 ### Verify
 
@@ -421,14 +472,14 @@ the workspace), not juggling several tokens.
 
 Pages only — one `page` document per page, its title from whichever property
 has type `title`, its body the page's block tree flattened to text
-(`plugins/sources/notion/connector.go:153-185`). Blocks are walked
+(`plugins/sources/notion/connector.go:155-187`). Blocks are walked
 recursively but a `child_page` block is not descended into, because that page
 arrives as its own document (`plugins/sources/notion/client.go:236-240`).
-Trashed pages are skipped (`connector.go:113`,
+Trashed pages are skipped (`connector.go:115`,
 `plugins/sources/notion/client.go:109-110`).
 
 Notion documents carry **no** `RepoRef` and **no** `Author`
-(`plugins/sources/notion/connector.go:174-184`) — the connector never
+(`plugins/sources/notion/connector.go:176-186`) — the connector never
 asks Notion who anybody is.
 
 ### What does not
@@ -463,62 +514,67 @@ Paths are relative to `plugins/sources/notion/`. Every request sends
 
 `root_pages` is a **filter, not a grant**: it narrows an already-granted
 subtree. Entries may be page ids or exact page titles
-(`connector.go:67-69, 218-248`); a page is in scope when it *is* a root or
+(`connector.go:66-69, 220-250`); a page is in scope when it *is* a root or
 has one as an ancestor, found by walking parents up to 32 levels
-(`connector.go:22-23, 261-297`). Consequences worth knowing before you rely
+(`connector.go:20-21, 263-299`). Consequences worth knowing before you rely
 on it:
 
 - An **empty `root_pages` syncs every page shared with the integration**
-  (`connector.go:262-264`). The share list is then your only boundary.
+  (`connector.go:263-266`). The share list is then your only boundary.
 - A title that matches two live pages is an error, not a guess:
   `notion: root page "Decisions" matches the live pages <id> and <id>: configure it by id`
-  (`connector.go:246-247`). Ids are the durable choice — a renamed page breaks
+  (`connector.go:248-249`). Ids are the durable choice — a renamed page breaks
   a title entry with `notion: root page "Decisions" matches no page title`
-  (`connector.go:242`).
-- Dashes and case in ids do not matter (`connector.go:299-302`).
+  (`connector.go:244`).
+- Dashes and case in ids do not matter (`connector.go:301-302`).
 
-Notion's API host is not configurable: the wiring passes an empty base URL and
-the client defaults to `https://api.notion.com`
-(`newConnectors` in `internal/di/modules.go`,
+Notion's API host is not configurable: the manifest declares no `base_url`
+field, the plugin passes an empty base URL and the client defaults to
+`https://api.notion.com`
+(`plugins/sources/notion/plugin.go:33-43`,
 `plugins/sources/notion/client.go:18, 52-55`).
 
 ### `lore.yaml`
 
 ```yaml
 sources:
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - 00000000000000000000000000000000   # page id (fake)
-      - Architecture Decisions             # or an exact page title
+  - use: notion
+    with:
+      token_env: LORE_NOTION_TOKEN
+      root_pages:
+        - "00000000000000000000000000000000" # page id (fake); quoted so it stays a string
+        - Architecture Decisions             # or an exact page title
 ```
 
 ### `lore source add notion`
 
 ```console
 $ lore source add notion
-name of the environment variable holding the Notion integration token — the name, never the value [LORE_NOTION_TOKEN]: 
-Notion root pages to scope the sync to, comma-separated (empty syncs every page shared with the integration): 00000000000000000000000000000000, Architecture Decisions
-added sources.notion to ./lore.yaml
+name of the environment variable holding the notion token — the name, never the value [LORE_NOTION_TOKEN]: 
+Root pages to ingest, each a page id or an exact page title (empty syncs everything): 00000000000000000000000000000000, Architecture Decisions
+added sources[notion] to ./lore.yaml
 next: export LORE_NOTION_TOKEN, then run `lore sync`
 ```
 
-Prompts verbatim from `internal/transport/cli/source.go:229-244`. Pasting a
+Prompts come from the manifest (`plugins/sources/notion/plugin.go:18-29`),
+asked by `internal/transport/cli/source.go:179-196`. Pasting a
 token at the first prompt is rejected without echoing it back:
-`sources.notion.token_env must be an environment variable name like
-LORE_NOTION_TOKEN` (`source.go:165-168`). Written block:
+`sources[notion].with.token_env must be an environment variable name like
+LORE_NOTION_TOKEN` (`source.go:320-334`). Written item:
 
 ```yaml
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - "00000000000000000000000000000000"
-      - Architecture Decisions
+  - use: notion
+    with:
+      token_env: LORE_NOTION_TOKEN
+      root_pages:
+        - "00000000000000000000000000000000"
+        - Architecture Decisions
 ```
 
-The encoder quotes an all-digit page id, as above, so it stays a string;
-`root_pages` is omitted entirely when you answer the second prompt with an
-empty line (`omitempty` — `source.go:211-214`).
+The encoder quotes an all-digit page id, as above, so it stays a string; an
+optional list answered with an empty line is left out of the item entirely, so
+the plugin's own default keeps applying
+(`source.go:239-260`, `source.go:405-441`).
 
 ### Verify
 
@@ -537,12 +593,14 @@ like an error:
 
 ```console
 $ lore sync
-lore: connector notion could not read changes: notion: POST https://api.notion.com/v1/search: status 401: API token is invalid
+notion failed at its last checkpoint — connector notion could not read changes
+the remaining sources are committed; `lore status` for counts and cursor ages
+lore: 1 source did not finish this round: connector notion could not read changes: notion: POST https://api.notion.com/v1/search: status 401: unauthorized: API token is invalid.
 ```
 
-`connector notion could not read changes` is Lore's
+`connector notion could not read changes` is Lore's, naming the instance
 (`syncConnector` in `internal/services/sync.go`), `notion:` is the connector's
-(`plugins/sources/notion/connector.go:141-145`), and the tail after
+(`plugins/sources/notion/connector.go:143`), and the tail after
 `status 401:` is Notion's own message [vendor]
 (`plugins/sources/notion/client.go:374, 417-431`).
 
@@ -589,12 +647,12 @@ Data Center do not expose, so this connector does not support them [vendor].
 Only five fields are requested per issue — `summary,description,created,updated,reporter`
 (`plugins/sources/jira/client.go:35`) — plus its comments. Description and
 comment bodies arrive as Atlassian Document Format and are flattened to plain
-text (`connector.go:193, 209`; `plugins/sources/jira/adf.go`). Jira
-documents carry no `RepoRef` (`connector.go:221-227`).
+text (`connector.go:195, 211`; `plugins/sources/jira/adf.go`). Jira
+documents carry no `RepoRef` (`connector.go:223-231`).
 
 The bare issue key is the document's external id on purpose: it is what makes
 a `PROJ-123` mention in a commit, PR or Notion page resolve to this ticket
-(`connector.go:189-191`).
+(`connector.go:190-193`).
 
 ### What does not
 
@@ -602,7 +660,7 @@ Every other field: status, assignee, labels, components, sprints, story
 points, custom fields, attachments, worklogs, changelog/history, transitions,
 watchers, and issue links. Also no boards, no projects metadata, no users.
 Nothing outside `projects:` is queried, because the project filter is a JQL
-clause (`connector.go:233-245`).
+clause (`connector.go:235-247`).
 
 ### Minimum credential
 
@@ -625,65 +683,97 @@ dedicated integration user whose only relevant grant is:
 Paths are relative to `plugins/sources/jira/`. Both are GET; the
 connector issues no other request. The JQL it builds is
 `project IN (PROJ, PLATFORM) AND updated >= "<watermark - 24h>" ORDER BY updated ASC`
-(`connector.go:26-28, 233-245`) — the 24-hour slack absorbs JQL's
+(`connector.go:26, 235-247`) — the 24-hour slack absorbs JQL's
 minute-granular, requester-timezone datetime literals, and the connector
 refilters the overlap.
 
 Two scoping cautions:
 
 - **An empty `projects` list ingests every project the account can browse**
-  — `jql()` emits no `project IN` clause without it (`connector.go:235`).
+  — `jql()` emits no `project IN` clause without it (`connector.go:237-239`).
   List the projects explicitly; that way the config, not the account's
   permission scheme, is the boundary you review.
 - Project keys are validated before any request:
   `jira: invalid project key "proj-1": want uppercase letters, digits and underscores`
-  (`connector.go:247-267`).
+  (`connector.go:249-269`).
 
 ### `lore.yaml`
 
 ```yaml
 sources:
-  jira:
-    base_url: https://acme.atlassian.net   # REQUIRED
-    email_env: LORE_JIRA_EMAIL             # env var NAME holding the account email
-    token_env: LORE_JIRA_TOKEN             # env var NAME holding the API token
-    projects:
-      - PROJ
-      - PLATFORM
+  - use: jira
+    with:
+      base_url: https://acme.atlassian.net   # REQUIRED
+      email_env: LORE_JIRA_EMAIL             # env var NAME holding the account email
+      token_env: LORE_JIRA_TOKEN             # env var NAME holding the API token
+      projects:
+        - PROJ
+        - PLATFORM
 ```
 
 `base_url` is required outright here — unlike GitLab's, it has no default,
-because there is no canonical Jira host:
-`sources.jira.base_url must be set` (`internal/config/validate.go:89-92`). The
+because there is no canonical Jira host, and the manifest says so by marking
+the field required with no `Default` (`plugins/sources/jira/plugin.go:19-25`):
+`sources[jira].with.base_url must be set — https://<org>.atlassian.net`. The
 email is treated as a credential too — it is half of the basic-auth pair, so
-it also lives in an environment variable, and both variables must be set
-before startup (`internal/config/validate.go:93-98`).
+the manifest declares it as a secret alongside the token
+(`plugins/sources/jira/plugin.go:33-46`), and both variables must be set
+before startup (`internal/registry/build.go:542-546`).
+
+A second Jira site is a second item, and the `id:` is what tells them apart —
+it becomes that site's cursor key, its documents' `source` and their DocID
+prefix, so `--source jira-acme` syncs one of them:
+
+```yaml
+sources:
+  - id: jira-acme
+    use: jira
+    with:
+      base_url: https://acme.atlassian.net
+      email_env: LORE_JIRA_EMAIL
+      token_env: LORE_JIRA_TOKEN
+      projects: [PROJ]
+  - id: jira-labs
+    use: jira
+    with:
+      base_url: https://labs.atlassian.net
+      email_env: LORE_LABS_JIRA_EMAIL
+      token_env: LORE_LABS_JIRA_TOKEN
+      projects: [LABS]
+```
+
+Leave both ids off and the load refuses rather than letting one overwrite the
+other's documents: `sources lists "jira" twice; give each instance a distinct
+id, for example id: jira-acme` (`internal/config/validate.go:102-109`).
 
 ### `lore source add jira`
 
 ```console
 $ lore source add jira
-Jira base URL, e.g. https://acme.atlassian.net: https://acme.atlassian.net
-name of the environment variable holding the Jira account email — the name, never the value [LORE_JIRA_EMAIL]: 
-name of the environment variable holding the Jira API token — the name, never the value [LORE_JIRA_TOKEN]: 
-Jira project keys to sync, comma-separated (empty syncs every project the account can see): PROJ, PLATFORM
-added sources.jira to ./lore.yaml
+name of the environment variable holding the jira email — the name, never the value [LORE_JIRA_EMAIL]: 
+name of the environment variable holding the jira token — the name, never the value [LORE_JIRA_TOKEN]: 
+Jira site URL: https://acme.atlassian.net
+Project keys to ingest (empty syncs everything): PROJ, PLATFORM
+added sources[jira] to ./lore.yaml
 next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN, then run `lore sync`
 ```
 
-Prompts verbatim from `internal/transport/cli/source.go:246-277`. The base URL
+Secrets are asked for first because the manifest declares them first
+(`plugins/sources/jira/plugin.go:33-46`, asked by
+`internal/transport/cli/source.go:179-196`). The base URL
 is checked on the spot:
-`sources.jira.base_url must be an absolute http(s) URL like https://acme.atlassian.net, got acme.atlassian.net`
-(`source.go:309-318`). Written block:
+`sources[jira].with.base_url must be an absolute http(s) URL, got acme.atlassian.net`
+(`source.go:387-400`). Written item:
 
 ```yaml
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects:
-      - PROJ
-      - PLATFORM
+  - use: jira
+    with:
+      email_env: LORE_JIRA_EMAIL
+      token_env: LORE_JIRA_TOKEN
+      base_url: https://acme.atlassian.net
+      projects:
+        - PROJ
+        - PLATFORM
 ```
 
 ### Verify
@@ -703,7 +793,9 @@ Failure:
 
 ```console
 $ lore sync
-lore: connector jira could not read changes: jira: GET https://acme.atlassian.net/rest/api/3/search/jql?fields=…&jql=…: status 401: <the API's own message>
+jira failed at its last checkpoint — connector jira could not read changes
+the remaining sources are committed; `lore status` for counts and cursor ages
+lore: 1 source did not finish this round: connector jira could not read changes: jira: GET https://acme.atlassian.net/rest/api/3/search/jql?fields=…&jql=…: status 401: <the API's own message>
 ```
 
 | Status | Almost always means |
@@ -733,12 +825,12 @@ The design-level statement lives in
 [06 — Security posture](v3/06-interfaces-and-config.md#security-posture); this
 is what the code does.
 
-1. **Read-only, structurally.** No source connector package imports anything
-   beyond `lore`, the standard library, the shared ref scanner and the
+1. **Read-only, structurally.** No source plugin package imports anything
+   beyond the `lore` SDK, the standard library, the shared ref scanner and the
    shared retry helper, and each issues read requests only
    — GitLab and Jira are `GET`-only, and GitHub's GraphQL query POST and
    Notion's `POST /v1/search` are the sole non-GET calls among the four
-   source connectors, both read endpoints. No `mutation`, `PUT`, `PATCH` or
+   source plugins this build ships, both read endpoints. No `mutation`, `PUT`, `PATCH` or
    `DELETE` exists in any source connector. (The embedder and LLM clients do
    POST, to their model endpoints, through the same shared `post()` helper —
    `sdk/httpx/httpx.go:78-79` — that's the outbound
@@ -749,13 +841,17 @@ is what the code does.
 2. **Secrets come from the environment, only.** `lore.yaml` stores variable
    *names* (`token_env`, `email_env`, `api_key_env`); the `lore source add`
    prompts ask for the name and reject a value without echoing it
-   (`internal/transport/cli/source.go:58-60, 160-170`). A named-but-unset
+   (`internal/transport/cli/source.go:320-334`). A named-but-unset
    variable is a startup error that names the variable to export
-   (`internal/config/validate.go:178-187`).
+   (`internal/registry/build.go:542-546`).
 3. **Secrets never reach disk or logs.** A credential is read from the
-   environment at connector construction (`envValue` in
-   `internal/di/modules.go`) and lives only in a request header —
+   environment when the instance is built, against the secrets its manifest
+   declares (`resolveSecrets` — `internal/registry/build.go:517-550`), and
+   lives only in a request header —
    `Authorization` for GitHub, Notion and Jira, `PRIVATE-TOKEN` for GitLab.
+   A plugin never sees the operator's variable *names*: they are stripped from
+   the configuration it decodes, and it receives resolved values under its own
+   secret keys (`internal/registry/build.go:559-576`).
    The index schema has nowhere to put one:
    its tables are `documents`, `chunks`, `edges`, `pending_refs`, `cursors`,
    `sync_lock` and `meta` (`internal/repositories/sqlite/schema.go:19-95`).
@@ -786,5 +882,5 @@ is what the code does.
 
 Rotation is uniform: mint the new credential, re-export the same variable
 name, run `lore sync`, revoke the old one. `lore.yaml` never changes, and the
-index survives — cursors are keyed by source, not by credential. Revoking is
+index survives — cursors are keyed by instance, not by credential. Revoking is
 always sufficient to stop ingestion: Lore caches no credential anywhere.
