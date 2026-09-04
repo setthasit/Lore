@@ -11,6 +11,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 var testCreatedAt = time.Date(2025, 3, 12, 9, 30, 0, 0, time.UTC)
@@ -32,7 +33,7 @@ func testBundle() *entities.EvidenceBundle {
 			Doc: entities.DocumentMeta{
 				ID:        "github:pr:42",
 				Source:    "github",
-				Type:      entities.DocTypePR,
+				Type:      lore.DocTypePR,
 				Title:     "Switch the store to postgres",
 				Author:    "ada",
 				URL:       "https://github.com/acme/lore/pull/42",
@@ -49,7 +50,7 @@ func testBundle() *entities.EvidenceBundle {
 				Confidence: 1,
 			}},
 		}},
-		Chains: [][]entities.DocID{{"jira:ticket:PROJ-1", "github:pr:42"}},
+		Chains: [][]lore.DocID{{"jira:ticket:PROJ-1", "github:pr:42"}},
 		Gaps:   []string{"trail ends at PROJ-1; no linked follow-up"},
 	}
 }

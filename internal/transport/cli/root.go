@@ -9,11 +9,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/registry"
 )
 
 const defaultConfigPath = "./lore.yaml"
 
-func newRootCommand(resolve Resolver) *cobra.Command {
+func newRootCommand(resolve Resolver, reg *registry.Registry) *cobra.Command {
 	var (
 		configPath  = new(string)
 		showVersion = new(bool)
@@ -43,8 +44,10 @@ func newRootCommand(resolve Resolver) *cobra.Command {
 		"print the build stamp and the workspace's embedder identity")
 
 	root.AddCommand(
-		newInitCommand(configPath),
-		newSourceCommand(configPath),
+		newInitCommand(configPath, reg),
+		newSourceCommand(configPath, reg),
+		newPluginCommand(configPath, reg),
+		newBuildCommand(),
 		newSyncCommand(resolve, configPath),
 		newStatusCommand(resolve, configPath),
 		newAskCommand(resolve, configPath),
@@ -68,11 +71,11 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 }
 
 // An interrupt cancels the command's context rather than killing the process.
-func Main() int {
+func Main(reg *registry.Registry) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := newRootCommand(resolveWithFX).ExecuteContext(ctx); err != nil {
+	if err := newRootCommand(fxResolver(reg), reg).ExecuteContext(ctx); err != nil {
 		return report(os.Stderr, err)
 	}
 	return exitOK

@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type HistoryService interface {
@@ -90,7 +90,7 @@ func (h *historyService) HistoryOf(ctx context.Context, req HistoryRequest) (*en
 type fileHistory struct {
 	repo CodeRepo
 	file string
-	log  []gitrepo.CommitRef
+	log  []lore.CommitRef
 }
 
 func fileHistoryOf(ctx context.Context, repo CodeRepo, file string) (fileHistory, error) {
@@ -107,7 +107,7 @@ func fileHistoryOf(ctx context.Context, repo CodeRepo, file string) (fileHistory
 	return fileHistory{repo: repo, file: file, log: log}, nil
 }
 
-func (h fileHistory) window(before string, limit int) ([]gitrepo.CommitRef, error) {
+func (h fileHistory) window(before string, limit int) ([]lore.CommitRef, error) {
 	from := 0
 	if cursor := strings.TrimSpace(before); cursor != "" {
 		at, err := h.cursorAt(cursor)
@@ -168,7 +168,7 @@ func historyLimit(limit int) int {
 	return min(limit, maxHistoryLimit)
 }
 
-func windowSHAs(window []gitrepo.CommitRef) []string {
+func windowSHAs(window []lore.CommitRef) []string {
 	shas := make([]string, len(window))
 	for i, commit := range window {
 		shas[i] = commit.SHA
@@ -179,7 +179,7 @@ func windowSHAs(window []gitrepo.CommitRef) []string {
 
 func (h *historyService) resolveWindow(
 	ctx context.Context,
-	window []gitrepo.CommitRef,
+	window []lore.CommitRef,
 ) ([]entities.DocumentMeta, []string, error) {
 	commits := make([]entities.DocumentMeta, 0, len(window))
 	var unsynced []string
@@ -199,8 +199,8 @@ func (h *historyService) resolveWindow(
 	return commits, unsynced, nil
 }
 
-func metaIDs(metas []entities.DocumentMeta) []entities.DocID {
-	ids := make([]entities.DocID, len(metas))
+func metaIDs(metas []entities.DocumentMeta) []lore.DocID {
+	ids := make([]lore.DocID, len(metas))
 	for i, meta := range metas {
 		ids[i] = meta.ID
 	}

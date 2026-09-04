@@ -9,8 +9,9 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/setthasit/Lore/internal/entities"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -25,7 +26,7 @@ var eventEpoch = time.Date(2025, time.March, 12, 0, 0, 0, 0, time.UTC)
 
 type eventMocks struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
+	emb   *mock_lore.MockEmbedder
 }
 
 func newEventMocks(t *testing.T) eventMocks {
@@ -35,13 +36,13 @@ func newEventMocks(t *testing.T) eventMocks {
 
 	return eventMocks{
 		store: mock_repositories.NewMockIndexStore(ctrl),
-		emb:   mock_embedder.NewMockEmbedder(ctrl),
+		emb:   mock_lore.NewMockEmbedder(ctrl),
 	}
 }
 
 func (m eventMocks) expectRetrieval(metas ...entities.DocumentMeta) {
 	hits := make([]entities.ChunkHit, 0, len(metas))
-	ids := make([]entities.DocID, 0, len(metas))
+	ids := make([]lore.DocID, 0, len(metas))
 	for _, meta := range metas {
 		hits = append(hits, hit(string(meta.ID), 0))
 		ids = append(ids, meta.ID)
@@ -62,9 +63,9 @@ func (m eventMocks) expectRetrieval(metas ...entities.DocumentMeta) {
 
 func eventMeta(id string, at time.Time) entities.DocumentMeta {
 	return entities.DocumentMeta{
-		ID:        entities.DocID(id),
+		ID:        lore.DocID(id),
 		Source:    "github",
-		Type:      entities.DocTypeIssue,
+		Type:      lore.DocTypeIssue,
 		Title:     "incident report " + id,
 		URL:       "https://example.test/" + id,
 		CreatedAt: at,
@@ -380,7 +381,7 @@ func TestResolveEventPropagatesRetrievalFailures(t *testing.T) {
 					Return([]entities.ChunkHit{hit("d1", 0)}, nil)
 				m.store.EXPECT().SearchVector(gomock.Any(), eventVector, gomock.Any(), eventTopK).
 					Return(nil, nil)
-				m.store.EXPECT().DocumentsByID(gomock.Any(), []entities.DocID{"d1"}).
+				m.store.EXPECT().DocumentsByID(gomock.Any(), []lore.DocID{"d1"}).
 					Return(nil, errRetrieveStore)
 			},
 			cause: errRetrieveStore,

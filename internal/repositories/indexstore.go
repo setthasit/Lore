@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // Another process took the lease over; implementations wrap it so a caller can
@@ -19,15 +20,15 @@ const LeaseTTL = 60 * time.Second
 type IndexStore interface {
 	// Timestamps persist at second precision, UTC. Document.Refs are not
 	// persisted.
-	UpsertDocuments(ctx context.Context, docs []entities.Document) error
+	UpsertDocuments(ctx context.Context, docs []lore.Document) error
 
 	// Ids the index does not hold are silently omitted; result order is
 	// unspecified.
-	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
+	DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error)
 
 	// Full documents including Body. Ids the index does not hold are silently
 	// omitted; Refs are never populated.
-	DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error)
+	DocumentsWithBody(ctx context.Context, ids []lore.DocID) ([]lore.Document, error)
 
 	// Every candidate is returned; picking one is the caller's policy. A ref
 	// shape the store does not recognise yields no candidates, not an error.
@@ -35,7 +36,7 @@ type IndexStore interface {
 
 	// Replaces the document's whole chunk set; nil clears it. The parent
 	// document must already exist.
-	ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error
+	ReplaceChunks(ctx context.Context, docID lore.DocID, chunks []entities.Chunk) error
 
 	// Documents, edges, pending refs, cursors and meta survive the wipe.
 	WipeChunks(ctx context.Context) error
@@ -53,7 +54,7 @@ type IndexStore interface {
 	UpsertEdges(ctx context.Context, edges []entities.Edge) error
 
 	// Empty kinds means every kind.
-	Neighbors(ctx context.Context, ids []entities.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error)
+	Neighbors(ctx context.Context, ids []lore.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error)
 
 	PendingRefs(ctx context.Context) ([]entities.PendingRef, error)
 
@@ -62,9 +63,9 @@ type IndexStore interface {
 	DeletePendingRefs(ctx context.Context, refs []entities.PendingRef) error
 
 	// Nil Cursor means never checkpointed — start a full sync.
-	Cursor(ctx context.Context, connector string) (entities.Cursor, error)
+	Cursor(ctx context.Context, connector string) (lore.Cursor, error)
 
-	SetCursor(ctx context.Context, connector string, c entities.Cursor) error
+	SetCursor(ctx context.Context, connector string, c lore.Cursor) error
 
 	// Unset keys read as "", not an error.
 	Meta(ctx context.Context, key string) (string, error)

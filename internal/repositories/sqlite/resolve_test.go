@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -21,45 +22,45 @@ func TestResolveRef(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	firstCommit := entities.NewDocID("github", entities.DocTypeCommit, "acme/lore/commit/"+firstSHA)
-	secondCommit := entities.NewDocID("github", entities.DocTypeCommit, "acme/lore/commit/"+secondSHA)
-	pr := entities.NewDocID("github", entities.DocTypePR, "acme/lore/pull/42")
-	issue := entities.NewDocID("github", entities.DocTypeIssue, "acme/lore/issues/42")
-	ticket := entities.NewDocID("jira", entities.DocTypeTicket, "PROJ-123")
-	page := entities.NewDocID("notion", entities.DocTypePage, "design/retrieval")
-	hexPage := entities.NewDocID("notion", entities.DocTypePage, notionID)
+	firstCommit := lore.NewDocID("github", lore.DocTypeCommit, "acme/lore/commit/"+firstSHA)
+	secondCommit := lore.NewDocID("github", lore.DocTypeCommit, "acme/lore/commit/"+secondSHA)
+	pr := lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/42")
+	issue := lore.NewDocID("github", lore.DocTypeIssue, "acme/lore/issues/42")
+	ticket := lore.NewDocID("jira", lore.DocTypeTicket, "PROJ-123")
+	page := lore.NewDocID("notion", lore.DocTypePage, "design/retrieval")
+	hexPage := lore.NewDocID("notion", lore.DocTypePage, notionID)
 
-	seedDocuments(t, s, []entities.Document{
-		{ID: firstCommit, Source: "github", Type: entities.DocTypeCommit, Title: "Rework the resolver"},
-		{ID: secondCommit, Source: "github", Type: entities.DocTypeCommit, Title: "Revert the resolver"},
-		{ID: pr, Source: "github", Type: entities.DocTypePR, Title: "Provenance engine"},
-		{ID: issue, Source: "github", Type: entities.DocTypeIssue, Title: "Trace answers to sources"},
-		{ID: ticket, Source: "jira", Type: entities.DocTypeTicket, Title: "Ship provenance"},
-		{ID: page, Source: "notion", Type: entities.DocTypePage, Title: "Retrieval design", URL: pageURL},
-		{ID: hexPage, Source: "notion", Type: entities.DocTypePage, Title: "Notion ids look like SHAs"},
+	seedDocuments(t, s, []lore.Document{
+		{ID: firstCommit, Source: "github", Type: lore.DocTypeCommit, Title: "Rework the resolver"},
+		{ID: secondCommit, Source: "github", Type: lore.DocTypeCommit, Title: "Revert the resolver"},
+		{ID: pr, Source: "github", Type: lore.DocTypePR, Title: "Provenance engine"},
+		{ID: issue, Source: "github", Type: lore.DocTypeIssue, Title: "Trace answers to sources"},
+		{ID: ticket, Source: "jira", Type: lore.DocTypeTicket, Title: "Ship provenance"},
+		{ID: page, Source: "notion", Type: lore.DocTypePage, Title: "Retrieval design", URL: pageURL},
+		{ID: hexPage, Source: "notion", Type: lore.DocTypePage, Title: "Notion ids look like SHAs"},
 	})
 
 	tests := []struct {
 		name string
 		ref  string
-		want []entities.DocID
+		want []lore.DocID
 	}{
-		{name: "full sha names one commit", ref: firstSHA, want: []entities.DocID{firstCommit}},
-		{name: "uppercase sha resolves too", ref: strings.ToUpper(firstSHA), want: []entities.DocID{firstCommit}},
+		{name: "full sha names one commit", ref: firstSHA, want: []lore.DocID{firstCommit}},
+		{name: "uppercase sha resolves too", ref: strings.ToUpper(firstSHA), want: []lore.DocID{firstCommit}},
 		{
 			name: "shared abbreviation is ambiguous",
 			ref:  firstSHA[:7],
-			want: []entities.DocID{firstCommit, secondCommit},
+			want: []lore.DocID{firstCommit, secondCommit},
 		},
 		{name: "hex prefix nobody ingested", ref: "deadbee", want: nil},
 		{name: "non-commit is never a sha candidate", ref: notionID, want: nil},
-		{name: "slug and number", ref: "acme/lore#42", want: []entities.DocID{pr, issue}},
-		{name: "hash and number", ref: "#42", want: []entities.DocID{pr, issue}},
-		{name: "bare number", ref: "42", want: []entities.DocID{pr, issue}},
-		{name: "ticket key", ref: "PROJ-123", want: []entities.DocID{ticket}},
-		{name: "exact url", ref: pageURL, want: []entities.DocID{page}},
+		{name: "slug and number", ref: "acme/lore#42", want: []lore.DocID{pr, issue}},
+		{name: "hash and number", ref: "#42", want: []lore.DocID{pr, issue}},
+		{name: "bare number", ref: "42", want: []lore.DocID{pr, issue}},
+		{name: "ticket key", ref: "PROJ-123", want: []lore.DocID{ticket}},
+		{name: "exact url", ref: pageURL, want: []lore.DocID{page}},
 		{name: "unknown url", ref: "https://notion.so/unknown", want: nil},
-		{name: "full doc id", ref: string(pr), want: []entities.DocID{pr}},
+		{name: "full doc id", ref: string(pr), want: []lore.DocID{pr}},
 		{name: "prose", ref: "the march outage", want: nil},
 		{name: "empty", ref: "", want: nil},
 		{name: "whitespace", ref: "  \t ", want: nil},
@@ -81,10 +82,10 @@ func TestResolveRefCarriesDocumentMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	created := time.Date(2025, 4, 8, 11, 0, 0, 0, time.UTC)
-	doc := entities.Document{
-		ID:        entities.NewDocID("notion", entities.DocTypePage, "design/retrieval"),
+	doc := lore.Document{
+		ID:        lore.NewDocID("notion", lore.DocTypePage, "design/retrieval"),
 		Source:    "notion",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     "Retrieval design",
 		Body:      "Body text the resolver must not carry.",
 		Author:    "architect@example.test",
@@ -92,7 +93,7 @@ func TestResolveRefCarriesDocumentMetadata(t *testing.T) {
 		CreatedAt: created,
 		UpdatedAt: created.Add(time.Hour),
 	}
-	seedDocuments(t, s, []entities.Document{doc})
+	seedDocuments(t, s, []lore.Document{doc})
 
 	got, err := s.ResolveRef(ctx, pageURL)
 	if err != nil {
@@ -117,7 +118,7 @@ func TestResolveRefCarriesDocumentMetadata(t *testing.T) {
 	}
 }
 
-func seedDocuments(t *testing.T, s *Store, docs []entities.Document) {
+func seedDocuments(t *testing.T, s *Store, docs []lore.Document) {
 	t.Helper()
 
 	if err := s.UpsertDocuments(context.Background(), docs); err != nil {
@@ -125,10 +126,10 @@ func seedDocuments(t *testing.T, s *Store, docs []entities.Document) {
 	}
 }
 
-func assertResolved(t *testing.T, ref string, got []entities.DocumentMeta, want []entities.DocID) {
+func assertResolved(t *testing.T, ref string, got []entities.DocumentMeta, want []lore.DocID) {
 	t.Helper()
 
-	ids := make([]entities.DocID, len(got))
+	ids := make([]lore.DocID, len(got))
 	for i, m := range got {
 		ids[i] = m.ID
 	}

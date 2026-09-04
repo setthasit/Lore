@@ -116,7 +116,7 @@ lexically/semantically, exactly what pure graph tools miss.
 Code-anchored variant; requires a registered local clone.
 
 1. **Blame** the span on the local clone → contributing commit SHAs per line
-   (GitConnector).
+   (code plugin).
 2. **Walk** from each blamed commit: commit → PR → review threads → linked
    tickets/issues → linked pages.
 3. **Semantic expansion**: embed `question` (when given) + the blamed code
@@ -173,9 +173,11 @@ Input: `EvidenceBundle` + original question. Behavior:
   ordering for impact questions") + serialized bundle.
 - Output: markdown prose with inline `[n]` citations mapped to node URLs,
   ending with a source list.
-- Provider = user-configured `LLMConnector` (OpenAI / Anthropic / Z.AI /
-  Ollama). Missing LLM config → clear error naming the remedy; MCP surfaces
-  are unaffected because they never call synthesis.
+- Provider = the provider instance bound to the `llm:` role (OpenAI,
+  Anthropic, Ollama, or any OpenAI-compatible vendor —
+  [08](08-extensibility.md#provider-roles-and-drivers)). Missing LLM config →
+  clear error naming the remedy; MCP surfaces are unaffected because they never
+  call synthesis.
 
 ## Query-time validation (service layer)
 

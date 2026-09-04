@@ -13,9 +13,10 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -29,11 +30,11 @@ const impactExcerptChars = 500
 const impactDay = 24 * time.Hour
 
 const (
-	impactAnchorID   entities.DocID = "notion:page:decision"
-	impactEarlierID  entities.DocID = "notion:page:discussion"
-	impactLaterID    entities.DocID = "notion:page:postmortem"
-	impactUnlinkedID entities.DocID = "notion:page:runbook"
-	impactSameSecID  entities.DocID = "notion:page:memo"
+	impactAnchorID   lore.DocID = "notion:page:decision"
+	impactEarlierID  lore.DocID = "notion:page:discussion"
+	impactLaterID    lore.DocID = "notion:page:postmortem"
+	impactUnlinkedID lore.DocID = "notion:page:runbook"
+	impactSameSecID  lore.DocID = "notion:page:memo"
 )
 
 const (
@@ -61,11 +62,11 @@ var (
 	impactAnchorCitesEarlier = impactEdge(impactAnchorID, impactEarlierID)
 )
 
-func impactMeta(id entities.DocID, title string, createdAt time.Time) entities.DocumentMeta {
+func impactMeta(id lore.DocID, title string, createdAt time.Time) entities.DocumentMeta {
 	return entities.DocumentMeta{
 		ID:        id,
 		Source:    "notion",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     title,
 		Author:    "dev@example.test",
 		URL:       "https://example.test/" + string(id),
@@ -74,17 +75,17 @@ func impactMeta(id entities.DocID, title string, createdAt time.Time) entities.D
 	}
 }
 
-func impactEdge(src, dst entities.DocID) entities.Edge {
+func impactEdge(src, dst lore.DocID) entities.Edge {
 	return entities.Edge{Src: src, Dst: dst, Kind: entities.EdgeKindReferencesDoc, Confidence: 1}
 }
 
-func impactHit(id entities.DocID) entities.ChunkHit {
+func impactHit(id lore.DocID) entities.ChunkHit {
 	return entities.ChunkHit{
 		Chunk: entities.Chunk{
 			DocID:   id,
 			Text:    string(id) + " excerpt",
 			Source:  "notion",
-			DocType: entities.DocTypePage,
+			DocType: lore.DocTypePage,
 		},
 		Score: -2.5,
 	}
@@ -104,7 +105,7 @@ func impactAfterAnchor() gomock.Matcher {
 
 type impactFixture struct {
 	store *mock_repositories.MockIndexStore
-	emb   *mock_embedder.MockEmbedder
+	emb   *mock_lore.MockEmbedder
 	svc   services.ImpactService
 }
 
@@ -113,7 +114,7 @@ func newImpactFixture(t *testing.T) impactFixture {
 
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
-	emb := mock_embedder.NewMockEmbedder(ctrl)
+	emb := mock_lore.NewMockEmbedder(ctrl)
 	cfg := services.QueryConfig{TopK: impactTopK, WalkDepth: impactWalkDepth}
 
 	return impactFixture{store: store, emb: emb, svc: services.NewImpactService(store, emb, cfg)}
@@ -123,16 +124,16 @@ func (f impactFixture) expectResolve(ref string, candidates ...entities.Document
 	return f.store.EXPECT().ResolveRef(gomock.Any(), ref).Return(candidates, nil)
 }
 
-func (f impactFixture) expectBody(id entities.DocID, body string) *gomock.Call {
-	return f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{id}).
-		Return([]entities.Document{{ID: id, Body: body}}, nil)
+func (f impactFixture) expectBody(id lore.DocID, body string) *gomock.Call {
+	return f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{id}).
+		Return([]lore.Document{{ID: id, Body: body}}, nil)
 }
 
-func (f impactFixture) expectMetas(ids []entities.DocID, metas ...entities.DocumentMeta) *gomock.Call {
+func (f impactFixture) expectMetas(ids []lore.DocID, metas ...entities.DocumentMeta) *gomock.Call {
 	return f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil)
 }
 
-func (f impactFixture) expectNeighbors(ids []entities.DocID, edges ...entities.Edge) *gomock.Call {
+func (f impactFixture) expectNeighbors(ids []lore.DocID, edges ...entities.Edge) *gomock.Call {
 	return f.store.EXPECT().Neighbors(gomock.Any(), ids, nil, entities.DirBoth).Return(edges, nil)
 }
 
@@ -145,7 +146,7 @@ func (f impactFixture) expectSearch(text string, filters gomock.Matcher, hits ..
 func (f impactFixture) expectAnchorByRef() {
 	f.expectResolve(impactRef, impactAnchorMeta)
 	f.expectBody(impactAnchorID, impactAnchorBody)
-	f.expectMetas([]entities.DocID{impactAnchorID}, impactAnchorMeta)
+	f.expectMetas([]lore.DocID{impactAnchorID}, impactAnchorMeta)
 }
 
 func impactRoles(nodes []entities.EvidenceNode) []string {
@@ -165,7 +166,7 @@ func assertImpactRoles(t *testing.T, nodes []entities.EvidenceNode, want []strin
 	}
 }
 
-func assertImpactNodes(t *testing.T, nodes []entities.EvidenceNode, want []entities.DocID) {
+func assertImpactNodes(t *testing.T, nodes []entities.EvidenceNode, want []lore.DocID) {
 	t.Helper()
 
 	if got := nodeIDs(nodes); !slices.Equal(got, want) {
@@ -196,20 +197,20 @@ func TestImpactOfReturnsAChronologicalTimeline(t *testing.T) {
 	f.expectAnchorByRef()
 
 	// Both edges touch the anchor; the earlier document is pruned by the anchor time.
-	f.expectNeighbors([]entities.DocID{impactAnchorID}, impactLaterCitesAnchor, impactAnchorCitesEarlier)
-	f.expectMetas([]entities.DocID{impactLaterID, impactEarlierID}, impactLaterMeta, impactEarlierMeta)
-	f.expectNeighbors([]entities.DocID{impactLaterID})
+	f.expectNeighbors([]lore.DocID{impactAnchorID}, impactLaterCitesAnchor, impactAnchorCitesEarlier)
+	f.expectMetas([]lore.DocID{impactLaterID, impactEarlierID}, impactLaterMeta, impactEarlierMeta)
+	f.expectNeighbors([]lore.DocID{impactLaterID})
 
 	f.expectSearch(impactEmbedText(question, impactAnchorBody), impactAfterAnchor(),
 		impactHit(impactUnlinkedID), impactHit(impactSameSecID))
-	f.expectMetas([]entities.DocID{impactUnlinkedID, impactSameSecID}, impactUnlinkedMeta, impactSameSecMeta)
+	f.expectMetas([]lore.DocID{impactUnlinkedID, impactSameSecID}, impactUnlinkedMeta, impactSameSecMeta)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: "  " + impactRef + "\n"})
 	if err != nil {
 		t.Fatalf("ImpactOf: %v", err)
 	}
 
-	assertImpactNodes(t, bundle.Nodes, []entities.DocID{impactAnchorID, impactLaterID, impactUnlinkedID})
+	assertImpactNodes(t, bundle.Nodes, []lore.DocID{impactAnchorID, impactLaterID, impactUnlinkedID})
 	assertImpactRoles(t, bundle.Nodes, []string{
 		entities.RoleSeed, entities.RoleFollowUp, entities.RoleSemanticMatch,
 	})
@@ -246,7 +247,7 @@ func TestImpactOfReturnsAChronologicalTimeline(t *testing.T) {
 		t.Errorf("Anchor carries a non-document grounding: %+v", bundle.Anchor)
 	}
 	assertImpactAnchorDoc(t, bundle.Anchor.Doc)
-	assertChain(t, bundle.Chains, []entities.DocID{impactAnchorID, impactLaterID})
+	assertChain(t, bundle.Chains, []lore.DocID{impactAnchorID, impactLaterID})
 	assertGaps(t, bundle.Gaps, nil)
 }
 
@@ -258,10 +259,10 @@ func TestImpactOfInterpretsFreeTextAsTheAnchor(t *testing.T) {
 	f := newImpactFixture(t)
 	f.expectResolve(query)
 	f.expectSearch(query, gomock.Eq(entities.Filters{}), impactHit(impactAnchorID), impactHit(impactUnlinkedID))
-	f.expectMetas([]entities.DocID{impactAnchorID, impactUnlinkedID}, impactAnchorMeta, impactUnlinkedMeta)
+	f.expectMetas([]lore.DocID{impactAnchorID, impactUnlinkedID}, impactAnchorMeta, impactUnlinkedMeta)
 	f.expectBody(impactAnchorID, impactAnchorBody)
-	f.expectMetas([]entities.DocID{impactAnchorID}, impactAnchorMeta)
-	f.expectNeighbors([]entities.DocID{impactAnchorID})
+	f.expectMetas([]lore.DocID{impactAnchorID}, impactAnchorMeta)
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(
 		impactEmbedText(impactDefaultQuestion(impactAnchorTitle), impactAnchorBody),
 		impactAfterAnchor())
@@ -278,7 +279,7 @@ func TestImpactOfInterpretsFreeTextAsTheAnchor(t *testing.T) {
 		t.Errorf("Anchor.Query = %q, want the trimmed input %q", bundle.Anchor.Query, query)
 	}
 	assertImpactAnchorDoc(t, bundle.Anchor.Doc)
-	assertImpactNodes(t, bundle.Nodes, []entities.DocID{impactAnchorID})
+	assertImpactNodes(t, bundle.Nodes, []lore.DocID{impactAnchorID})
 }
 
 func TestImpactOfDefaultsTheQuestionToTheAnchorTitle(t *testing.T) {
@@ -288,7 +289,7 @@ func TestImpactOfDefaultsTheQuestionToTheAnchorTitle(t *testing.T) {
 
 	f := newImpactFixture(t)
 	f.expectAnchorByRef()
-	f.expectNeighbors([]entities.DocID{impactAnchorID})
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(want, impactAnchorBody), impactAfterAnchor())
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
@@ -307,7 +308,7 @@ func TestImpactOfHonoursAnExplicitQuestion(t *testing.T) {
 
 	f := newImpactFixture(t)
 	f.expectAnchorByRef()
-	f.expectNeighbors([]entities.DocID{impactAnchorID})
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(asked, impactAnchorBody), impactAfterAnchor())
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{
@@ -329,10 +330,10 @@ func TestImpactOfCitesADoublyFoundDocumentOnce(t *testing.T) {
 
 	f := newImpactFixture(t)
 	f.expectAnchorByRef()
-	f.expectNeighbors([]entities.DocID{impactAnchorID}, impactLaterCitesAnchor)
+	f.expectNeighbors([]lore.DocID{impactAnchorID}, impactLaterCitesAnchor)
 	// Once to admit the walk candidate, once to lift the same document from retrieval.
-	f.expectMetas([]entities.DocID{impactLaterID}, impactLaterMeta).Times(2)
-	f.expectNeighbors([]entities.DocID{impactLaterID})
+	f.expectMetas([]lore.DocID{impactLaterID}, impactLaterMeta).Times(2)
+	f.expectNeighbors([]lore.DocID{impactLaterID})
 	f.expectSearch(impactEmbedText(question, impactAnchorBody), impactAfterAnchor(), impactHit(impactLaterID))
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
@@ -340,7 +341,7 @@ func TestImpactOfCitesADoublyFoundDocumentOnce(t *testing.T) {
 		t.Fatalf("ImpactOf: %v", err)
 	}
 
-	assertImpactNodes(t, bundle.Nodes, []entities.DocID{impactAnchorID, impactLaterID})
+	assertImpactNodes(t, bundle.Nodes, []lore.DocID{impactAnchorID, impactLaterID})
 	assertImpactRoles(t, bundle.Nodes, []string{entities.RoleSeed, entities.RoleFollowUp})
 	if !slices.Equal(bundle.Nodes[1].Via, []entities.Edge{impactLaterCitesAnchor}) {
 		t.Errorf("Via = %+v, want the graph provenance kept over the retrieval hit", bundle.Nodes[1].Via)
@@ -354,16 +355,16 @@ func TestImpactOfReportsAnEmptyWindowAsAGap(t *testing.T) {
 
 	f := newImpactFixture(t)
 	f.expectAnchorByRef()
-	f.expectNeighbors([]entities.DocID{impactAnchorID})
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(question, impactAnchorBody), impactAfterAnchor(), impactHit(impactSameSecID))
-	f.expectMetas([]entities.DocID{impactSameSecID}, impactSameSecMeta)
+	f.expectMetas([]lore.DocID{impactSameSecID}, impactSameSecMeta)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
 	if err != nil {
 		t.Fatalf("ImpactOf: %v", err)
 	}
 
-	assertImpactNodes(t, bundle.Nodes, []entities.DocID{impactAnchorID})
+	assertImpactNodes(t, bundle.Nodes, []lore.DocID{impactAnchorID})
 	assertGaps(t, bundle.Gaps, []string{
 		"no follow-up evidence after 2025-03-12",
 		impactAnchorTitle + " (" + string(impactAnchorID) + ") stands alone; no linked discussion",
@@ -460,7 +461,7 @@ func TestImpactOfReportsAMissingAnchorBody(t *testing.T) {
 
 	f := newImpactFixture(t)
 	f.expectResolve(impactRef, impactAnchorMeta)
-	f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{impactAnchorID}).Return(nil, nil)
+	f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{impactAnchorID}).Return(nil, nil)
 
 	_, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
 	if !internalerror.IsNotFound(err) {
@@ -486,8 +487,8 @@ func TestImpactOfTruncatesTheAnchorExcerptOnARuneBoundary(t *testing.T) {
 	f := newImpactFixture(t)
 	f.expectResolve(impactRef, impactAnchorMeta)
 	f.expectBody(impactAnchorID, body)
-	f.expectMetas([]entities.DocID{impactAnchorID}, impactAnchorMeta)
-	f.expectNeighbors([]entities.DocID{impactAnchorID})
+	f.expectMetas([]lore.DocID{impactAnchorID}, impactAnchorMeta)
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(
 		impactEmbedText(impactDefaultQuestion(impactAnchorTitle), wantExcerpt),
 		impactAfterAnchor())
@@ -527,7 +528,7 @@ func TestImpactOfClassifiesStoreFailures(t *testing.T) {
 		"anchor body": {
 			expect: func(f impactFixture) {
 				f.expectResolve(impactRef, impactAnchorMeta)
-				f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{impactAnchorID}).
+				f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{impactAnchorID}).
 					Return(nil, errImpactStore)
 			},
 			names: "body",
@@ -536,7 +537,7 @@ func TestImpactOfClassifiesStoreFailures(t *testing.T) {
 			expect: func(f impactFixture) {
 				f.expectAnchorByRef()
 				f.store.EXPECT().
-					Neighbors(gomock.Any(), []entities.DocID{impactAnchorID}, nil, entities.DirBoth).
+					Neighbors(gomock.Any(), []lore.DocID{impactAnchorID}, nil, entities.DirBoth).
 					Return(nil, errImpactStore)
 			},
 			names: "graph",
@@ -544,7 +545,7 @@ func TestImpactOfClassifiesStoreFailures(t *testing.T) {
 		"semantic search": {
 			expect: func(f impactFixture) {
 				f.expectAnchorByRef()
-				f.expectNeighbors([]entities.DocID{impactAnchorID})
+				f.expectNeighbors([]lore.DocID{impactAnchorID})
 				f.emb.EXPECT().Embed(gomock.Any(), []string{retrieval}).
 					Return([][]float32{impactVector}, nil)
 				f.store.EXPECT().

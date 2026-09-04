@@ -1,5 +1,7 @@
 package entities
 
+import "github.com/setthasit/Lore/sdk"
+
 // EdgeKind names a typed relationship between two documents.
 type EdgeKind string
 
@@ -15,8 +17,8 @@ const (
 // Edge is a directional relationship produced by the LinkResolver: Src contains
 // the reference, Dst is the referenced document.
 type Edge struct {
-	Src        DocID
-	Dst        DocID
+	Src        lore.DocID
+	Dst        lore.DocID
 	Kind       EdgeKind
 	Confidence float32 // 1.0 explicit API link … 0.5 fuzzy text match
 }
@@ -32,6 +34,6 @@ const (
 
 // A RawRef whose target is not ingested yet; every sync round retries it.
 type PendingRef struct {
-	SourceDoc DocID
-	Ref       RawRef
+	SourceDoc lore.DocID
+	Ref       lore.RawRef
 }

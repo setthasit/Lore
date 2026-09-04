@@ -4,13 +4,6 @@
 made — and what happened afterwards — and get back evidence where every claim
 carries a source URL.
 
-> ### 🚧 Work in progress
->
-> Lore is under active development and has not been released. The retrieval core,
-> provenance engine, GitHub/GitLab/Notion/Jira connectors, code anchoring, background
-> sync, both MCP transports, the `lore.v1` gRPC API and LLM synthesis are implemented
-> and covered by tests. See [Status](#status) for the exact line.
-
 ---
 
 ## The problem
@@ -27,8 +20,8 @@ what happened next**.
 
 ## How it works
 
-1. **Ingest** — connectors stream documents from GitHub, GitLab, Notion and Jira into
-   one normalized `Document` model. Every source is optional.
+1. **Ingest** — source plugins stream documents from GitHub, GitLab, Notion and Jira
+   into one normalized `Document` model. Every source is optional.
 2. **Link** — a resolver turns raw references (ticket keys, URLs, commit SHAs, file
    paths) into a typed, directional **edge graph**: ticket → design doc → PR → review
    thread → commit.
@@ -36,7 +29,7 @@ what happened next**.
    hybrid retrieval → rank → EvidenceBundle`. Retrieval is BM25 (FTS5) + vector KNN
    (sqlite-vec) fused with Reciprocal Rank Fusion.
 
-Two design choices set it apart:
+Three design choices set it apart:
 
 - **Code is one anchor among several, not the center.** A Jira + Notion workspace with
   no repository at all is a first-class configuration; `git blame` anchoring is an
@@ -44,6 +37,9 @@ Two design choices set it apart:
 - **Honesty is a feature.** Every answer reports its `gaps` — *"Rate limit the export
   endpoint (jira:ticket:PROJ-4521) stands alone; no linked discussion"* — instead of
   fabricating a chain. No URL means no evidence, so the node is not returned.
+- **Every source, model provider and clone reader is a plugin.** The engine holds no
+  vendor name; the ones this binary ships are registered through the same contract a
+  third party uses. See [Plugins](#plugins).
 
 ## Two personas, one engine
 
@@ -80,9 +76,35 @@ lore status                        # index counts, cursor ages, sync lock
 lore ask "why did we pick sqlite?" # prose answer; needs an llm: block
 ```
 
-`lore init` writes credential **variable names**, never credentials, and scaffolds the
-GitHub source; `lore source add notion|jira|gitlab` appends the rest interactively.
-`lore --version` prints the build stamp plus the embedder identity of the workspace.
+`lore init` generates the scaffold from the manifests of the plugins this build
+registers — a starter source instance and the **names** of the environment variables
+its credentials live in, never a credential:
+
+```yaml
+workspace: acme
+
+sources:
+  - use: github
+    with:
+      token_env: LORE_GITHUB_TOKEN         # read-only PAT for the listed repositories
+      repos: []                            # each entry is "owner/name"; no clone needed
+
+repos: []                                  # local clones, for blame and history only
+
+embedder:
+  provider: openai                         # credentials come from OPENAI_API_KEY
+  model: text-embedding-3-small            # changing the model needs: lore sync --reembed
+
+# llm:                                     # lore ask and --explain answer in prose only with this
+#   provider: openai
+#   model: gpt-4o-mini
+```
+
+`lore source add <plugin>` appends another instance of any source plugin this build
+registers, asking only for the fields that plugin's manifest declares; two Jira sites
+are two instances of one plugin, each with its own `id`. `lore --version` prints the
+build stamp plus the embedder identity of the workspace. The full `lore.yaml`
+reference lives in [06 — Interfaces & Config](docs/v3/06-interfaces-and-config.md).
 
 ### What an answer looks like
 
@@ -187,21 +209,73 @@ is why **no LLM key is needed for MCP usage** — only an embedding key.
 | `history_of` | how one file evolved, commit by commit |
 | `sync_now` / `sync_status` | trigger a sync round; report cursors, counts and the lock |
 
+The `lore.v1` gRPC API is the programmatic surface for anything that is not an agent:
+`QueryService` carries the same five verbs, `SyncService` adds `Trigger`, `Status` and a
+server-streaming `Watch`. Unlike MCP it *does* synthesize — every request carries an
+optional `synthesize` flag, and leaving it unset means prose alongside the bundle.
+
 ## CLI surface
 
 | Command | Purpose |
 |---|---|
-| `lore init` · `lore source add <notion\|jira\|gitlab>` | scaffold and grow `lore.yaml` |
-| `lore sync [--source <name>] [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
+| `lore init` · `lore source add <plugin>` | scaffold and grow `lore.yaml` |
+| `lore sync [--source <instance>] [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
 | `lore status` | index counts, per-source cursor ages, sync lock state |
 | `lore ask <question>` | synthesized prose; `--around --source --repo --doc-type --since --until --raw` |
-| `lore why <file>:<L1>-<L2>` | blame-anchored trail; `--repo --explain --raw` |
+| `lore why <file>:<L1>[-<L2>] ["question"]` | blame-anchored trail; `--repo --explain --raw` |
 | `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both --explain --raw` |
 | `lore impact <ref \| "query">` | consequences timeline; `--question --explain --raw` |
-| `lore history <path>` | file timeline; `--limit --before` pagination; `--explain --raw` |
-| `lore mcp` · `lore serve` | MCP stdio · MCP streamable HTTP + `lore.v1` gRPC + scheduler |
+| `lore history <path>` | file timeline; `--limit --before` pagination; `--repo --explain --raw` |
+| `lore mcp` · `lore serve [--http --grpc --mtls]` | MCP stdio · MCP streamable HTTP + `lore.v1` gRPC + scheduler |
+| `lore plugin list\|search\|install\|update\|verify\|remove` | inspect what this build can use; add third-party plugins |
+| `lore build --with <module>@<version> [-o lore]` | compile a binary with third-party plugins linked in |
 
 Every command takes `--config` (default `./lore.yaml`).
+
+## Plugins
+
+Sources, model providers and clone readers are the same kind of thing: a plugin with a
+manifest, resolved through one registry and configured as instances in `lore.yaml`. An
+official plugin holds no privilege a third-party one lacks. `lore plugin list` prints
+what the running binary can be configured with:
+
+```
+NAME               KIND                        ORIGIN   SUMMARY
+anthropic          provider (complete)         builtin  Anthropic Claude chat completions
+git                code                        builtin  Blame and history for one local git clone (read-only)
+github             source                      builtin  GitHub commits, pull requests, issues and their comments and reviews (read-only)
+gitlab             source                      builtin  GitLab commits, merge requests, review threads, issues and notes (read-only)
+jira               source                      builtin  Jira Cloud issues and their comments (read-only)
+notion             source                      builtin  Notion pages and their block content (read-only)
+ollama             provider (embed, complete)  builtin  Local Ollama daemon embeddings and chat completions
+openai             provider (embed, complete)  builtin  OpenAI embeddings and chat completions
+openai-compatible  provider (embed, complete)  builtin  Embeddings and chat completions from any vendor speaking the OpenAI protocols
+```
+
+`embedder:` and `llm:` are role bindings, not vendor switches: each names a provider
+instance and a model. `openai` derives the vector width from the embedding model;
+`ollama` needs `embedder.dimensions` set to the model's native width (`ollama show
+<model>` reports it); `openai-compatible` reaches Z.AI, OpenRouter, Moonshot, DeepSeek,
+Groq, Together, vLLM and LM Studio through a `preset:` row rather than new code. A
+provider name this build neither compiles in nor finds under `plugins:` is refused at
+startup, and a plugin that binds to a role it cannot serve is refused with it.
+
+Third-party plugins load two ways:
+
+- **Out of process, no rebuild.** Declare it under `plugins:` with a coordinate,
+  `lore plugin install`, and the host speaks a small NDJSON protocol to the binary — in
+  any language, as `test/fixtures/plugins/pysource.py` demonstrates. The artifact is
+  pinned by SHA-256 in `lore.lock`, re-verified at every launch, optionally signature-
+  checked (cosign or minisign) against the `pubkey:` the declaration names, and started
+  with an empty environment so it sees only the secrets its manifest declared.
+- **Compiled in.** `lore build --with github.com/owner/repo@v1.2.3` regenerates the
+  composition root with that module added and builds a new binary — in-process calls
+  and compile-time type safety, in exchange for needing a Go toolchain.
+
+Writing one means implementing the `sdk` contract: [08 — Extensibility](docs/v3/08-extensibility.md)
+for the Go interfaces and manifests, [09 — Plugin Protocol](docs/v3/09-plugin-protocol.md)
+for the wire format, [10 — Plugin Distribution](docs/v3/10-plugin-distribution.md) for
+coordinates, the lockfile and the trust model.
 
 ## Guides
 
@@ -216,17 +290,19 @@ Every command takes `--config` (default `./lore.yaml`).
 ## Architecture
 
 Strict unidirectional layering, wired with [Uber FX](https://github.com/uber-go/fx).
-Transports never touch the store or a connector — including the MCP path.
+Transports never touch the store or a plugin directly — including the MCP path.
 
 ```mermaid
 flowchart TB
     T["Transport — MCP stdio · MCP HTTP · gRPC · CLI"]
     S["Service — Query · Why · Trace · Impact · History · Synthesis · SyncOrchestrator · LinkResolver"]
     R["Repository — IndexStore (SQLite: FTS5 + sqlite-vec)"]
-    C["Connectors — GitHub · GitLab · Notion · Jira · local git · embedder · LLM"]
+    C["Plugins — source · code · provider instances, built from lore.yaml against a registry"]
+    X["External plugins — any binary, NDJSON over stdio"]
     T --> S
     S --> R
     S --> C
+    C --> X
 ```
 
 One SQLite file per workspace holds `documents`, `chunks`, `chunks_fts` (BM25),
@@ -236,52 +312,37 @@ and the next sync rebuilds it.
 
 Sync is crash-safe by construction: connectors yield `Batch{Docs, Cursor}`, and the
 orchestrator commits the batch *then* persists that batch's cursor. A single-row lease
-with a heartbeat and TTL takeover keeps a manual `lore sync`, the background scheduler
-and a `lore serve` daemon from colliding — and a crashed run never wedges the scheduler.
+with a 15s heartbeat and a 60s TTL takeover keeps a manual `lore sync`, the background
+scheduler and a `lore serve` daemon from colliding — and a crashed run never wedges the
+scheduler.
 
 The design documents in [`docs/v3/`](docs/v3/) are the source of truth:
 
 | Doc | Contents |
 |---|---|
+| [00 — Design deltas](docs/v3/00-design-deltas.md) | every change from the v1 design, with the rationale that drove it |
 | [01 — Overview](docs/v3/01-overview.md) | problem, concept, differentiators, goals / non-goals |
 | [02 — Architecture](docs/v3/02-architecture.md) | layers, transports, request flows, key decisions |
 | [03 — Data Model](docs/v3/03-data-model.md) | Document / Edge model, schema, chunking, hybrid retrieval |
 | [04 — Connectors & Sync](docs/v3/04-connectors-and-sync.md) | connector contract, scheduler, lease, link resolver |
 | [05 — Query Engine](docs/v3/05-query-engine.md) | pipeline, anchors, tool algorithms, EvidenceBundle |
 | [06 — Interfaces & Config](docs/v3/06-interfaces-and-config.md) | MCP tools, CLI, gRPC API, `lore.yaml` reference |
-| [07 — Roadmap & Risks](docs/v3/07-roadmap.md) | milestones, named risks, open questions |
-
-## Status
-
-| Area | State |
-|---|---|
-| Config loading, validation, FX wiring | ✅ implemented |
-| SQLite IndexStore — FTS5 + sqlite-vec, RRF fusion in Go | ✅ implemented |
-| GitHub, GitLab, Notion, Jira connectors + shared conformance suite | ✅ implemented |
-| Link resolver, edge graph, `pending_refs` retry | ✅ implemented |
-| `find_decision`, `trace`, `impact_of` + event resolution | ✅ implemented |
-| Code anchoring — `why`, `history_of` via local-clone blame/log | ✅ implemented |
-| Sync lease, background scheduler, `sync_now` / `sync_status` | ✅ implemented |
-| MCP stdio + MCP streamable HTTP (`lore serve`) | ✅ implemented |
-| Embedder providers | ✅ OpenAI and Ollama — Ollama also needs `embedder.dimensions`, the model's native width (`ollama show <model>` reports it); an unimplemented provider is refused at startup |
-| gRPC API (`lore.v1`) + mTLS | ✅ implemented |
-| LLM synthesis — `lore ask`, `--explain`, gRPC `synthesize` | ✅ implemented; needs the `llm:` block in `lore.yaml` |
-| Ollama fully-local pipeline | ✅ implemented — set `embedder.provider: ollama` (with `dimensions`) and `llm.provider: ollama`; both default to `http://127.0.0.1:11434` and take no API key |
-| Release binaries | ✅ `make build.matrix` cross-compiles linux/darwin/windows × amd64/arm64 with `CGO_ENABLED=0` |
-
-The CLI synthesizes for `lore ask` and `--explain`; gRPC synthesizes unless a request
-sets `synthesize: false`. MCP always returns the evidence bundle itself — the host model
-is already an LLM. A workspace with no `llm:` block says so instead of guessing.
+| [07 — Risks & Open Questions](docs/v3/07-risks.md) | operating risks with their standing mitigations |
+| [08 — Extensibility](docs/v3/08-extensibility.md) | plugin kinds, the `sdk` contract, manifests, registry, provider roles |
+| [09 — Plugin Protocol](docs/v3/09-plugin-protocol.md) | NDJSON wire protocol: ops, streaming, cancellation, errors |
+| [10 — Plugin Distribution](docs/v3/10-plugin-distribution.md) | coordinates, `lore.lock`, signatures, trust model, custom binaries |
 
 ## Development
 
 ```bash
 make build         # go build ./...
 make bin           # stamped, static binary at bin/lore
-make build.matrix  # cross-compile every released platform with CGO_ENABLED=0
+make build.matrix  # cross-compile linux/darwin/windows × amd64/arm64 with CGO_ENABLED=0
 make test          # go test ./...
 make lint          # golangci-lint run    — errcheck, govet, gosec, staticcheck
 make gen.mock      # go generate ./...    — gomock doubles under internal/mocks
+make gen.proto     # regenerate the lore.v1 stubs from api/proto
+make certs.dev     # local certificate authority + server/client pairs for mTLS
 ```
 
 Tests need no external service: connectors run against `httptest` fixture servers, the
@@ -289,7 +350,10 @@ store against a temp SQLite file, and the end-to-end suite drives the real MCP t
 over a live DI graph — an MCP client session over streamable HTTP on a real socket,
 against fixture GitHub/Notion/Jira servers. It includes an **ask-only** workspace with
 zero repositories, which asserts that code-anchored tools refuse with a precondition
-error rather than degrading.
+error rather than degrading. The plugin host is exercised separately against a real
+out-of-process Python plugin (`test/fixtures/plugins/pysource.py`), which is also made
+to exit mid-stream to prove a resumed sync loses no document — skipped where no
+`python3` is on PATH.
 
 Contributions follow the branch → PR workflow in [`AGENTS.md`](AGENTS.md): no direct
 commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
@@ -299,6 +363,8 @@ commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
 - **Read-only toward every source.** Lore never writes to GitHub, GitLab, Notion or Jira.
 - **Secrets live in environment variables named by config.** They are never written to
   `lore.yaml`, the index, or logs; least-privilege tokens are the documented default.
+- **A plugin sees only the secrets its manifest declared.** External plugins are
+  digest-pinned, re-verified at launch, and started with no inherited environment.
 - **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.
 - **Private data leaves the machine only toward the configured embedder and, once `llm:`
   is set, the configured LLM.** With `provider: ollama` on both, nothing leaves at all.

@@ -11,9 +11,9 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/setthasit/Lore/internal/entities"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
-	mock_entities "github.com/setthasit/Lore/internal/mocks/entities"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -198,9 +198,9 @@ func awaitReaders(t *testing.T, readers *sync.WaitGroup) {
 	}
 }
 
-type roundChunker struct{ perDoc map[entities.DocID]int }
+type roundChunker struct{ perDoc map[lore.DocID]int }
 
-func (c roundChunker) Chunk(doc entities.Document) []entities.Chunk {
+func (c roundChunker) Chunk(doc lore.Document) []entities.Chunk {
 	chunks := make([]entities.Chunk, c.perDoc[doc.ID])
 	for i := range chunks {
 		chunks[i] = entities.Chunk{DocID: doc.ID, Ordinal: i, Text: string(doc.ID), Source: doc.Source}
@@ -209,18 +209,17 @@ func (c roundChunker) Chunk(doc entities.Document) []entities.Chunk {
 	return chunks
 }
 
-func eventDoc(id entities.DocID) entities.Document {
-	return entities.Document{ID: id, Source: "github", Type: entities.DocTypePR, Title: string(id)}
+func eventDoc(id lore.DocID) lore.Document {
+	return lore.Document{ID: id, Source: "github", Type: lore.DocTypePR, Title: string(id)}
 }
 
-func newUncontendedRound(t *testing.T, chunks map[entities.DocID]int) (*syncOrchestrator, *mock_repositories.MockIndexStore) {
+func newUncontendedRound(t *testing.T, chunks map[lore.DocID]int) (*syncOrchestrator, *mock_repositories.MockIndexStore) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
-	emb := mock_embedder.NewMockEmbedder(ctrl)
+	emb := mock_lore.NewMockEmbedder(ctrl)
 
-	emb.EXPECT().Identity().Return(heartbeatIdentity).AnyTimes()
 	emb.EXPECT().Embed(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, texts []string) ([][]float32, error) {
 			vectors := make([][]float32, len(texts))
@@ -234,12 +233,13 @@ func newUncontendedRound(t *testing.T, chunks map[entities.DocID]int) (*syncOrch
 	store.EXPECT().Lease(gomock.Any()).Return(nil, nil).AnyTimes()
 	store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 	store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity, nil).AnyTimes()
+	store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity.String(), nil).AnyTimes()
 
 	return &syncOrchestrator{
 		store:     store,
 		chunker:   roundChunker{perDoc: chunks},
 		emb:       emb,
+		space:     heartbeatIdentity,
 		links:     &heartbeatLinks{},
 		holder:    heartbeatHolder,
 		heartbeat: quietHeartbeat,
@@ -247,14 +247,14 @@ func newUncontendedRound(t *testing.T, chunks map[entities.DocID]int) (*syncOrch
 	}, store
 }
 
-func repeatingConnector(t *testing.T, batches ...entities.Batch) *mock_entities.MockConnector {
+func repeatingConnector(t *testing.T, batches ...lore.Batch) *mock_lore.MockConnector {
 	t.Helper()
 
-	conn := mock_entities.NewMockConnector(gomock.NewController(t))
+	conn := mock_lore.NewMockConnector(gomock.NewController(t))
 	conn.EXPECT().Name().Return("github").AnyTimes()
 	conn.EXPECT().Changes(gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(context.Context, entities.Cursor) iter.Seq2[entities.Batch, error] {
-			return func(yield func(entities.Batch, error) bool) {
+		func(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+			return func(yield func(lore.Batch, error) bool) {
 				for _, batch := range batches {
 					if !yield(batch, nil) {
 						return
@@ -270,10 +270,10 @@ func TestSyncEventsCarryTheCumulativeTotalsOfEachRound(t *testing.T) {
 	t.Parallel()
 
 	first, second, third := eventDoc("github:pr:1"), eventDoc("github:pr:2"), eventDoc("github:pr:3")
-	round, store := newUncontendedRound(t, map[entities.DocID]int{first.ID: 2, second.ID: 1, third.ID: 3})
-	round.connectors = []entities.Connector{repeatingConnector(t,
-		entities.Batch{Docs: []entities.Document{first, second}, Cursor: entities.Cursor{"page": "1"}},
-		entities.Batch{Docs: []entities.Document{third}, Cursor: entities.Cursor{"page": "2"}},
+	round, store := newUncontendedRound(t, map[lore.DocID]int{first.ID: 2, second.ID: 1, third.ID: 3})
+	round.connectors = []lore.Connector{repeatingConnector(t,
+		lore.Batch{Docs: []lore.Document{first, second}, Cursor: lore.Cursor{"page": "1"}},
+		lore.Batch{Docs: []lore.Document{third}, Cursor: lore.Cursor{"page": "2"}},
 	)}
 
 	store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil).AnyTimes()
@@ -317,18 +317,25 @@ func TestSyncEventsCarryTheCumulativeTotalsOfEachRound(t *testing.T) {
 	}
 }
 
+// A round-level failure needs a step the round owns rather than an instance's, and
+// the LinkResolver pass is the one the sync round runs for itself.
+type failingLinks struct{ err error }
+
+func (failingLinks) Link(context.Context, []lore.Document) error { return nil }
+
+func (l failingLinks) LinkPending(context.Context) error { return l.err }
+
 func TestSyncEventsEndAFailedRoundWithItsError(t *testing.T) {
 	t.Parallel()
 
-	round, store := newUncontendedRound(t, nil)
-	round.connectors = []entities.Connector{repeatingConnector(t)}
-	store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errEventStore)
+	round, _ := newUncontendedRound(t, nil)
+	round.links = failingLinks{err: errEventStore}
 
 	events, unsubscribe := round.Subscribe()
 	defer unsubscribe()
 
 	if _, err := round.Sync(context.Background(), SyncOptions{}); err == nil {
-		t.Fatal("Sync() = nil, want the store failure")
+		t.Fatal("Sync() = nil, want the failure of the round's own linking pass")
 	}
 
 	got := drainEvents(events)
@@ -343,5 +350,47 @@ func TestSyncEventsEndAFailedRoundWithItsError(t *testing.T) {
 	}
 	if !errors.Is(got[1].Err, errEventStore) {
 		t.Errorf("failed event error = %v, want it to wrap %v", got[1].Err, errEventStore)
+	}
+}
+
+func TestSyncEventsNameTheInstanceThatFailedAndStillFinishTheRound(t *testing.T) {
+	t.Parallel()
+
+	round, store := newUncontendedRound(t, nil)
+	round.connectors = []lore.Connector{repeatingConnector(t)}
+	store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errEventStore)
+
+	events, unsubscribe := round.Subscribe()
+	defer unsubscribe()
+
+	res, err := round.Sync(context.Background(), SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+	}
+	if len(res.Failures) != 1 || res.Failures[0].Instance != "github" {
+		t.Fatalf("Sync() failures = %+v, want the github instance alone", res.Failures)
+	}
+
+	// No connector_finished: the instance never reached the end of its stream.
+	want := []entities.SyncPhase{
+		entities.SyncPhaseRoundStarted,
+		entities.SyncPhaseFailed,
+		entities.SyncPhasePendingLinked,
+		entities.SyncPhaseRoundFinished,
+	}
+	got := drainEvents(events)
+	if len(got) != len(want) {
+		t.Fatalf("published %d events, want %d (%+v)", len(got), len(want), got)
+	}
+	for i, phase := range want {
+		if got[i].Phase != phase {
+			t.Errorf("event %d = %v, want %v", i, got[i].Phase, phase)
+		}
+	}
+	if got[1].Source != "github" {
+		t.Errorf("the failed event names source %q, want the failing instance", got[1].Source)
+	}
+	if !errors.Is(got[1].Err, errEventStore) {
+		t.Errorf("the failed event error = %v, want it to wrap %v", got[1].Err, errEventStore)
 	}
 }

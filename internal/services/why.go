@@ -6,11 +6,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type WhyService interface {
@@ -28,7 +27,7 @@ type WhyRequest struct {
 
 type whyService struct {
 	store repositories.IndexStore
-	emb   embedder.Embedder
+	emb   lore.Embedder
 	cfg   QueryConfig
 	repos []CodeRepo
 }
@@ -37,7 +36,7 @@ var _ WhyService = (*whyService)(nil)
 
 func NewWhyService(
 	store repositories.IndexStore,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	cfg QueryConfig,
 	repos []CodeRepo,
 ) WhyService {
@@ -149,7 +148,7 @@ func (c blamedCommit) excerpt() string {
 }
 
 // One commit per blamed SHA, in first-blamed order, carrying every line it owns.
-func blamedCommits(spans []gitrepo.BlameSpan) []blamedCommit {
+func blamedCommits(spans []lore.BlameSpan) []blamedCommit {
 	commits := make([]blamedCommit, 0, len(spans))
 	at := make(map[string]int, len(spans))
 	for _, span := range spans {
@@ -191,8 +190,8 @@ func blamedSHAs(commits []blamedCommit) []string {
 	return shas
 }
 
-func blamedSeeds(commits []blamedCommit) []entities.DocID {
-	seeds := make([]entities.DocID, 0, len(commits))
+func blamedSeeds(commits []blamedCommit) []lore.DocID {
+	seeds := make([]lore.DocID, 0, len(commits))
 	for _, commit := range commits {
 		for _, doc := range commit.docs {
 			seeds = append(seeds, doc.ID)

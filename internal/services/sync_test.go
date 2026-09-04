@@ -14,11 +14,11 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
-	mock_entities "github.com/setthasit/Lore/internal/mocks/entities"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -33,7 +33,7 @@ type syncMocks struct {
 	ctrl    *gomock.Controller
 	store   *mock_repositories.MockIndexStore
 	chunker *mock_services.MockChunker
-	emb     *mock_embedder.MockEmbedder
+	emb     *mock_lore.MockEmbedder
 	links   *mock_services.MockLinkResolver
 }
 
@@ -46,7 +46,7 @@ func newSyncMocks(t *testing.T) syncMocks {
 		ctrl:    ctrl,
 		store:   mock_repositories.NewMockIndexStore(ctrl),
 		chunker: mock_services.NewMockChunker(ctrl),
-		emb:     mock_embedder.NewMockEmbedder(ctrl),
+		emb:     mock_lore.NewMockEmbedder(ctrl),
 		links:   mock_services.NewMockLinkResolver(ctrl),
 	}
 }
@@ -71,12 +71,11 @@ func (m syncMocks) acquiredLease() {
 }
 
 func (m syncMocks) matchingIdentity() {
-	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
 }
 
-func (m syncMocks) connector(name string) *mock_entities.MockConnector {
-	conn := mock_entities.NewMockConnector(m.ctrl)
+func (m syncMocks) connector(name string) *mock_lore.MockConnector {
+	conn := mock_lore.NewMockConnector(m.ctrl)
 	conn.EXPECT().Name().Return(name).AnyTimes()
 
 	return conn
@@ -90,17 +89,17 @@ func (m syncMocks) linkedPending() {
 	m.links.EXPECT().LinkPending(gomock.Any()).Return(nil)
 }
 
-func (m syncMocks) orchestrator(connectors ...entities.Connector) services.SyncOrchestrator {
-	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb, m.links)
+func (m syncMocks) orchestrator(connectors ...lore.Connector) services.SyncOrchestrator {
+	return services.NewSyncOrchestrator(m.store, connectors, m.chunker, m.emb, m.links, currentIdentity)
 }
 
 type syncStreamItem struct {
-	batch entities.Batch
+	batch lore.Batch
 	err   error
 }
 
-func syncBatch(cursor entities.Cursor, docs ...entities.Document) syncStreamItem {
-	return syncStreamItem{batch: entities.Batch{Docs: docs, Cursor: cursor}}
+func syncBatch(cursor lore.Cursor, docs ...lore.Document) syncStreamItem {
+	return syncStreamItem{batch: lore.Batch{Docs: docs, Cursor: cursor}}
 }
 
 func syncFailure(err error) syncStreamItem { return syncStreamItem{err: err} }
@@ -112,8 +111,8 @@ type syncStream struct {
 
 func newSyncStream(items ...syncStreamItem) *syncStream { return &syncStream{items: items} }
 
-func (s *syncStream) seq() iter.Seq2[entities.Batch, error] {
-	return func(yield func(entities.Batch, error) bool) {
+func (s *syncStream) seq() iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
 		for _, item := range s.items {
 			s.yields++
 			if !yield(item.batch, item.err) {
@@ -123,18 +122,27 @@ func (s *syncStream) seq() iter.Seq2[entities.Batch, error] {
 	}
 }
 
-func syncDoc(id entities.DocID) entities.Document {
-	return entities.Document{
+func syncDoc(id lore.DocID) lore.Document {
+	return lore.Document{
 		ID:      id,
 		Source:  "github",
-		Type:    entities.DocTypePR,
+		Type:    lore.DocTypePR,
 		RepoRef: "github:acme/lore",
 		Title:   "Checkpoint per batch",
 		Body:    "the sync round commits, then checkpoints",
 	}
 }
 
-func syncChunks(id entities.DocID, texts ...string) []entities.Chunk {
+// The instance assertion reads nothing but Source and ID, so a mislabelling
+// connector is one of the two set to something the instance never owns.
+func syncDocOf(source string, id lore.DocID) lore.Document {
+	doc := syncDoc(id)
+	doc.Source = source
+
+	return doc
+}
+
+func syncChunks(id lore.DocID, texts ...string) []entities.Chunk {
 	chunks := make([]entities.Chunk, len(texts))
 	for i, text := range texts {
 		chunks[i] = entities.Chunk{DocID: id, Ordinal: i, Text: text, Source: "github"}
@@ -177,6 +185,32 @@ func syncMessage(t *testing.T, err error) string {
 	return classified.Message
 }
 
+// The round survives a failing instance, so its error is read off the result.
+func onlySyncFailure(t *testing.T, res services.SyncResult, instance string) services.InstanceFailure {
+	t.Helper()
+
+	if len(res.Failures) != 1 {
+		t.Fatalf("Sync() reported %d instance failures, want 1 (%+v)", len(res.Failures), res.Failures)
+	}
+	if got := res.Failures[0].Instance; got != instance {
+		t.Fatalf("Sync() blamed instance %q, want %q", got, instance)
+	}
+
+	return res.Failures[0]
+}
+
+func assertSyncFailureKind(t *testing.T, failure services.InstanceFailure, want internalerror.Kind) {
+	t.Helper()
+
+	if failure.Err == nil {
+		t.Fatalf("the %s instance failed with a nil error, want a %v one", failure.Instance, want)
+	}
+	if got := internalerror.KindOf(failure.Err); got != want {
+		t.Fatalf("the %s instance failed with kind %v, want %v (%v)",
+			failure.Instance, got, want, failure.Err)
+	}
+}
+
 func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	t.Parallel()
 
@@ -185,23 +219,23 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 	m.matchingIdentity()
 
 	doc := syncDoc("github:pr:1")
-	next := entities.Cursor{"updated_at": "2024-03-02T09:30:00Z"}
+	next := lore.Cursor{"updated_at": "2024-03-02T09:30:00Z"}
 	vectors := [][]float32{{0.1, 0.2}, {0.3, 0.4}}
 	texts := []string{"first chunk", "second chunk"}
 	stored := withSyncVectors(syncChunks(doc.ID, texts...), vectors)
 
 	conn := m.connector("github")
-	conn.EXPECT().Changes(gomock.Any(), entities.Cursor{"updated_at": "2024-03-01T00:00:00Z"}).
+	conn.EXPECT().Changes(gomock.Any(), lore.Cursor{"updated_at": "2024-03-01T00:00:00Z"}).
 		Return(newSyncStream(syncBatch(next, doc)).seq())
 
 	gomock.InOrder(
 		m.store.EXPECT().Cursor(gomock.Any(), "github").
-			Return(entities.Cursor{"updated_at": "2024-03-01T00:00:00Z"}, nil),
-		m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil),
+			Return(lore.Cursor{"updated_at": "2024-03-01T00:00:00Z"}, nil),
+		m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(nil),
 		m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, texts...)),
 		m.emb.EXPECT().Embed(gomock.Any(), texts).Return(vectors, nil),
 		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, stored).Return(nil),
-		m.links.EXPECT().Link(gomock.Any(), []entities.Document{doc}).Return(nil),
+		m.links.EXPECT().Link(gomock.Any(), []lore.Document{doc}).Return(nil),
 		m.store.EXPECT().SetCursor(gomock.Any(), "github", next).Return(nil),
 		m.links.EXPECT().LinkPending(gomock.Any()).Return(nil),
 	)
@@ -215,17 +249,17 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 	t.Parallel()
 
 	doc := syncDoc("github:pr:1")
-	committed := entities.Cursor{"updated_at": "1"}
+	committed := lore.Cursor{"updated_at": "1"}
 
 	tests := []struct {
 		name      string
-		setup     func(m syncMocks, conn *mock_entities.MockConnector)
+		setup     func(m syncMocks, conn *mock_lore.MockConnector)
 		want      internalerror.Kind
 		wantCause error
 	}{
 		{
 			name: "cursor unreadable, so the connector is never asked for changes",
-			setup: func(m syncMocks, _ *mock_entities.MockConnector) {
+			setup: func(m syncMocks, _ *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errSyncStore)
 			},
 			want:      internalerror.KindInternal,
@@ -233,7 +267,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 		},
 		{
 			name: "connector fails on its first batch",
-			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+			setup: func(m syncMocks, conn *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(errSyncStore)).seq())
 			},
@@ -242,17 +276,17 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 		},
 		{
 			name: "documents cannot be stored",
-			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+			setup: func(m syncMocks, conn *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
-				m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(errSyncStore)
+				m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(errSyncStore)
 			},
 			want:      internalerror.KindInternal,
 			wantCause: errSyncStore,
 		},
 		{
 			name: "embedder fails",
-			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+			setup: func(m syncMocks, conn *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
@@ -264,7 +298,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 		},
 		{
 			name: "embedder answers with the wrong number of vectors",
-			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+			setup: func(m syncMocks, conn *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
@@ -276,7 +310,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 		},
 		{
 			name: "chunks cannot be stored",
-			setup: func(m syncMocks, conn *mock_entities.MockConnector) {
+			setup: func(m syncMocks, conn *mock_lore.MockConnector) {
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 				conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(committed, doc)).seq())
 				m.store.EXPECT().UpsertDocuments(gomock.Any(), gomock.Any()).Return(nil)
@@ -296,15 +330,21 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 			m := newSyncMocks(t)
 			m.acquiredLease()
 			m.matchingIdentity()
+			m.linkedPending()
 
 			conn := m.connector("github")
 			// No SetCursor is declared: the strict controller fails any checkpoint of an uncommitted batch.
 			tt.setup(m, conn)
 
-			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-			assertSyncKind(t, err, tt.want)
-			if tt.wantCause != nil && !errors.Is(err, tt.wantCause) {
-				t.Errorf("Sync() error = %v, want it to wrap %v", err, tt.wantCause)
+			res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			if err != nil {
+				t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+			}
+
+			failure := onlySyncFailure(t, res, "github")
+			assertSyncFailureKind(t, failure, tt.want)
+			if tt.wantCause != nil && !errors.Is(failure.Err, tt.wantCause) {
+				t.Errorf("the github instance failed with %v, want it to wrap %v", failure.Err, tt.wantCause)
 			}
 		})
 	}
@@ -317,11 +357,11 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.acquiredLease()
 	m.matchingIdentity()
 
-	first := entities.Cursor{"page": "1"}
+	first := lore.Cursor{"page": "1"}
 	stream := newSyncStream(
 		syncBatch(first),
 		syncFailure(errSyncStore),
-		syncBatch(entities.Cursor{"page": "3"}),
+		syncBatch(lore.Cursor{"page": "3"}),
 	)
 
 	conn := m.connector("github")
@@ -331,12 +371,107 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
 	m.linkedBatches(1)
+	m.linkedPending()
 
-	_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-	assertSyncKind(t, err, internalerror.KindInternal)
+	res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+	}
+	assertSyncFailureKind(t, onlySyncFailure(t, res, "github"), internalerror.KindInternal)
 
 	if stream.yields != 2 {
 		t.Errorf("connector yielded %d items, want 2 — the round must abandon the stream, not drain it", stream.yields)
+	}
+}
+
+func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		doc  lore.Document
+		want []string
+	}{
+		{
+			name: "the source names another instance",
+			doc:  syncDocOf("gitlab", "github:pr:1"),
+			want: []string{`"github:pr:1"`, `"gitlab"`, "github"},
+		},
+		{
+			name: "the document id lands in another instance's namespace",
+			doc:  syncDocOf("github", "gitlab:pr:1"),
+			want: []string{`"gitlab:pr:1"`, `"github:"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			m.linkedPending()
+
+			conn := m.connector("github")
+			conn.EXPECT().Changes(gomock.Any(), nil).
+				Return(newSyncStream(syncBatch(lore.Cursor{"page": "1"}, tt.doc)).seq())
+			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+			// No UpsertDocuments and no SetCursor are declared: the batch must be refused
+			// before it is written, and the cursor must not move past it.
+
+			res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			if err != nil {
+				t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+			}
+
+			failure := onlySyncFailure(t, res, "github")
+			assertSyncFailureKind(t, failure, internalerror.KindBadRequest)
+
+			message := syncMessage(t, failure.Err)
+			for _, want := range tt.want {
+				if !strings.Contains(message, want) {
+					t.Errorf("the github instance failed with %q, want it to name %s", message, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncRunsTheRemainingInstancesAfterOneFails(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+
+	doc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
+	cursor := lore.Cursor{"last_edited_time": "no-1"}
+
+	broken, healthy := m.connector("github"), m.connector("notion")
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	broken.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(errSyncStore)).seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil)
+	healthy.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(cursor, doc)).seq())
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(nil)
+	m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "body"))
+	m.emb.EXPECT().Embed(gomock.Any(), []string{"body"}).Return([][]float32{{0.5}}, nil)
+	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID,
+		withSyncVectors(syncChunks(doc.ID, "body"), [][]float32{{0.5}})).Return(nil)
+	// The only SetCursor declared is the healthy instance's: the broken one committed nothing.
+	m.store.EXPECT().SetCursor(gomock.Any(), "notion", cursor).Return(nil)
+	m.linkedBatches(1)
+	m.linkedPending()
+
+	res, err := m.orchestrator(broken, healthy).Sync(context.Background(), services.SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want a round that reports the failure and carries on", err)
+	}
+
+	failure := onlySyncFailure(t, res, "github")
+	if !errors.Is(failure.Err, errSyncStore) {
+		t.Errorf("the github instance failed with %v, want it to wrap %v", failure.Err, errSyncStore)
 	}
 }
 
@@ -418,7 +553,7 @@ func TestSyncWithoutASourceRunsEveryConnector(t *testing.T) {
 	m.matchingIdentity()
 	m.linkedPending()
 
-	var connectors []entities.Connector
+	var connectors []lore.Connector
 	for _, name := range []string{"github", "notion"} {
 		conn := m.connector(name)
 		m.store.EXPECT().Cursor(gomock.Any(), name).Return(nil, nil)
@@ -518,7 +653,6 @@ func TestSyncRefusesAnEmbedderIdentityMismatch(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
 
 	conn := m.connector("github")
@@ -538,7 +672,6 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 
 	conn := m.connector("github")
 	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
@@ -574,7 +707,6 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(tt.stored, nil)
 
 			github, notion := m.connector("github"), m.connector("notion")
@@ -628,7 +760,6 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.emb.EXPECT().Identity().Return(currentIdentity).AnyTimes()
 			m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(previousIdentity, nil)
 			// No SetMeta is declared: a half-finished rebuild must not claim the new identity.
 			tt.setup(m)
@@ -649,21 +780,21 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 	m.matchingIdentity()
 
 	ghDoc := syncDoc("github:pr:1")
-	noDoc := entities.Document{ID: "notion:page:9", Source: "notion", Type: entities.DocTypePage}
-	ghCursor := entities.Cursor{"updated_at": "gh-1"}
-	noCursor := entities.Cursor{"last_edited_time": "no-1"}
+	noDoc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
+	ghCursor := lore.Cursor{"updated_at": "gh-1"}
+	noCursor := lore.Cursor{"last_edited_time": "no-1"}
 
 	github, notion := m.connector("github"), m.connector("notion")
-	github.EXPECT().Changes(gomock.Any(), entities.Cursor{"updated_at": "gh-0"}).
+	github.EXPECT().Changes(gomock.Any(), lore.Cursor{"updated_at": "gh-0"}).
 		Return(newSyncStream(syncBatch(ghCursor, ghDoc)).seq())
 	notion.EXPECT().Changes(gomock.Any(), nil).
 		Return(newSyncStream(syncBatch(noCursor, noDoc)).seq())
 
-	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(entities.Cursor{"updated_at": "gh-0"}, nil)
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(lore.Cursor{"updated_at": "gh-0"}, nil)
 	m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil)
 
-	for _, doc := range []entities.Document{ghDoc, noDoc} {
-		m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil)
+	for _, doc := range []lore.Document{ghDoc, noDoc} {
+		m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(nil)
 		m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "body"))
 		m.emb.EXPECT().Embed(gomock.Any(), []string{"body"}).Return([][]float32{{0.5}}, nil)
 		m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID,
@@ -688,13 +819,13 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 
 	doc := syncDoc("github:pr:1")
 	doc.Body = ""
-	cursor := entities.Cursor{"page": "1"}
+	cursor := lore.Cursor{"page": "1"}
 
 	conn := m.connector("github")
 	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(cursor, doc)).seq())
 
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
-	m.store.EXPECT().UpsertDocuments(gomock.Any(), []entities.Document{doc}).Return(nil)
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(nil)
 	m.chunker.EXPECT().Chunk(doc).Return(nil)
 	// No Embed is declared: an empty chunk set must not cost an embedding call.
 	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID, nil).Return(nil)
@@ -719,11 +850,11 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
 
 	conn := m.connector("github")
-	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(entities.Cursor{"page": "1"})).seq())
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(lore.Cursor{"page": "1"})).seq())
 
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
-	m.store.EXPECT().SetCursor(gomock.Any(), "github", entities.Cursor{"page": "1"}).Return(nil)
+	m.store.EXPECT().SetCursor(gomock.Any(), "github", lore.Cursor{"page": "1"}).Return(nil)
 	m.linkedBatches(1)
 	m.linkedPending()
 

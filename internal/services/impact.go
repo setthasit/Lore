@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type ImpactService interface {
@@ -24,13 +24,13 @@ type ImpactRequest struct {
 
 type impactService struct {
 	store repositories.IndexStore
-	emb   embedder.Embedder
+	emb   lore.Embedder
 	cfg   QueryConfig
 }
 
 var _ ImpactService = (*impactService)(nil)
 
-func NewImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg QueryConfig) ImpactService {
+func NewImpactService(store repositories.IndexStore, emb lore.Embedder, cfg QueryConfig) ImpactService {
 	if cfg.TopK <= 0 {
 		cfg.TopK = defaultTopK
 	}
@@ -53,7 +53,7 @@ func (s *impactService) ImpactOf(ctx context.Context, req ImpactRequest) (*entit
 	}
 
 	at := anchor.meta.CreatedAt
-	walked, err := walkGraph(ctx, s.store, []entities.DocID{anchor.meta.ID},
+	walked, err := walkGraph(ctx, s.store, []lore.DocID{anchor.meta.ID},
 		walkOptions{Depth: s.cfg.WalkDepth, Direction: entities.DirBoth, TimeAfter: &at})
 	if err != nil {
 		return nil, internalerror.NewInternalError("walking the provenance graph failed", err)
@@ -200,11 +200,11 @@ func impactNodes(
 }
 
 // impact_of reports every reached document as a consequence, whatever its type.
-func followUpRole(entities.DocType) string {
+func followUpRole(lore.DocType) string {
 	return entities.RoleFollowUp
 }
 
-func impactGaps(nodes []entities.EvidenceNode, chains [][]entities.DocID, at time.Time) []string {
+func impactGaps(nodes []entities.EvidenceNode, chains [][]lore.DocID, at time.Time) []string {
 	standalone := standaloneSeedGaps(nodes, chains)
 	if len(nodes) > 1 {
 		return standalone

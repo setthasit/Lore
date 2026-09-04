@@ -3,64 +3,69 @@ package di
 import (
 	"context"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
+	"strconv"
 	"time"
 
 	"go.uber.org/fx"
 
 	"github.com/setthasit/Lore/internal/config"
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/embedder/ollama"
-	"github.com/setthasit/Lore/internal/connectors/embedder/openai"
-	"github.com/setthasit/Lore/internal/connectors/github"
-	"github.com/setthasit/Lore/internal/connectors/gitlab"
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
-	"github.com/setthasit/Lore/internal/connectors/jira"
-	"github.com/setthasit/Lore/internal/connectors/llm"
-	llmanthropic "github.com/setthasit/Lore/internal/connectors/llm/anthropic"
-	llmollama "github.com/setthasit/Lore/internal/connectors/llm/ollama"
-	llmopenai "github.com/setthasit/Lore/internal/connectors/llm/openai"
-	llmzai "github.com/setthasit/Lore/internal/connectors/llm/zai"
-	"github.com/setthasit/Lore/internal/connectors/notion"
-	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
-func Workspace(configPath string) fx.Option {
+// Workspace wires one workspace. It names no source and no provider: the
+// registry it is handed is the only thing that knows which plugins this build
+// has, so adding a source is a plugin plus a configuration entry.
+//
+// The compiled set is supplied under its own type and the workspace's registry
+// is derived from it, because `plugins:` lives in the configuration and the
+// configuration is only known once a command has parsed its flags. Two
+// workspaces in one process therefore extend independent clones.
+func Workspace(configPath string, compiled *registry.Registry) fx.Option {
 	return fx.Options(
 		ConfigModule(configPath),
-		EmbedderModule,
-		LLMModule,
+		fx.Supply(registry.Compiled{Registry: compiled}),
+		PluginModule,
 		RepositoryModule,
-		ConnectorModule,
 		ServiceModule,
 	)
 }
 
+// WorkspaceDir is the directory lore.yaml was read from. `lore.lock` lives
+// beside the configuration it pins, so the resolution of an external plugin
+// depends on where the file was, not on where the process was started.
+type WorkspaceDir string
+
 func ConfigModule(configPath string) fx.Option {
-	return fx.Module("config", fx.Provide(func() (*config.Config, error) {
-		return config.Load(configPath)
-	}))
+	return fx.Module("config",
+		fx.Provide(func() (*config.Config, error) { return config.Load(configPath) }),
+		fx.Supply(WorkspaceDir(filepath.Dir(configPath))),
+	)
 }
 
 var RepositoryModule = fx.Module("repository", fx.Provide(newIndexStore))
 
-var ConnectorModule = fx.Module("connectors", fx.Provide(newConnectors))
-
-var EmbedderModule = fx.Module("embedder", fx.Provide(newEmbedderSpec, newEmbedder))
-
-var LLMModule = fx.Module("llm", fx.Provide(newLLM))
+// PluginModule turns configured instances into running plugin values.
+var PluginModule = fx.Module("plugins", fx.Provide(
+	newExternals,
+	newWorkspaceRegistry,
+	newSources,
+	newEmbedding,
+	newEmbedder,
+	newVectorSpace,
+	newCompleter,
+	newCodeRepos,
+	newStartupWarnings,
+))
 
 var ServiceModule = fx.Module("services", fx.Provide(
 	services.NewChunker,
-	newCodeRepos,
 	newQueryService,
 	newWhyService,
 	services.NewTraceService,
@@ -139,7 +144,18 @@ func schedulerStopBudget(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithDeadline(ctx, deadline.Add(-min(schedulerStopReserve, remaining/2)))
 }
 
-func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repositories.IndexStore, error) {
+// The vector column's width is baked into the index at creation, so the store
+// opens only once a provider has reported a usable one. That is the whole of
+// the engine's dimension knowledge: which model implies which width belongs to
+// the driver that knows it.
+func newIndexStore(lc fx.Lifecycle, cfg *config.Config, embedding embedding) (repositories.IndexStore, error) {
+	dims := embedding.provider.Dimensions()
+	if dims <= 0 {
+		return nil, internalerror.NewPreconditionError(
+			"embedder provider "+embedding.plugin+" reports a vector width of "+
+				"zero, so there is no column the index could store vectors in", nil)
+	}
+
 	path := cfg.IndexPath
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -147,7 +163,7 @@ func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repo
 		}
 	}
 
-	store, err := sqlite.Open(path, spec.dims)
+	store, err := sqlite.Open(path, dims)
 	if err != nil {
 		return nil, internalerror.NewInternalError("cannot open the workspace index at "+path, err)
 	}
@@ -155,251 +171,156 @@ func newIndexStore(lc fx.Lifecycle, cfg *config.Config, spec embedderSpec) (repo
 	return store, nil
 }
 
-func newConnectors(cfg *config.Config) ([]entities.Connector, error) {
-	var connectors []entities.Connector
-
-	if gh := cfg.Sources.GitHub; gh != nil {
-		token, err := envValue("sources.github.token_env", gh.TokenEnv)
-		if err != nil {
-			return nil, err
-		}
-		connectors = append(connectors, github.NewConnector(token, gh.Repos, ""))
-	}
-
-	if gl := cfg.Sources.GitLab; gl != nil {
-		token, err := envValue("sources.gitlab.token_env", gl.TokenEnv)
-		if err != nil {
-			return nil, err
-		}
-		connectors = append(connectors, gitlab.NewConnector(token, gl.Projects, gl.BaseURL))
-	}
-
-	if n := cfg.Sources.Notion; n != nil {
-		token, err := envValue("sources.notion.token_env", n.TokenEnv)
-		if err != nil {
-			return nil, err
-		}
-		connectors = append(connectors, notion.NewConnector(token, n.RootPages, ""))
-	}
-
-	if j := cfg.Sources.Jira; j != nil {
-		email, err := envValue("sources.jira.email_env", j.EmailEnv)
-		if err != nil {
-			return nil, err
-		}
-		token, err := envValue("sources.jira.token_env", j.TokenEnv)
-		if err != nil {
-			return nil, err
-		}
-		connectors = append(connectors, jira.NewConnector(j.BaseURL, email, token, j.Projects))
-	}
-
-	return connectors, nil
-}
-
-func envValue(field, name string) (string, error) {
-	value := os.Getenv(name)
-	if value == "" {
-		return "", internalerror.NewBadRequestError(field+" names "+name+", but that environment variable is not set", nil)
-	}
-	return value, nil
-}
-
-const EmbedderKeyEnv = "OPENAI_API_KEY"
-
-const (
-	providerOpenAI = "openai"
-	providerOllama = "ollama"
-
-	defaultEmbedderProvider = providerOpenAI
-	defaultEmbedderModel    = "text-embedding-3-small"
-)
-
-var openAIModelDims = map[string]int{
-	"text-embedding-3-small": 1536,
-	"text-embedding-3-large": 3072,
-	"text-embedding-ada-002": 1536,
-}
-
-type embedderSpec struct {
-	provider string
-	model    string
-	baseURL  string
-	dims     int
-}
-
-func newEmbedderSpec(cfg *config.Config) (embedderSpec, error) {
-	spec := embedderSpec{
-		provider: cfg.Embedder.Provider,
-		model:    cfg.Embedder.Model,
-		baseURL:  cfg.Embedder.BaseURL,
-		dims:     cfg.Embedder.Dimensions,
-	}
-	if spec.provider == "" {
-		spec.provider = defaultEmbedderProvider
-	}
-	if spec.model == "" {
-		spec.model = defaultEmbedderModel
-	}
-
-	switch spec.provider {
-	case providerOpenAI:
-		return openAISpec(spec)
-	case providerOllama:
-		return ollamaSpec(spec)
-	default:
-		return embedderSpec{}, internalerror.NewPreconditionError("embedder.provider "+spec.provider+
-			" is configured, but this build only implements "+providerOpenAI+" and "+providerOllama, nil)
-	}
-}
-
-func openAISpec(spec embedderSpec) (embedderSpec, error) {
-	if spec.dims != 0 {
-		return embedderSpec{}, internalerror.NewBadRequestError("embedder.dimensions must not be set for the "+
-			providerOpenAI+" provider: the vector width follows from embedder.model", nil)
-	}
-
-	dims, known := openAIModelDims[spec.model]
-	if !known {
-		return embedderSpec{}, internalerror.NewBadRequestError("embedder.model "+spec.model+" has no known vector width; supported models: "+strings.Join(knownModels(), ", "), nil)
-	}
-	spec.dims = dims
-	return spec, nil
-}
-
-func ollamaSpec(spec embedderSpec) (embedderSpec, error) {
-	if spec.dims <= 0 {
-		return embedderSpec{}, internalerror.NewBadRequestError("embedder.dimensions must be set to the vector width of "+
-			spec.model+" for the "+providerOllama+" provider; `ollama show "+spec.model+"` reports it", nil)
-	}
-	return spec, nil
-}
-
-func knownModels() []string {
-	return slices.Sorted(maps.Keys(openAIModelDims))
-}
-
-func newEmbedder(spec embedderSpec) (embedder.Embedder, error) {
-	if spec.provider == providerOllama {
-		emb, err := ollama.New(spec.model, spec.baseURL, spec.dims)
-		if err != nil {
-			return nil, unconfigurableEmbedder(spec.provider, err)
-		}
-		return emb, nil
-	}
-
-	key := os.Getenv(EmbedderKeyEnv)
-	if key == "" {
-		return nil, internalerror.NewBadRequestError("the "+spec.provider+" embedder needs an API key in "+EmbedderKeyEnv+", but that environment variable is not set", nil)
-	}
-
-	emb, err := openai.New(key, spec.model, spec.baseURL, spec.dims)
+func newSources(cfg *config.Config, reg *registry.Registry) ([]lore.Connector, error) {
+	instances, err := sourceInstances(cfg)
 	if err != nil {
-		return nil, unconfigurableEmbedder(spec.provider, err)
+		return nil, err
 	}
-	return emb, nil
+	return reg.BuildSources(instances)
 }
 
-func unconfigurableEmbedder(provider string, err error) error {
-	return internalerror.NewBadRequestError("cannot configure the "+provider+" embedder: "+err.Error(), err)
+// embedding carries the plugin name alongside the built embedder, because the
+// vector-space identity is "<plugin>/<model>/<dims>" and a provider reports only
+// the width: it never names itself, so it cannot claim another's vector space.
+type embedding struct {
+	plugin   string
+	model    string
+	provider lore.Embedder
 }
 
-const (
-	providerAnthropic = "anthropic"
-	providerZAI       = "zai"
+func newEmbedding(cfg *config.Config, reg *registry.Registry) (embedding, error) {
+	instances, err := providerInstances(cfg)
+	if err != nil {
+		return embedding{}, err
+	}
 
-	defaultLLMProvider = providerOpenAI
-)
-
-var llmProviders = map[string]func(key, model, baseURL string) (llm.LLM, error){
-	providerOpenAI:    func(key, model, baseURL string) (llm.LLM, error) { return llmopenai.New(key, model, baseURL) },
-	providerAnthropic: func(key, model, baseURL string) (llm.LLM, error) { return llmanthropic.New(key, model, baseURL) },
-	providerZAI:       func(key, model, baseURL string) (llm.LLM, error) { return llmzai.New(key, model, baseURL) },
-	providerOllama:    func(_, model, baseURL string) (llm.LLM, error) { return llmollama.New(model, baseURL) },
+	built, err := reg.BuildProvider(registry.Binding{
+		Provider:   cfg.Embedder.Provider,
+		Model:      cfg.Embedder.Model,
+		Dimensions: cfg.Embedder.Dimensions,
+		Capability: lore.CapabilityEmbed,
+		Field:      "embedder",
+	}, instances)
+	if err != nil {
+		return embedding{}, err
+	}
+	return embedding{plugin: built.Plugin, model: cfg.Embedder.Model, provider: built.Value.(lore.Embedder)}, nil
 }
 
-// A workspace with no llm: block resolves to a nil LLM: only synthesis then fails, and it says why.
-func newLLM(cfg *config.Config) (llm.LLM, error) {
+func newEmbedder(e embedding) lore.Embedder { return e.provider }
+
+func newVectorSpace(e embedding) services.VectorSpace {
+	return services.NewVectorSpace(e.plugin, e.model, e.provider.Dimensions())
+}
+
+// A workspace with no llm: block resolves to a nil Completer: only synthesis
+// then fails, and it says why.
+func newCompleter(cfg *config.Config, reg *registry.Registry) (lore.Completer, error) {
 	if cfg.LLM == nil {
 		return nil, nil
 	}
 
-	provider := cfg.LLM.Provider
-	if provider == "" {
-		provider = defaultLLMProvider
-	}
-	build, known := llmProviders[provider]
-	if !known {
-		return nil, internalerror.NewPreconditionError("llm.provider "+provider+
-			" is configured, but this build only implements "+strings.Join(knownLLMProviders(), ", "), nil)
+	instances, err := providerInstances(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	var key string
-	if provider != providerOllama {
-		apiKey, err := llmAPIKey(provider, cfg.LLM.APIKeyEnv)
+	built, err := reg.BuildProvider(registry.Binding{
+		Provider:   cfg.LLM.Provider,
+		Model:      cfg.LLM.Model,
+		Dimensions: cfg.LLM.Dimensions,
+		Capability: lore.CapabilityComplete,
+		Field:      "llm",
+	}, instances)
+	if err != nil {
+		return nil, err
+	}
+	return built.Value.(lore.Completer), nil
+}
+
+func newCodeRepos(cfg *config.Config, reg *registry.Registry) ([]services.CodeRepo, error) {
+	built, err := reg.BuildCode(clones(cfg))
+	if err != nil {
+		return nil, err
+	}
+
+	repos := make([]services.CodeRepo, 0, len(built))
+	for _, code := range built {
+		repos = append(repos, services.CodeRepo{Path: code.Path, Remote: code.Remote, Git: code.Repo})
+	}
+	return repos, nil
+}
+
+// newStartupWarnings collects everything worth telling the operator that is not
+// worth refusing to start over. The unmatched-clone half asks the built
+// connectors which remotes they ingest rather than switching on a forge name,
+// so a third-party forge plugin keeps that warning working by implementing
+// lore.RemoteMatcher.
+func newStartupWarnings(cfg *config.Config, sources []lore.Connector, ext externals) registry.Warnings {
+	return append(ext.warnings, registry.UnmatchedRemotes(clones(cfg), sources)...)
+}
+
+func sourceInstances(cfg *config.Config) ([]registry.Instance, error) {
+	return instances(cfg.Sources, "sources")
+}
+
+func providerInstances(cfg *config.Config) ([]registry.Instance, error) {
+	return instances(cfg.Providers, "providers")
+}
+
+// The configuration path travels with each instance so a plugin's own
+// validation failure still points at the line the operator has to edit.
+func instances(declared []config.Instance, block string) ([]registry.Instance, error) {
+	out := make([]registry.Instance, 0, len(declared))
+	for _, decl := range declared {
+		with, err := decl.WithValues()
 		if err != nil {
 			return nil, err
 		}
-		key = apiKey
-	}
-
-	client, err := build(key, cfg.LLM.Model, cfg.LLM.BaseURL)
-	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot configure the "+provider+" LLM: "+err.Error(), err)
-	}
-	return client, nil
-}
-
-func llmAPIKey(provider, name string) (string, error) {
-	if name == "" {
-		return "", internalerror.NewBadRequestError("llm.api_key_env must name the environment variable holding the "+
-			provider+" API key", nil)
-	}
-	return envValue("llm.api_key_env", name)
-}
-
-func knownLLMProviders() []string {
-	return slices.Sorted(maps.Keys(llmProviders))
-}
-
-func newQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.QueryService {
-	return services.NewQueryService(store, emb, services.QueryConfig{
-		TopK:        cfg.Query.TopK,
-		WalkDepth:   cfg.Query.WalkDepth,
-		EventWindow: time.Duration(cfg.Query.EventWindow),
-	})
-}
-
-func newImpactService(store repositories.IndexStore, emb embedder.Embedder, cfg *config.Config) services.ImpactService {
-	return services.NewImpactService(store, emb, services.QueryConfig{
-		TopK:        cfg.Query.TopK,
-		WalkDepth:   cfg.Query.WalkDepth,
-		EventWindow: time.Duration(cfg.Query.EventWindow),
-	})
-}
-
-func newCodeRepos(cfg *config.Config) []services.CodeRepo {
-	repos := make([]services.CodeRepo, 0, len(cfg.Repos))
-	for _, repo := range cfg.Repos {
-		repos = append(repos, services.CodeRepo{
-			Path:   repo.Path,
-			Remote: repo.Remote,
-			Git:    gitrepo.New(repo.Path),
+		out = append(out, registry.Instance{
+			ID:    decl.ID,
+			Use:   decl.Use,
+			With:  with,
+			Field: block + "[" + decl.Ident() + "]",
 		})
 	}
+	return out, nil
+}
 
-	return repos
+func clones(cfg *config.Config) []registry.Clone {
+	out := make([]registry.Clone, 0, len(cfg.Repos))
+	for i, repo := range cfg.Repos {
+		out = append(out, registry.Clone{
+			Path:   repo.Path,
+			Use:    repo.Use,
+			Remote: repo.Remote,
+			Field:  "repos[" + strconv.Itoa(i) + "]",
+		})
+	}
+	return out
+}
+
+func newQueryService(store repositories.IndexStore, emb lore.Embedder, cfg *config.Config) services.QueryService {
+	return services.NewQueryService(store, emb, queryConfig(cfg))
+}
+
+func newImpactService(store repositories.IndexStore, emb lore.Embedder, cfg *config.Config) services.ImpactService {
+	return services.NewImpactService(store, emb, queryConfig(cfg))
 }
 
 func newWhyService(
 	store repositories.IndexStore,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	cfg *config.Config,
 	repos []services.CodeRepo,
 ) services.WhyService {
-	return services.NewWhyService(store, emb, services.QueryConfig{
+	return services.NewWhyService(store, emb, queryConfig(cfg), repos)
+}
+
+func queryConfig(cfg *config.Config) services.QueryConfig {
+	return services.QueryConfig{
 		TopK:        cfg.Query.TopK,
 		WalkDepth:   cfg.Query.WalkDepth,
 		EventWindow: time.Duration(cfg.Query.EventWindow),
-	}, repos)
+	}
 }

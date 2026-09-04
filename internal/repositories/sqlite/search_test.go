@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // One document with one chunk, so a document id names a hit unambiguously.
 type corpusEntry struct {
-	id        entities.DocID
+	id        lore.DocID
 	source    string
-	docType   entities.DocType
+	docType   lore.DocType
 	repoRef   string
 	created   time.Time
 	text      string
@@ -29,41 +30,41 @@ func day(month, d int) time.Time {
 // IDF stays positive, "lore" is in all five so a filter test sees only the filter
 // exclude rows, and the embeddings give every pair a distinct L2 distance.
 var searchCorpus = []corpusEntry{{
-	id:        entities.NewDocID("github", entities.DocTypeCommit, "abcdef0123456789"),
+	id:        lore.NewDocID("github", lore.DocTypeCommit, "abcdef0123456789"),
 	source:    "github",
-	docType:   entities.DocTypeCommit,
+	docType:   lore.DocTypeCommit,
 	repoRef:   "github:acme/lore",
 	created:   day(1, 10),
 	text:      "lore picked sqlite because sqlite ships everywhere and sqlite needs no server",
 	embedding: []float32{1, 0, 0},
 }, {
-	id:        entities.NewDocID("github", entities.DocTypePR, "12"),
+	id:        lore.NewDocID("github", lore.DocTypePR, "12"),
 	source:    "github",
-	docType:   entities.DocTypePR,
+	docType:   lore.DocTypePR,
 	repoRef:   "github:acme/lore",
 	created:   day(2, 20),
 	text:      "the lore sqlite decision is recorded in an adr",
 	embedding: []float32{0, 1, 0},
 }, {
-	id:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
+	id:        lore.NewDocID("notion", lore.DocTypePage, "design/storage"),
 	source:    "notion",
-	docType:   entities.DocTypePage,
+	docType:   lore.DocTypePage,
 	repoRef:   "",
 	created:   day(3, 30),
 	text:      "lore could run on postgres with pgvector instead",
 	embedding: []float32{0, 0, 1},
 }, {
-	id:        entities.NewDocID("github", entities.DocTypeIssue, "7"),
+	id:        lore.NewDocID("github", lore.DocTypeIssue, "7"),
 	source:    "github",
-	docType:   entities.DocTypeIssue,
+	docType:   lore.DocTypeIssue,
 	repoRef:   "github:acme/other",
 	created:   day(4, 15),
 	text:      "lore chunking strategy for very long documents",
 	embedding: []float32{1, 1, 0},
 }, {
-	id:        entities.NewDocID("jira", entities.DocTypeTicket, "PROJ-1"),
+	id:        lore.NewDocID("jira", lore.DocTypeTicket, "PROJ-1"),
 	source:    "jira",
-	docType:   entities.DocTypeTicket,
+	docType:   lore.DocTypeTicket,
 	repoRef:   "",
 	created:   day(5, 1),
 	text:      "lore onboarding notes for new engineers",
@@ -75,7 +76,7 @@ func seedSearchCorpus(t *testing.T, s *Store) {
 	ctx := context.Background()
 
 	for _, e := range searchCorpus {
-		doc := entities.Document{
+		doc := lore.Document{
 			ID:        e.id,
 			Source:    e.source,
 			Type:      e.docType,
@@ -87,7 +88,7 @@ func seedSearchCorpus(t *testing.T, s *Store) {
 			CreatedAt: e.created,
 			UpdatedAt: e.created.Add(time.Hour),
 		}
-		if err := s.UpsertDocuments(ctx, []entities.Document{doc}); err != nil {
+		if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
 			t.Fatalf("seed document %q: %v", e.id, err)
 		}
 		chunk := entities.Chunk{
@@ -117,8 +118,8 @@ func hitIDs(hits []entities.ChunkHit) []string {
 	return ids
 }
 
-func docID(source string, t entities.DocType, external string) string {
-	return string(entities.NewDocID(source, t, external))
+func docID(source string, t lore.DocType, external string) string {
+	return string(lore.NewDocID(source, t, external))
 }
 
 func TestSearchLexicalRanksByRelevance(t *testing.T) {
@@ -131,8 +132,8 @@ func TestSearchLexicalRanksByRelevance(t *testing.T) {
 	}
 
 	want := []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("github", entities.DocTypePR, "12"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("github", lore.DocTypePR, "12"),
 	}
 	if got := hitIDs(hits); !slices.Equal(got, want) {
 		t.Fatalf("hits = %v, want %v (three mentions before one, non-matching chunks absent)", got, want)
@@ -201,8 +202,8 @@ func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 	}
 	got := hitIDs(hits)
 	for _, want := range []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("notion", entities.DocTypePage, "design/storage"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("notion", lore.DocTypePage, "design/storage"),
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("hits = %v, want %q among them", got, want)
@@ -229,11 +230,11 @@ func TestSearchVectorRanksByDistance(t *testing.T) {
 	}
 
 	want := []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("github", entities.DocTypeIssue, "7"),
-		docID("github", entities.DocTypePR, "12"),
-		docID("notion", entities.DocTypePage, "design/storage"),
-		docID("jira", entities.DocTypeTicket, "PROJ-1"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("github", lore.DocTypeIssue, "7"),
+		docID("github", lore.DocTypePR, "12"),
+		docID("notion", lore.DocTypePage, "design/storage"),
+		docID("jira", lore.DocTypeTicket, "PROJ-1"),
 	}
 	if got := hitIDs(hits); !slices.Equal(got, want) {
 		t.Fatalf("hits = %v, want %v (nearest first)", got, want)
@@ -270,62 +271,62 @@ var filterCases = []struct {
 	name:   "unfiltered",
 	filter: entities.Filters{},
 	want: []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("github", entities.DocTypeIssue, "7"),
-		docID("github", entities.DocTypePR, "12"),
-		docID("jira", entities.DocTypeTicket, "PROJ-1"),
-		docID("notion", entities.DocTypePage, "design/storage"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("github", lore.DocTypeIssue, "7"),
+		docID("github", lore.DocTypePR, "12"),
+		docID("jira", lore.DocTypeTicket, "PROJ-1"),
+		docID("notion", lore.DocTypePage, "design/storage"),
 	},
 }, {
 	name:   "source",
 	filter: entities.Filters{Source: "notion"},
-	want:   []string{docID("notion", entities.DocTypePage, "design/storage")},
+	want:   []string{docID("notion", lore.DocTypePage, "design/storage")},
 }, {
 	name:   "repo_ref",
 	filter: entities.Filters{RepoRef: "github:acme/lore"},
 	want: []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("github", entities.DocTypePR, "12"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("github", lore.DocTypePR, "12"),
 	},
 }, {
 	name:   "doc_type",
-	filter: entities.Filters{DocType: entities.DocTypeIssue},
-	want:   []string{docID("github", entities.DocTypeIssue, "7")},
+	filter: entities.Filters{DocType: lore.DocTypeIssue},
+	want:   []string{docID("github", lore.DocTypeIssue, "7")},
 }, {
 	name:   "created_from",
 	filter: entities.Filters{CreatedFrom: day(3, 30)}, // inclusive: the notion page is exactly here
 	want: []string{
-		docID("github", entities.DocTypeIssue, "7"),
-		docID("jira", entities.DocTypeTicket, "PROJ-1"),
-		docID("notion", entities.DocTypePage, "design/storage"),
+		docID("github", lore.DocTypeIssue, "7"),
+		docID("jira", lore.DocTypeTicket, "PROJ-1"),
+		docID("notion", lore.DocTypePage, "design/storage"),
 	},
 }, {
 	name:   "created_to",
 	filter: entities.Filters{CreatedTo: day(2, 20)}, // inclusive: the PR is exactly here
 	want: []string{
-		docID("github", entities.DocTypeCommit, "abcdef0123456789"),
-		docID("github", entities.DocTypePR, "12"),
+		docID("github", lore.DocTypeCommit, "abcdef0123456789"),
+		docID("github", lore.DocTypePR, "12"),
 	},
 }, {
 	name:   "created_range",
 	filter: entities.Filters{CreatedFrom: day(2, 1), CreatedTo: day(4, 1)},
 	want: []string{
-		docID("github", entities.DocTypePR, "12"),
-		docID("notion", entities.DocTypePage, "design/storage"),
+		docID("github", lore.DocTypePR, "12"),
+		docID("notion", lore.DocTypePage, "design/storage"),
 	},
 }, {
 	name: "every dimension at once",
 	filter: entities.Filters{
 		Source:      "github",
 		RepoRef:     "github:acme/lore",
-		DocType:     entities.DocTypePR,
+		DocType:     lore.DocTypePR,
 		CreatedFrom: day(1, 1),
 		CreatedTo:   day(3, 1),
 	},
-	want: []string{docID("github", entities.DocTypePR, "12")},
+	want: []string{docID("github", lore.DocTypePR, "12")},
 }, {
 	name:   "contradictory filter excludes everything",
-	filter: entities.Filters{Source: "notion", DocType: entities.DocTypeCommit},
+	filter: entities.Filters{Source: "notion", DocType: lore.DocTypeCommit},
 	want:   nil,
 }}
 
@@ -365,7 +366,7 @@ func TestSearchVectorFilterAppliesBeforeK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchVector: %v", err)
 	}
-	want := []string{docID("notion", entities.DocTypePage, "design/storage")}
+	want := []string{docID("notion", lore.DocTypePage, "design/storage")}
 	if got := hitIDs(hits); !slices.Equal(got, want) {
 		t.Errorf("hits = %v, want %v", got, want)
 	}
@@ -396,17 +397,17 @@ func TestSearchVectorSkipsUnembeddedChunks(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	id := entities.NewDocID("notion", entities.DocTypePage, "unembedded")
+	id := lore.NewDocID("notion", lore.DocTypePage, "unembedded")
 	created := day(6, 1)
-	if err := s.UpsertDocuments(ctx, []entities.Document{{
-		ID: id, Source: "notion", Type: entities.DocTypePage,
+	if err := s.UpsertDocuments(ctx, []lore.Document{{
+		ID: id, Source: "notion", Type: lore.DocTypePage,
 		CreatedAt: created, UpdatedAt: created,
 	}}); err != nil {
 		t.Fatalf("UpsertDocuments: %v", err)
 	}
 	if err := s.ReplaceChunks(ctx, id, []entities.Chunk{{
 		DocID: id, Text: "vectorless prose about lore", Source: "notion",
-		DocType: entities.DocTypePage, CreatedAt: created, UpdatedAt: created,
+		DocType: lore.DocTypePage, CreatedAt: created, UpdatedAt: created,
 	}}); err != nil {
 		t.Fatalf("ReplaceChunks: %v", err)
 	}

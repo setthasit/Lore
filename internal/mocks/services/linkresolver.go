@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	entities "github.com/setthasit/Lore/internal/entities"
+	lore "github.com/setthasit/Lore/sdk"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,7 +42,7 @@ func (m *MockLinkResolver) EXPECT() *MockLinkResolverMockRecorder {
 }
 
 // Link mocks base method.
-func (m *MockLinkResolver) Link(ctx context.Context, docs []entities.Document) error {
+func (m *MockLinkResolver) Link(ctx context.Context, docs []lore.Document) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Link", ctx, docs)
 	ret0, _ := ret[0].(error)

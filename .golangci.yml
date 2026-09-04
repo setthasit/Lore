@@ -2,11 +2,41 @@ version: "2"
 
 linters:
   enable:
+    - depguard
     - errcheck
     - gosec
     - govet
     - staticcheck
   settings:
+    # The layering in docs/v3/02-architecture.md and the plugin boundaries in
+    # docs/v3/08-extensibility.md, enforced rather than documented. A wrong glob
+    # here passes silently, so each rule is proven to fire by a deliberate
+    # forbidden import before it is trusted.
+    depguard:
+      rules:
+        sdk:
+          files:
+            - "**/sdk/**"
+          allow:
+            - "$gostd"
+            - "github.com/setthasit/Lore/sdk"
+        # A plugin may build on a sibling plugin — the OpenAI-compatible driver
+        # is presets over the OpenAI wire client, which is the whole reason it
+        # is one package and not nine — and `plugins.go` aggregates them all.
+        # What the rule forbids is reaching into the engine.
+        plugins:
+          files:
+            - "**/plugins/**"
+          allow:
+            - "$gostd"
+            - "github.com/setthasit/Lore/sdk"
+            - "github.com/setthasit/Lore/plugins"
+        engine:
+          files:
+            - "**/internal/**"
+          deny:
+            - pkg: "github.com/setthasit/Lore/plugins"
+              desc: the engine must not know a plugin by name; wire through the registry
     gosec:
       # Rules that are structurally wrong for this codebase rather than
       # findings waiting to be fixed:
@@ -18,14 +48,17 @@ linters:
       #          generated `?,?,?` list; values always arrive as args.
       #   G202 - the UNION builders concatenate constant fragments and column
       #          names from a closed switch, never caller strings.
-      #   G204 - the gitrepo connector exists to shell out to git; every argv
-      #          it passes is assembled in-process, never from user input.
+      #   G204 - the git code plugin exists to shell out to git; every argv it
+      #          passes is assembled in-process, never from user input.
       #   G301 - the local index directory is created 0o755 on purpose so the
       #          owning user can inspect it with ordinary tools.
       #   G302 - `lore init` writes a config of environment variable names,
       #          never secrets, so 0o644 is intentional.
       #   G304 - a local CLI reads the paths it is handed; config, bundle and
       #          source files all arrive as arguments, not as untrusted input.
+      #   G306 - `lore.lock` is committed to the repository and records
+      #          versions, URLs and digests, never a credential, so it is
+      #          written world-readable like every other tracked file.
       #   G404 - retry jitter and benchmark seeds want math/rand; crypto/rand
       #          would buy nothing and cost throughput.
       excludes:
@@ -37,6 +70,7 @@ linters:
         - G301
         - G302
         - G304
+        - G306
         - G404
   exclusions:
     rules:

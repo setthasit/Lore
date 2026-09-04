@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestStatsEmptyStoreIsZeros(t *testing.T) {
@@ -72,7 +73,7 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 		t.Fatalf("UpsertEdges: %v", err)
 	}
 
-	if err := s.SetCursor(ctx, "notion", entities.Cursor{"page": "3"}); err != nil {
+	if err := s.SetCursor(ctx, "notion", lore.Cursor{"page": "3"}); err != nil {
 		t.Fatalf("SetCursor(notion): %v", err)
 	}
 	if err := s.SetCursor(ctx, "github", nil); err != nil {
@@ -142,13 +143,13 @@ func TestStatsCursorAgeAdvancesWithEveryCheckpoint(t *testing.T) {
 	s := openTestStore(t, WithClock(func() time.Time { return clock }))
 	ctx := context.Background()
 
-	if err := s.SetCursor(ctx, "github", entities.Cursor{"since": "a"}); err != nil {
+	if err := s.SetCursor(ctx, "github", lore.Cursor{"since": "a"}); err != nil {
 		t.Fatalf("SetCursor: %v", err)
 	}
 
 	second := first.Add(90 * time.Minute)
 	clock = second
-	if err := s.SetCursor(ctx, "github", entities.Cursor{"since": "b"}); err != nil {
+	if err := s.SetCursor(ctx, "github", lore.Cursor{"since": "b"}); err != nil {
 		t.Fatalf("SetCursor (update): %v", err)
 	}
 

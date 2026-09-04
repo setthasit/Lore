@@ -19,6 +19,12 @@ const (
 
 // The kinds a caller can act on say everything actionable in Message; only an
 // error the caller cannot act on falls back to the cause for diagnosis.
+// Report is exported because the composition root reports a plugin registration
+// failure before there is a command to run.
+func Report(w io.Writer, err error) int {
+	return report(w, err)
+}
+
 func report(w io.Writer, err error) int {
 	if err == nil {
 		return exitOK

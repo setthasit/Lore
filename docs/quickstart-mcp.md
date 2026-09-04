@@ -59,10 +59,11 @@ Four things must be true before a host model gets useful answers:
    ```yaml
    workspace: myproject
    sources:
-     github:
-       token_env: LORE_GITHUB_TOKEN
-       repos:
-         - acme/myproject
+     - use: github
+       with:
+         token_env: LORE_GITHUB_TOKEN
+         repos:
+           - acme/myproject
    repos: []                          # local clones, for `why` and `history_of` only
    embedder:
      provider: openai                 # key comes from OPENAI_API_KEY
@@ -73,11 +74,11 @@ Four things must be true before a host model gets useful answers:
    default. The full source list and each block's rules live in
    [sources.md](sources.md) and
    [docs/v3/06-interfaces-and-config.md](v3/06-interfaces-and-config.md).
-3. **The environment variables that `lore.yaml` names.** Config validation requires the
-   named variable to actually be set: a missing one fails startup with
-   `sources.github.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set`.
+3. **The environment variables that `lore.yaml` names.** Startup requires the named
+   variable to actually be set: a missing one fails with
+   `sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set`.
 4. **At least one completed `lore sync`.** Tools read the index; an unsynced workspace
-   answers every question with an empty bundle. `lore sync` takes `--source <name>` to
+   answers every question with an empty bundle. `lore sync` takes `--source <instance>` to
    sync just one connector (an unknown name is refused with
    `unknown source "<name>"; this workspace has <configured names>`) and `--reembed` to
    rebuild every chunk and vector — the two cannot be combined, since a re-embed always
@@ -346,11 +347,11 @@ of the tool surface returning evidence instead of prose.
 
 | Symptom | What you see | Fix |
 |---|---|---|
-| Server never appears in the client's tool list | The client shows the server as failed; the real reason is on the process's **stderr** — most often ``no configuration at ./lore.yaml — run `lore init` to create one`` (relative `--config`, or none), `the openai embedder needs an API key in OPENAI_API_KEY, but that environment variable is not set`, or `sources.github.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set` | Pass an absolute `--config`, and supply every variable your `lore.yaml` names through the client's `env` block. Verify the command outside the client first: `/absolute/path/to/lore mcp --config /absolute/path/to/lore.yaml` should sit there silently instead of exiting. A connected server identifies itself as `lore` …
+| Server never appears in the client's tool list | The client shows the server as failed; the real reason is on the process's **stderr** — most often ``no configuration at ./lore.yaml — run `lore init` to create one`` (relative `--config`, or none), `embedder.provider.with.api_key_env names OPENAI_API_KEY, but that environment variable is not set`, or `sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set` | Pass an absolute `--config`, and supply every variable your `lore.yaml` names through the client's `env` block. Verify the command outside the client first: `/absolute/path/to/lore mcp --config /absolute/path/to/lore.yaml` should sit there silently instead of exiting. A connected server identifies itself as `lore` …
 | `why` or `history_of` fails on a zero-repo workspace | `no repositories registered — code anchoring disabled for this workspace` | Blame and file history need a local clone. Add one under `repos:` (`path:`, plus `remote:` to map it onto an ingested source repo), or ask `find_decision` instead — it answers the same question from the index. Naming an unregistered repo instead returns `repo "…" is not registered — registered repos: …` |
 | `sync_now` refuses to run | `cannot run a sync round — myhost/4213 (last heartbeat 3s ago) is already writing this index; retry later, or wait out the 60s lease TTL if that holder crashed` | Something else holds the workspace lease — usually a manual `lore sync`, or the scheduler inside a running `lore serve`. Rounds are exclusive across every process sharing the workspace, and a refused round writes nothing. Report it and wait; do not retry in a loop. `sync_status` shows `sync_lock.held`, `holder`, `held_for_seconds` and `last_heartbeat_seconds_ago` — a heartbeat many minutes old means that holder most likely died, and the next round takes the lock over |
-| `sync_now` refuses after an embedder change | ``embedder identity mismatch: this index was built with "openai/text-embedding-3-small/1536" but the workspace is now configured for "ollama/nomic-embed-text/768" — vectors from one embedder are meaningless to another, so run `lore sync --reembed` to wipe the chunk layer and rebuild it with "ollama/nomic-embed-text/768"`` | Identity is `provider/model/dimensions`, so changing any one of the three invalidates every stored vector. Run `lore sync --reembed` once from the terminal. Note the index file's vector width is fixed when it is created, so a change of width also needs a fresh index path — the index is derived data, safe to delete |
-| Embedder block rejected at startup | `embedder.dimensions must not be set for the openai provider: the vector width follows from embedder.model`, or ``embedder.dimensions must be set to the vector width of nomic-embed-text for the ollama provider; `ollama show nomic-embed-text` reports it`` | The rule is inverted per provider: forbidden for `openai`, required for `ollama`. An unknown OpenAI model reports `embedder.model … has no known vector width; supported models: …` |
+| `sync_now` refuses after an embedder change | ``embedder identity mismatch: this index was built with "openai/text-embedding-3-small/1536" but the workspace is now configured for "ollama/nomic-embed-text/768" — vectors from one embedder are meaningless to another, so run `lore sync --reembed` to wipe the chunk layer and rebuild it with "ollama/nomic-embed-text/768"`` | Identity is `plugin/model/dimensions` — the provider plugin, not the instance id — so changing any one of the three invalidates every stored vector. Run `lore sync --reembed` once from the terminal. Note the index file's vector width is fixed when it is created, so a change of width also needs a fresh index path — the index is derived data, safe to delete |
+| Embedder block rejected at startup | `openai: embedder.dimensions must not be set for this provider: the vector width follows from embedder.model`, or ``ollama: embedder.dimensions must be set to the vector width of nomic-embed-text: an Ollama model does not imply one; `ollama show nomic-embed-text` reports it`` | The rule is inverted per provider plugin: forbidden for `openai`, required for `ollama`. An unknown OpenAI model reports `openai: embedder.model … has no known vector width; supported models: …`, and a role bound to a provider that does not serve it reports `embedder binds provider "anthropic", which does not serve embed; it serves complete` |
 | HTTP transport won't start | `no address to serve on: set server.http_addr in lore.yaml or pass --http 127.0.0.1:8080`, or the loopback/TLS refusal quoted above | Bind a literal loopback IP, or configure `server.mtls.cert` and `server.mtls.key` and use the `https` URL |
 | Tools connect but every bundle is empty | No error — an empty bundle is a valid answer | Call `sync_status`: a source that last checkpointed days ago cannot hold what happened yesterday, and a source absent from `sources` has never synced. Then `sync_now`. If it is still empty, widen the filters or rephrase — `source`, `repo`, `doc_type`, `since` and `until` are all hard filters |
 | Session dies mid-stream on stdio | Garbled JSON-RPC in the client log | Anything on stdout corrupts the protocol. Lore keeps its own diagnostics on stderr; make sure no wrapper script of yours echoes to stdout |

@@ -13,6 +13,7 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const dateLayout = "2006-01-02"
@@ -173,7 +174,7 @@ func metaLine(node entities.EvidenceNode) string {
 	return strings.Join(parts, " · ")
 }
 
-func renderChains(w io.Writer, chains [][]entities.DocID) {
+func renderChains(w io.Writer, chains [][]lore.DocID) {
 	if len(chains) == 0 {
 		return
 	}

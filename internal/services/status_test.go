@@ -10,7 +10,6 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_embedder "github.com/setthasit/Lore/internal/mocks/embedder"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
 )
@@ -19,17 +18,15 @@ const statusIdentity = "openai/text-embedding-3-small/1536"
 
 var errStatusStore = errors.New("index is unreadable")
 
-func newStatusFixture(t *testing.T) (*mock_repositories.MockIndexStore, *mock_embedder.MockEmbedder, services.StatusService) {
+func newStatusFixture(t *testing.T) (*mock_repositories.MockIndexStore, services.StatusService) {
 	t.Helper()
 
-	ctrl := gomock.NewController(t)
-	store := mock_repositories.NewMockIndexStore(ctrl)
-	emb := mock_embedder.NewMockEmbedder(ctrl)
-	return store, emb, services.NewStatusService(store, emb)
+	store := mock_repositories.NewMockIndexStore(gomock.NewController(t))
+	return store, services.NewStatusService(store, statusIdentity)
 }
 
 func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
-	store, _, svc := newStatusFixture(t)
+	store, svc := newStatusFixture(t)
 
 	at := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
 	want := entities.IndexStats{
@@ -58,7 +55,7 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 }
 
 func TestStatusClassifiesAStoreFailure(t *testing.T) {
-	store, _, svc := newStatusFixture(t)
+	store, svc := newStatusFixture(t)
 	store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errStatusStore)
 
 	got, err := svc.Status(context.Background())
@@ -77,8 +74,7 @@ func TestStatusClassifiesAStoreFailure(t *testing.T) {
 }
 
 func TestEmbedderIdentityReportsBothSides(t *testing.T) {
-	store, emb, svc := newStatusFixture(t)
-	emb.EXPECT().Identity().Return(statusIdentity)
+	store, svc := newStatusFixture(t)
 	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return(statusIdentity, nil)
 
 	got, err := svc.EmbedderIdentity(context.Background())
@@ -93,8 +89,7 @@ func TestEmbedderIdentityReportsBothSides(t *testing.T) {
 // A workspace that has never synced is configured but not yet committed to a
 // vector space: the empty half is the signal, not an error.
 func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.T) {
-	store, emb, svc := newStatusFixture(t)
-	emb.EXPECT().Identity().Return(statusIdentity)
+	store, svc := newStatusFixture(t)
 	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", nil)
 
 	got, err := svc.EmbedderIdentity(context.Background())
@@ -107,8 +102,7 @@ func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.
 }
 
 func TestEmbedderIdentityClassifiesAStoreFailure(t *testing.T) {
-	store, emb, svc := newStatusFixture(t)
-	emb.EXPECT().Identity().Return(statusIdentity).AnyTimes()
+	store, svc := newStatusFixture(t)
 	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", errStatusStore)
 
 	got, err := svc.EmbedderIdentity(context.Background())

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const askOnlyRefusal = "no repositories registered — code anchoring disabled for this workspace"
@@ -19,7 +19,7 @@ const shortSHAChars = 12
 type CodeRepo struct {
 	Path   string
 	Remote string
-	Git    gitrepo.GitRepo
+	Git    lore.CodeRepo
 }
 
 func (r CodeRepo) name() string {
@@ -99,7 +99,7 @@ func indexedCommits(ctx context.Context, s commitSource, sha string) ([]entities
 
 	var commits []entities.DocumentMeta
 	for _, candidate := range candidates {
-		if candidate.Type == entities.DocTypeCommit {
+		if candidate.Type == lore.DocTypeCommit {
 			commits = append(commits, candidate)
 		}
 	}

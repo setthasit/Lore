@@ -13,6 +13,8 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -41,7 +43,7 @@ func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 		return nil, nil, err
 	}
 
-	root := newRootCommand(resolve)
+	root := newRootCommand(resolve, registry.New(lore.Host{}))
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs([]string{"--version"})

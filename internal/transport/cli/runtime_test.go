@@ -6,19 +6,17 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/registry"
 )
 
-func configWithRemote(remote string, ingested ...string) *config.Config {
-	return &config.Config{
-		Workspace: "myproject",
-		Sources:   config.Sources{GitHub: &config.GitHubSource{TokenEnv: "LORE_GITHUB_TOKEN", Repos: ingested}},
-		Repos:     []config.Repo{{Path: "/home/dev/myproject", Remote: remote}},
-	}
-}
-
+// The warnings are computed by the registry from what the built connectors say
+// they ingest, so a command's job is only to put them on the right stream.
 func TestStartupWarningsReachStderrOnly(t *testing.T) {
 	rt := mockStatus(t, entities.IndexStats{}, nil)
-	rt.Config = configWithRemote("github:acme/nope", "acme/yes")
+	rt.Config = &config.Config{Workspace: "myproject"}
+	rt.Warnings = registry.Warnings{
+		"repos path /home/dev/myproject has remote github:acme/nope, which names no configured source repo",
+	}
 
 	res := run(t, rt, "status")
 
@@ -36,9 +34,9 @@ func TestStartupWarningsReachStderrOnly(t *testing.T) {
 	}
 }
 
-func TestAMappedRemoteWarnsAboutNothing(t *testing.T) {
+func TestNoWarningsMeansASilentStderr(t *testing.T) {
 	rt := mockStatus(t, entities.IndexStats{}, nil)
-	rt.Config = configWithRemote("github:acme/yes", "acme/yes")
+	rt.Config = &config.Config{Workspace: "myproject"}
 
 	res := run(t, rt, "status")
 

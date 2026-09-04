@@ -12,6 +12,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func bundleFixture() *entities.EvidenceBundle {
@@ -21,9 +22,9 @@ func bundleFixture() *entities.EvidenceBundle {
 		Anchor:   entities.Anchor{Kind: entities.AnchorQuery, Query: "why did we pick sqlite?"},
 		Nodes: []entities.EvidenceNode{{
 			Doc: entities.DocumentMeta{
-				ID:        entities.NewDocID("github", entities.DocTypePR, "12"),
+				ID:        lore.NewDocID("github", lore.DocTypePR, "12"),
 				Source:    "github",
-				Type:      entities.DocTypePR,
+				Type:      lore.DocTypePR,
 				Title:     "Index on SQLite, not Postgres",
 				Author:    "dev@example.test",
 				URL:       "https://github.com/acme/lore/pull/12",
@@ -34,9 +35,9 @@ func bundleFixture() *entities.EvidenceBundle {
 			Score:   0.91,
 		}, {
 			Doc: entities.DocumentMeta{
-				ID:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
+				ID:        lore.NewDocID("notion", lore.DocTypePage, "design/storage"),
 				Source:    "notion",
-				Type:      entities.DocTypePage,
+				Type:      lore.DocTypePage,
 				Title:     "Storage design",
 				Author:    "arch@example.test",
 				URL:       "https://notion.so/design/storage",

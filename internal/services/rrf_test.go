@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const fusionK = 60
@@ -25,7 +26,7 @@ const decoyScore = -7.5
 func hit(doc string, ordinal int) entities.ChunkHit {
 	return entities.ChunkHit{
 		Chunk: entities.Chunk{
-			DocID:   entities.DocID(doc),
+			DocID:   lore.DocID(doc),
 			Ordinal: ordinal,
 			Text:    fmt.Sprintf("%s chunk %d", doc, ordinal),
 		},

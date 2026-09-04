@@ -16,41 +16,49 @@ const docExample = `
 workspace: myproject
 index_path: ~/.lore/myproject.db
 
+plugins:
+  - name: linear
+    from: github.com/jdoe/lore-linear@v0.3.1
+    pubkey: ./keys/jdoe.pub
+
 sources:
-  github:
-    token_env: LORE_GITHUB_TOKEN
-    repos:
-      - acme/myproject
-      - acme/myproject-infra
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - "Engineering Wiki"
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects: [PROJ, INFRA]
+  - use: github
+    with:
+      token_env: LORE_GITHUB_TOKEN
+      repos:
+        - acme/myproject
+        - acme/myproject-infra
+  - id: jira-acme
+    use: jira
+    with: { base_url: https://acme.atlassian.net, projects: [PROJ, INFRA] }
+  - id: linear
+    use: linear
+    with: { team: PLATFORM, token_env: LORE_LINEAR_TOKEN }
+
+providers:
+  - id: openrouter
+    use: openai-compatible
+    with:
+      base_url: https://openrouter.ai/api
+      api_key_env: LORE_OPENROUTER_KEY
+
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+
+llm:
+  provider: openrouter
+  model: moonshotai/kimi-k2
 
 repos:
   - path: {{REPO}}
+    use: git
     remote: github:acme/myproject
 
 query:
   event_window: 30d
   walk_depth: 3
   top_k: 12
-
-embedder:
-  provider: openai
-  model: text-embedding-3-small
-  base_url: https://api.openai.com
-
-llm:
-  provider: anthropic
-  model: claude-sonnet-4-5
-  api_key_env: LORE_LLM_KEY
-  base_url: https://api.anthropic.com
 
 scheduler:
   interval: 30m
@@ -64,495 +72,299 @@ server:
     client_ca: ./certs/ca.pem
 `
 
+// minimal is a configuration every rule accepts, so a test that asserts one
+// refusal only has to spell the key it is breaking.
+const minimal = `
+workspace: myproject
+sources:
+  - use: github
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+`
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name    string
 		yaml    string
-		env     map[string]string
-		wantErr string
+		wantErr []string
 		check   func(*testing.T, *Config)
 	}{
 		{
-			name: "zero repos is a valid ask-only workspace",
-			yaml: `
-workspace: askonly
-sources:
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages: ["Engineering Wiki"]
-repos: []
-`,
-			env: map[string]string{"LORE_NOTION_TOKEN": "notion-fake-value"},
+			name: "the documented example loads whole",
+			yaml: docExample,
 			check: func(t *testing.T, cfg *Config) {
-				if len(cfg.Repos) != 0 {
-					t.Fatalf("Repos = %v, want none", cfg.Repos)
+				if cfg.Workspace != "myproject" {
+					t.Errorf("Workspace = %q", cfg.Workspace)
 				}
-			},
-		},
-		{
-			name: "an ask-only workspace with jira and notion but no github validates",
-			yaml: `
-workspace: asksources
-sources:
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages: ["Engineering Wiki"]
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects: [PROJ]
-repos: []
-`,
-			env: map[string]string{
-				"LORE_NOTION_TOKEN": "notion-fake-value",
-				"LORE_JIRA_EMAIL":   "someone@example.test",
-				"LORE_JIRA_TOKEN":   "jira-fake-value",
-			},
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.Sources.GitHub != nil {
-					t.Errorf("sources.github = %+v, want none", cfg.Sources.GitHub)
-				}
-				if cfg.Sources.Notion == nil || cfg.Sources.Jira == nil {
-					t.Fatalf("sources = %+v, want notion and jira", cfg.Sources)
-				}
-				if got := cfg.Sources.Jira.Projects; len(got) != 1 || got[0] != "PROJ" {
-					t.Errorf("jira projects = %v", got)
-				}
-				if len(cfg.Repos) != 0 {
-					t.Fatalf("Repos = %v, want none", cfg.Repos)
-				}
-			},
-		},
-		{
-			name: "local clones without any source are valid",
-			yaml: `
-workspace: clonesonly
-repos:
-  - path: {{REPO}}
-    remote: github:acme/myproject
-`,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.Repos[0].Remote != "github:acme/myproject" {
-					t.Fatalf("Repos[0].Remote = %q", cfg.Repos[0].Remote)
-				}
-			},
-		},
-		{
-			name: "neither sources nor repos is rejected",
-			yaml: `
-workspace: empty
-sources: {}
-repos: []
-`,
-			wantErr: "at least one of sources or repos",
-		},
-		{
-			name:    "workspace is required",
-			yaml:    "repos:\n  - path: ~/dev/myproject\n",
-			wantErr: "workspace must be set",
-		},
-		{
-			name: "missing env var is rejected by name",
-			yaml: `
-workspace: jiraonly
-sources:
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects: [PROJ]
-`,
-			env:     map[string]string{"LORE_JIRA_EMAIL": "someone@example.test", "LORE_JIRA_TOKEN": ""},
-			wantErr: "LORE_JIRA_TOKEN",
-		},
-		{
-			name: "configured source without an env var name is rejected",
-			yaml: `
-workspace: nogithubtoken
-sources:
-  github:
-    repos: [acme/myproject]
-`,
-			wantErr: "sources.github.token_env must name an environment variable",
-		},
-		{
-			name: "jira source without base_url is rejected",
-			yaml: `
-workspace: nobaseurl
-sources:
-  jira:
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-`,
-			env:     map[string]string{"LORE_JIRA_EMAIL": "someone@example.test", "LORE_JIRA_TOKEN": "jira-fake-value"},
-			wantErr: "sources.jira.base_url must be set",
-		},
-		{
-			name: "jira email_env naming an unset variable is rejected by name",
-			yaml: `
-workspace: unsetemail
-sources:
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-`,
-			env:     map[string]string{"LORE_JIRA_EMAIL": "", "LORE_JIRA_TOKEN": "jira-fake-value"},
-			wantErr: "sources.jira.email_env names LORE_JIRA_EMAIL, but that environment variable is not set",
-		},
-		{
-			name: "jira with a blank email_env is rejected",
-			yaml: `
-workspace: blankemail
-sources:
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: ""
-    token_env: LORE_JIRA_TOKEN
-`,
-			env:     map[string]string{"LORE_JIRA_TOKEN": "jira-fake-value"},
-			wantErr: "sources.jira.email_env must name an environment variable",
-		},
-		{
-			name: "jira with an empty base_url is rejected",
-			yaml: `
-workspace: emptybaseurl
-sources:
-  jira:
-    base_url: ""
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-`,
-			env:     map[string]string{"LORE_JIRA_EMAIL": "someone@example.test", "LORE_JIRA_TOKEN": "jira-fake-value"},
-			wantErr: "sources.jira.base_url must be set",
-		},
-		{
-			name: "notion token_env naming an unset variable is rejected by name",
-			yaml: `
-workspace: unsetnotion
-sources:
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages: ["Engineering Wiki"]
-`,
-			env:     map[string]string{"LORE_NOTION_TOKEN": ""},
-			wantErr: "sources.notion.token_env names LORE_NOTION_TOKEN, but that environment variable is not set",
-		},
-		{
-			name: "a gitlab source without base_url defaults to gitlab.com",
-			yaml: `
-workspace: gitlabdefault
-sources:
-  gitlab:
-    token_env: LORE_GITLAB_TOKEN
-    projects: [acme/myproject, acme/platform/infra]
-`,
-			env: map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
-			check: func(t *testing.T, cfg *Config) {
-				gitlab := cfg.Sources.GitLab
-				if gitlab == nil {
-					t.Fatalf("sources = %+v, want gitlab", cfg.Sources)
-				}
-				if gitlab.BaseURL != "" {
-					t.Errorf("gitlab base_url = %q, want it left to the connector default", gitlab.BaseURL)
-				}
-				if got := gitlab.Projects; len(got) != 2 || got[1] != "acme/platform/infra" {
-					t.Errorf("gitlab projects = %v, want both namespaced paths", got)
-				}
-			},
-		},
-		{
-			name: "gitlab with a blank token_env is rejected",
-			yaml: `
-workspace: blankgitlabtoken
-sources:
-  gitlab:
-    token_env: ""
-    projects: [acme/myproject]
-`,
-			wantErr: "sources.gitlab.token_env must name an environment variable",
-		},
-		{
-			name: "gitlab token_env naming an unset variable is rejected by name",
-			yaml: `
-workspace: unsetgitlab
-sources:
-  gitlab:
-    token_env: LORE_GITLAB_TOKEN
-    projects: [acme/myproject]
-`,
-			env:     map[string]string{"LORE_GITLAB_TOKEN": ""},
-			wantErr: "sources.gitlab.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set",
-		},
-		{
-			name: "gitlab without a project is rejected",
-			yaml: `
-workspace: noprojects
-sources:
-  gitlab:
-    token_env: LORE_GITLAB_TOKEN
-    projects: []
-`,
-			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
-			wantErr: `sources.gitlab.projects must list at least one "group/project" path`,
-		},
-		{
-			name: "a gitlab base_url that is not absolute is rejected",
-			yaml: `
-workspace: relativegitlab
-sources:
-  gitlab:
-    base_url: gitlab.acme.dev
-    token_env: LORE_GITLAB_TOKEN
-    projects: [acme/myproject]
-`,
-			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
-			wantErr: "sources.gitlab.base_url must be an absolute http(s) URL like https://gitlab.com, got gitlab.acme.dev",
-		},
-		{
-			name: "a gitlab base_url with a foreign scheme is rejected",
-			yaml: `
-workspace: ftpgitlab
-sources:
-  gitlab:
-    base_url: ftp://gitlab.acme.dev
-    token_env: LORE_GITLAB_TOKEN
-    projects: [acme/myproject]
-`,
-			env:     map[string]string{"LORE_GITLAB_TOKEN": "gitlab-fake-value"},
-			wantErr: "sources.gitlab.base_url must be an absolute http(s) URL",
-		},
-		{
-			name: "llm api key env must exist when named",
-			yaml: `
-workspace: withllm
-repos:
-  - path: {{REPO}}
-llm:
-  provider: anthropic
-  model: claude-sonnet-4-5
-  api_key_env: LORE_LLM_KEY
-`,
-			env:     map[string]string{"LORE_LLM_KEY": ""},
-			wantErr: "LORE_LLM_KEY",
-		},
-		{
-			name: "unknown key is rejected",
-			yaml: `
-workspace: typo
-repos:
-  - path: ~/dev/myproject
-query:
-  tp_k: 12
-`,
-			wantErr: "tp_k",
-		},
-		{
-			name: "an unknown embedder key is rejected",
-			yaml: `
-workspace: typo
-repos:
-  - path: ~/dev/myproject
-embedder:
-  dimension: 768
-`,
-			wantErr: "dimension",
-		},
-		{
-			name: "the embedder block carries a base url and an explicit vector width",
-			yaml: `
-workspace: local
-repos:
-  - path: {{REPO}}
-embedder:
-  provider: ollama
-  model: nomic-embed-text
-  base_url: http://gpu-box.internal:11434
-  dimensions: 768
-`,
-			check: func(t *testing.T, cfg *Config) {
-				want := Embedder{
-					Provider:   "ollama",
-					Model:      "nomic-embed-text",
-					BaseURL:    "http://gpu-box.internal:11434",
-					Dimensions: 768,
-				}
-				if cfg.Embedder != want {
-					t.Errorf("embedder = %+v, want %+v", cfg.Embedder, want)
-				}
-			},
-		},
-		{
-			name: "defaults are applied",
-			yaml: `
-workspace: demo
-repos:
-  - path: {{REPO}}
-`,
-			check: func(t *testing.T, cfg *Config) {
-				if want := homePath(t, ".lore", "demo.db"); cfg.IndexPath != want {
+				if want := homePath(t, ".lore", "myproject.db"); cfg.IndexPath != want {
 					t.Errorf("IndexPath = %q, want %q", cfg.IndexPath, want)
 				}
-				if cfg.Query.EventWindow != DefaultEventWindow {
-					t.Errorf("EventWindow = %s, want %s", cfg.Query.EventWindow, DefaultEventWindow)
+				if len(cfg.Plugins) != 1 || cfg.Plugins[0] != (PluginDecl{
+					Name: "linear", From: "github.com/jdoe/lore-linear@v0.3.1", PubKey: "./keys/jdoe.pub",
+				}) {
+					t.Errorf("Plugins = %+v", cfg.Plugins)
 				}
-				if cfg.Query.WalkDepth != DefaultWalkDepth {
-					t.Errorf("WalkDepth = %d, want %d", cfg.Query.WalkDepth, DefaultWalkDepth)
+				if got := idents(cfg.Sources); !equal(got, []string{"github", "jira-acme", "linear"}) {
+					t.Errorf("source idents = %v", got)
 				}
-				if cfg.Query.TopK != DefaultTopK {
-					t.Errorf("TopK = %d, want %d", cfg.Query.TopK, DefaultTopK)
+				if cfg.Sources[1].Use != "jira" {
+					t.Errorf("Sources[1].Use = %q, want the plugin, not the instance id", cfg.Sources[1].Use)
+				}
+				values, err := cfg.Sources[1].WithValues()
+				if err != nil {
+					t.Fatalf("WithValues() error = %v", err)
+				}
+				if values["base_url"] != "https://acme.atlassian.net" {
+					t.Errorf("with = %v, want the block captured verbatim", values)
+				}
+				if len(cfg.Providers) != 1 || cfg.Providers[0].Ident() != "openrouter" ||
+					cfg.Providers[0].Use != "openai-compatible" {
+					t.Errorf("Providers = %+v", cfg.Providers)
+				}
+				if cfg.Embedder != (RoleBinding{Provider: "openai", Model: "text-embedding-3-small"}) {
+					t.Errorf("Embedder = %+v", cfg.Embedder)
+				}
+				if cfg.LLM == nil || *cfg.LLM != (RoleBinding{Provider: "openrouter", Model: "moonshotai/kimi-k2"}) {
+					t.Errorf("LLM = %+v", cfg.LLM)
+				}
+				if len(cfg.Repos) != 1 || cfg.Repos[0].Use != "git" || cfg.Repos[0].Remote != "github:acme/myproject" {
+					t.Errorf("Repos = %+v", cfg.Repos)
+				}
+				if cfg.Query.EventWindow != Duration(30*24*time.Hour) || cfg.Query.WalkDepth != 3 || cfg.Query.TopK != 12 {
+					t.Errorf("Query = %+v", cfg.Query)
+				}
+				if cfg.Scheduler.Interval != Duration(30*time.Minute) {
+					t.Errorf("Scheduler = %+v", cfg.Scheduler)
+				}
+				if cfg.Server.HTTPAddr != ":8080" || cfg.Server.GRPCAddr != ":9090" ||
+					cfg.Server.MTLS.ClientCA != "./certs/ca.pem" {
+					t.Errorf("Server = %+v", cfg.Server)
+				}
+			},
+		},
+		{
+			name: "an instance id defaults to the plugin it uses",
+			yaml: minimal,
+			check: func(t *testing.T, cfg *Config) {
+				if got := cfg.Sources[0].Ident(); got != "github" {
+					t.Errorf("Ident() = %q, want the plugin name", got)
+				}
+				if cfg.Sources[0].ID != "" {
+					t.Errorf("ID = %q, want it left absent", cfg.Sources[0].ID)
+				}
+			},
+		},
+		{
+			name: "two instances of one plugin with distinct ids load",
+			yaml: `
+workspace: twosites
+sources:
+  - id: jira-acme
+    use: jira
+    with: { base_url: https://acme.atlassian.net }
+  - id: jira-legacy
+    use: jira
+    with: { base_url: https://legacy.atlassian.net }
+embedder: { provider: openai, model: text-embedding-3-small }
+`,
+			check: func(t *testing.T, cfg *Config) {
+				if got := idents(cfg.Sources); !equal(got, []string{"jira-acme", "jira-legacy"}) {
+					t.Errorf("source idents = %v", got)
+				}
+			},
+		},
+		{
+			name: "a source with no with: block loads and configures nothing",
+			yaml: minimal,
+			check: func(t *testing.T, cfg *Config) {
+				values, err := cfg.Sources[0].WithValues()
+				if err != nil {
+					t.Fatalf("WithValues() error = %v", err)
+				}
+				if values != nil {
+					t.Errorf("WithValues() = %v, want nil for an absent block", values)
+				}
+			},
+		},
+		{
+			name: "zero repos is a valid ask-only workspace",
+			yaml: minimal + "repos: []\n",
+			check: func(t *testing.T, cfg *Config) {
+				if len(cfg.Repos) != 0 {
+					t.Fatalf("Repos = %v, want none", cfg.Repos)
+				}
+			},
+		},
+		{
+			name: "a workspace with repos and no sources loads",
+			yaml: `
+workspace: anchored
+repos:
+  - path: ` + repoPlaceholder + `
+embedder: { provider: openai, model: text-embedding-3-small }
+`,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Repos[0].Use != DefaultRepoPlugin {
+					t.Errorf("Repos[0].Use = %q, want %q", cfg.Repos[0].Use, DefaultRepoPlugin)
+				}
+			},
+		},
+		{
+			name: "query, scheduler and index_path fall back to defaults",
+			yaml: minimal,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Query.EventWindow != DefaultEventWindow || cfg.Query.WalkDepth != DefaultWalkDepth ||
+					cfg.Query.TopK != DefaultTopK {
+					t.Errorf("Query = %+v, want the defaults", cfg.Query)
 				}
 				if cfg.Scheduler.Interval != DefaultSchedulerInterval {
-					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, DefaultSchedulerInterval)
+					t.Errorf("Scheduler.Interval = %s, want the default", cfg.Scheduler.Interval)
 				}
-				if cfg.Embedder.BaseURL != "" || cfg.Embedder.Dimensions != 0 {
-					t.Errorf("embedder = %+v, want an unset base_url and width", cfg.Embedder)
-				}
-			},
-		},
-		{
-			name: "explicit tuning overrides defaults",
-			yaml: `
-workspace: tuned
-index_path: /srv/lore/tuned.db
-repos:
-  - path: {{REPO}}
-query:
-  event_window: 12h
-  walk_depth: 5
-  top_k: 40
-scheduler:
-  interval: 5m
-`,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.IndexPath != "/srv/lore/tuned.db" {
-					t.Errorf("IndexPath = %q", cfg.IndexPath)
-				}
-				if want := Duration(12 * time.Hour); cfg.Query.EventWindow != want {
-					t.Errorf("EventWindow = %s, want %s", cfg.Query.EventWindow, want)
-				}
-				if cfg.Query.WalkDepth != 5 || cfg.Query.TopK != 40 {
-					t.Errorf("WalkDepth/TopK = %d/%d, want 5/40", cfg.Query.WalkDepth, cfg.Query.TopK)
-				}
-				if want := Duration(5 * time.Minute); cfg.Scheduler.Interval != want {
-					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, want)
+				if want := homePath(t, ".lore", "myproject.db"); cfg.IndexPath != want {
+					t.Errorf("IndexPath = %q, want %q", cfg.IndexPath, want)
 				}
 			},
 		},
 		{
-			name: "a zero scheduler interval reads as absent and takes the default",
-			yaml: `
-workspace: zerointerval
-repos:
-  - path: {{REPO}}
-scheduler:
-  interval: 0s
-`,
-			check: func(t *testing.T, cfg *Config) {
-				if cfg.Scheduler.Interval != DefaultSchedulerInterval {
-					t.Errorf("Scheduler.Interval = %s, want %s", cfg.Scheduler.Interval, DefaultSchedulerInterval)
-				}
-			},
+			name:    "an unknown key is refused, naming the line",
+			yaml:    "workspace: typo\nsourcs: []\n",
+			wantErr: []string{"invalid configuration", "sourcs", "line 2"},
 		},
 		{
-			name: "a negative scheduler interval is rejected",
-			yaml: `
-workspace: negativeinterval
-repos:
-  - path: {{REPO}}
-scheduler:
-  interval: -5m
-`,
-			wantErr: "scheduler.interval must not be negative",
+			name:    "a workspace name is required",
+			yaml:    "sources:\n  - use: github\n",
+			wantErr: []string{"workspace must be set"},
 		},
 		{
-			name: "negative tuning is rejected",
-			yaml: `
-workspace: negative
-repos:
-  - path: {{REPO}}
-query:
-  event_window: -5d
-`,
-			wantErr: "query.event_window must not be negative",
+			name:    "a workspace that ingests nothing and anchors nothing is refused",
+			yaml:    "workspace: empty\nembedder: { provider: openai }\n",
+			wantErr: []string{"at least one of sources or repos must be configured"},
 		},
 		{
-			name: "unparseable duration is rejected",
+			name: "a source instance must name a plugin",
 			yaml: `
-workspace: badduration
-repos:
-  - path: ~/dev/bad
-scheduler:
-  interval: 30 sundays
+workspace: nouse
+sources:
+  - id: jira-acme
+    with: { base_url: https://acme.atlassian.net }
+embedder: { provider: openai }
 `,
-			wantErr: `invalid duration "30 sundays"`,
+			wantErr: []string{"sources[jira-acme].use must be set"},
 		},
 		{
-			name: "repo entry without a path is rejected",
+			name: "a source instance with neither id nor plugin is reported by position",
 			yaml: `
-workspace: pathless
-repos:
-  - remote: github:acme/myproject
+workspace: nouse
+sources:
+  - use: github
+  - with: { base_url: https://acme.atlassian.net }
+embedder: { provider: openai }
 `,
-			wantErr: "every entry in repos must have a path",
+			wantErr: []string{"sources[1].use must be set"},
 		},
 		{
-			name: "documented example loads",
-			yaml: docExample,
-			env: map[string]string{
-				"LORE_GITHUB_TOKEN": "github-fake-value",
-				"LORE_NOTION_TOKEN": "notion-fake-value",
-				"LORE_JIRA_EMAIL":   "someone@example.test",
-				"LORE_JIRA_TOKEN":   "jira-fake-value",
-				"LORE_LLM_KEY":      "llm-fake-value",
-			},
-			check: func(t *testing.T, cfg *Config) {
-				if want := homePath(t, ".lore", "myproject.db"); cfg.Workspace != "myproject" || cfg.IndexPath != want {
-					t.Errorf("workspace/index_path = %q/%q, want myproject/%q", cfg.Workspace, cfg.IndexPath, want)
-				}
-				if got := cfg.Sources.GitHub.Repos; len(got) != 2 || got[0] != "acme/myproject" {
-					t.Errorf("github repos = %v", got)
-				}
-				if got := cfg.Sources.Notion.RootPages; len(got) != 1 || got[0] != "Engineering Wiki" {
-					t.Errorf("notion root_pages = %v", got)
-				}
-				if cfg.Sources.Jira.BaseURL != "https://acme.atlassian.net" {
-					t.Errorf("jira base_url = %q", cfg.Sources.Jira.BaseURL)
-				}
-				if got := cfg.Sources.Jira.Projects; len(got) != 2 || got[1] != "INFRA" {
-					t.Errorf("jira projects = %v", got)
-				}
-				if cfg.Query.EventWindow != DefaultEventWindow {
-					t.Errorf("event_window = %s, want %s", cfg.Query.EventWindow, DefaultEventWindow)
-				}
-				if cfg.Embedder.Provider != "openai" || cfg.Embedder.Model != "text-embedding-3-small" ||
-					cfg.Embedder.BaseURL != "https://api.openai.com" {
-					t.Errorf("embedder = %+v", cfg.Embedder)
-				}
-				if cfg.LLM.Provider != "anthropic" || cfg.LLM.APIKeyEnv != "LORE_LLM_KEY" ||
-					cfg.LLM.BaseURL != "https://api.anthropic.com" {
-					t.Errorf("llm = %+v", cfg.LLM)
-				}
-				if want := Duration(30 * time.Minute); cfg.Scheduler.Interval != want {
-					t.Errorf("scheduler.interval = %s, want %s", cfg.Scheduler.Interval, want)
-				}
-				if cfg.Server.HTTPAddr != ":8080" || cfg.Server.GRPCAddr != ":9090" {
-					t.Errorf("server = %+v", cfg.Server)
-				}
-				if cfg.Server.MTLS.ClientCA != "./certs/ca.pem" {
-					t.Errorf("mtls = %+v", cfg.Server.MTLS)
-				}
-			},
+			name: "a provider instance must name a plugin",
+			yaml: minimal + `
+providers:
+  - id: openrouter
+    with: { base_url: https://openrouter.ai/api }
+`,
+			wantErr: []string{"providers[openrouter].use must be set"},
+		},
+		{
+			name: "two unnamed instances of one plugin are refused with the fix",
+			yaml: `
+workspace: twojira
+sources:
+  - use: jira
+    with: { base_url: https://acme.atlassian.net }
+  - use: jira
+    with: { base_url: https://legacy.atlassian.net }
+embedder: { provider: openai }
+`,
+			wantErr: []string{`sources lists "jira" twice`, "give each instance a distinct id", "id: jira-acme"},
+		},
+		{
+			name: "a repeated source id is refused",
+			yaml: `
+workspace: dupid
+sources:
+  - id: jira-acme
+    use: jira
+  - id: jira-acme
+    use: notion
+embedder: { provider: openai }
+`,
+			wantErr: []string{"sources[jira-acme] is declared twice", "every id in sources must be unique"},
+		},
+		{
+			name: "an explicit id that shadows a defaulted one is refused",
+			yaml: `
+workspace: shadowed
+sources:
+  - use: jira
+  - id: jira
+    use: notion
+embedder: { provider: openai }
+`,
+			wantErr: []string{"sources[jira] is declared twice"},
+		},
+		{
+			name: "a repeated provider id is refused",
+			yaml: minimal + `
+providers:
+  - id: openai
+    use: openai
+  - id: openai
+    use: openai-compatible
+`,
+			wantErr: []string{"providers[openai] is declared twice", "every id in providers must be unique"},
+		},
+		{
+			name:    "an embedder must name a provider",
+			yaml:    "workspace: noembed\nsources:\n  - use: github\n",
+			wantErr: []string{"embedder.provider must be set"},
+		},
+		{
+			name: "a negative embedder dimension is refused",
+			yaml: `
+workspace: negdim
+sources:
+  - use: github
+embedder: { provider: ollama, model: nomic-embed-text, dimensions: -1 }
+`,
+			wantErr: []string{"embedder.dimensions must not be negative, got -1"},
+		},
+		{
+			name:    "a negative event window is refused",
+			yaml:    minimal + "query: { event_window: -30m }\n",
+			wantErr: []string{"query.event_window must not be negative", "-30m"},
+		},
+		{
+			name:    "a negative walk depth is refused",
+			yaml:    minimal + "query: { walk_depth: -1 }\n",
+			wantErr: []string{"query.walk_depth must not be negative"},
+		},
+		{
+			name:    "a negative top_k is refused",
+			yaml:    minimal + "query: { top_k: -1 }\n",
+			wantErr: []string{"query.top_k must not be negative"},
+		},
+		{
+			name:    "a negative scheduler interval is refused",
+			yaml:    minimal + "scheduler: { interval: -30m }\n",
+			wantErr: []string{"scheduler.interval must not be negative", "-30m"},
+		},
+		{
+			name:    "a repo entry must have a path",
+			yaml:    minimal + "repos:\n  - remote: github:acme/myproject\n",
+			wantErr: []string{"every entry in repos must have a path"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			for name, value := range test.env {
-				t.Setenv(name, value)
-			}
-
 			body := test.yaml
 			if strings.Contains(body, repoPlaceholder) {
 				body = strings.ReplaceAll(body, repoPlaceholder, gitClone(t))
@@ -560,15 +372,17 @@ repos:
 
 			cfg, err := Load(writeConfig(t, body))
 
-			if test.wantErr != "" {
+			if len(test.wantErr) > 0 {
 				if err == nil {
 					t.Fatalf("Load() = %+v, want error containing %q", cfg, test.wantErr)
 				}
-				if !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("Load() error = %q, want it to contain %q", err, test.wantErr)
-				}
 				if !internalerror.IsBadRequest(err) {
 					t.Fatalf("Load() error kind = %s, want bad request", internalerror.KindOf(err))
+				}
+				for _, want := range test.wantErr {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("Load() error = %q, want it to contain %q", err, want)
+					}
 				}
 				return
 			}
@@ -577,6 +391,18 @@ repos:
 			}
 			test.check(t, cfg)
 		})
+	}
+}
+
+func TestLoadNamesTheFileItRefused(t *testing.T) {
+	path := writeConfig(t, "workspace: typo\nsourcs: []\n")
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("Load() error = %q, want it to name %q", err, path)
 	}
 }
 
@@ -590,6 +416,175 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "absent.yaml") {
 		t.Fatalf("Load() error = %q, want it to name the path", err)
+	}
+}
+
+// Decode is what the commands that rewrite a configuration read it with, so it
+// must accept a file Load would reject for being incomplete, and must still
+// reject a key no field claims.
+func TestDecode(t *testing.T) {
+	t.Run("an empty document is a configuration of nothing", func(t *testing.T) {
+		cfg, err := Decode(strings.NewReader(""))
+		if err != nil {
+			t.Fatalf("Decode() error = %v, want success", err)
+		}
+		if cfg == nil || cfg.Workspace != "" || len(cfg.Sources) != 0 {
+			t.Errorf("Decode() = %+v, want a zero configuration", cfg)
+		}
+	})
+
+	t.Run("no defaults and no validation are applied", func(t *testing.T) {
+		cfg, err := Decode(strings.NewReader("sources:\n  - use: github\n"))
+		if err != nil {
+			t.Fatalf("Decode() error = %v, want success", err)
+		}
+		if cfg.Query.TopK != 0 || cfg.Scheduler.Interval != 0 || cfg.IndexPath != "" {
+			t.Errorf("Decode() = %+v, want every default left absent", cfg)
+		}
+	})
+
+	t.Run("an unknown key is refused", func(t *testing.T) {
+		_, err := Decode(strings.NewReader("workspace: typo\nsourcs: []\n"))
+		if err == nil {
+			t.Fatal("Decode() succeeded, want error")
+		}
+		if !internalerror.IsBadRequest(err) {
+			t.Fatalf("Decode() error kind = %s, want bad request", internalerror.KindOf(err))
+		}
+		if !strings.Contains(err.Error(), "sourcs") {
+			t.Errorf("Decode() error = %q, want it to name the unknown key", err)
+		}
+	})
+
+	t.Run("a plugin's own with: keys are not checked here", func(t *testing.T) {
+		cfg, err := Decode(strings.NewReader("sources:\n  - use: github\n    with: { anything_at_all: 1 }\n"))
+		if err != nil {
+			t.Fatalf("Decode() error = %v, want the block captured unread", err)
+		}
+		values, err := cfg.Sources[0].WithValues()
+		if err != nil {
+			t.Fatalf("WithValues() error = %v", err)
+		}
+		if values["anything_at_all"] != 1 {
+			t.Errorf("with = %v, want the key preserved for the plugin", values)
+		}
+	})
+
+	t.Run("a misspelled instance key is refused, not ignored", func(t *testing.T) {
+		_, err := Decode(strings.NewReader("sources:\n  - usee: github\n"))
+		if err == nil {
+			t.Fatal("Decode() succeeded, want error")
+		}
+		for _, want := range []string{"usee", "line 2", "id, use and with"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Decode() error = %q, want it to contain %q", err, want)
+			}
+		}
+	})
+
+	t.Run("an instance that is not a mapping is refused", func(t *testing.T) {
+		_, err := Decode(strings.NewReader("sources:\n  - github\n"))
+		if err == nil {
+			t.Fatal("Decode() succeeded, want error")
+		}
+		if !strings.Contains(err.Error(), "an instance must be a mapping that names a plugin with a use key") {
+			t.Errorf("Decode() error = %q, want it to say what an instance looks like", err)
+		}
+	})
+}
+
+func TestInstanceIdent(t *testing.T) {
+	tests := []struct {
+		instance Instance
+		want     string
+	}{
+		{instance: Instance{Use: "github"}, want: "github"},
+		{instance: Instance{ID: "jira-acme", Use: "jira"}, want: "jira-acme"},
+		{instance: Instance{}, want: ""},
+	}
+	for _, test := range tests {
+		if got := test.instance.Ident(); got != test.want {
+			t.Errorf("Instance%+v.Ident() = %q, want %q", test.instance, got, test.want)
+		}
+	}
+}
+
+func TestInstanceWithValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+		check   func(*testing.T, map[string]any)
+	}{
+		{
+			name: "an absent block is no configuration",
+			yaml: "- use: github\n",
+			check: func(t *testing.T, values map[string]any) {
+				if values != nil {
+					t.Errorf("WithValues() = %v, want nil", values)
+				}
+			},
+		},
+		{
+			name: "an empty block is no configuration",
+			yaml: "- use: github\n  with:\n",
+			check: func(t *testing.T, values map[string]any) {
+				if values != nil {
+					t.Errorf("WithValues() = %v, want nil", values)
+				}
+			},
+		},
+		{
+			name: "a mapping decodes to generic values the registry can check",
+			yaml: "- use: github\n  with: { token_env: LORE_GITHUB_TOKEN, repos: [acme/app], depth: 3 }\n",
+			check: func(t *testing.T, values map[string]any) {
+				if values["token_env"] != "LORE_GITHUB_TOKEN" || values["depth"] != 3 {
+					t.Errorf("WithValues() = %v", values)
+				}
+				repos, ok := values["repos"].([]any)
+				if !ok || len(repos) != 1 || repos[0] != "acme/app" {
+					t.Errorf("with.repos = %v", values["repos"])
+				}
+			},
+		},
+		{
+			name:    "a block that is not a mapping names the instance it belongs to",
+			yaml:    "- id: jira-acme\n  use: jira\n  with: [PROJ, INFRA]\n",
+			wantErr: `with: for instance "jira-acme" must be a mapping of configuration keys`,
+		},
+		{
+			name:    "a scalar block is refused too",
+			yaml:    "- use: notion\n  with: LORE_NOTION_TOKEN\n",
+			wantErr: `with: for instance "notion" must be a mapping of configuration keys`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Decode(strings.NewReader("sources:\n" + indent(test.yaml)))
+			if err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+
+			values, err := cfg.Sources[0].WithValues()
+
+			if test.wantErr != "" {
+				if err == nil {
+					t.Fatalf("WithValues() = %v, want error containing %q", values, test.wantErr)
+				}
+				if !internalerror.IsBadRequest(err) {
+					t.Fatalf("WithValues() error kind = %s, want bad request", internalerror.KindOf(err))
+				}
+				if !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("WithValues() error = %q, want it to contain %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("WithValues() error = %v, want success", err)
+			}
+			test.check(t, values)
+		})
 	}
 }
 
@@ -738,6 +733,25 @@ func TestLoadValidatesRepoPaths(t *testing.T) {
 			wantErr: "does not exist",
 		},
 		{
+			name: "a path that cannot be reached is rejected as unreadable, not as missing",
+			path: func(t *testing.T) string {
+				if os.Geteuid() == 0 {
+					t.Skip("root searches a directory whose permissions forbid it")
+				}
+				parent := t.TempDir()
+				clone := filepath.Join(parent, "myproject")
+				if err := os.Mkdir(clone, 0o750); err != nil {
+					t.Fatalf("seed clone: %v", err)
+				}
+				if err := os.Chmod(parent, 0o000); err != nil {
+					t.Fatalf("seal parent: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(parent, 0o750) })
+				return clone
+			},
+			wantErr: "cannot be read",
+		},
+		{
 			name:    "a directory that is not a git repository is rejected",
 			path:    func(t *testing.T) string { return t.TempDir() },
 			wantErr: "is not a git repository",
@@ -770,7 +784,7 @@ func TestLoadValidatesRepoPaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			path := test.path(t)
 
-			cfg, err := Load(writeConfig(t, "workspace: anchored\nrepos:\n  - path: "+path+"\n"))
+			cfg, err := Load(writeConfig(t, "workspace: anchored\nembedder: { provider: openai }\nrepos:\n  - path: "+path+"\n"))
 
 			if test.wantErr == "" {
 				if err != nil {
@@ -805,7 +819,8 @@ func TestLoadExpandsTildePaths(t *testing.T) {
 		t.Fatalf("seed clone: %v", err)
 	}
 
-	cfg, err := Load(writeConfig(t, "workspace: tilde\nrepos:\n  - path: ~/dev/myproject\n"))
+	cfg, err := Load(writeConfig(t,
+		"workspace: tilde\nembedder: { provider: openai }\nrepos:\n  - path: ~/dev/myproject\n"))
 	if err != nil {
 		t.Fatalf("Load() error = %v, want success", err)
 	}
@@ -829,6 +844,35 @@ func TestExpandHome(t *testing.T) {
 			t.Errorf("expandHome(%q) = %q, %v; want it unchanged", path, got, err)
 		}
 	}
+}
+
+func idents(instances []Instance) []string {
+	got := make([]string, 0, len(instances))
+	for i := range instances {
+		got = append(got, instances[i].Ident())
+	}
+	return got
+}
+
+func equal(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// indent nests a sequence fixture under a top-level key.
+func indent(body string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
+		out.WriteString("  " + line + "\n")
+	}
+	return out.String()
 }
 
 func gitClone(t *testing.T) string {

@@ -11,12 +11,12 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_gitrepo "github.com/setthasit/Lore/internal/mocks/gitrepo"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const histFile = "internal/auth/session.go"
@@ -38,11 +38,11 @@ const (
 )
 
 const (
-	histOldID   entities.DocID = "github:commit:old"
-	histMidID   entities.DocID = "github:commit:mid"
-	histNewID   entities.DocID = "github:commit:new"
-	histPRID    entities.DocID = "github:pr:88"
-	histIssueID entities.DocID = "github:issue:12"
+	histOldID   lore.DocID = "github:commit:old"
+	histMidID   lore.DocID = "github:commit:mid"
+	histNewID   lore.DocID = "github:commit:new"
+	histPRID    lore.DocID = "github:pr:88"
+	histIssueID lore.DocID = "github:issue:12"
 )
 
 var (
@@ -53,11 +53,11 @@ var (
 var histAt = time.Date(2025, 6, 4, 11, 0, 0, 0, time.UTC)
 
 var (
-	histOldMeta   = whyMeta(histOldID, entities.DocTypeCommit, "introduce the session store", histAt)
-	histMidMeta   = whyMeta(histMidID, entities.DocTypeCommit, "expire idle sessions", histAt.Add(whyDay))
-	histNewMeta   = whyMeta(histNewID, entities.DocTypeCommit, "rename session.go", histAt.Add(2*whyDay))
-	histPRMeta    = whyMeta(histPRID, entities.DocTypePR, "expire idle sessions", histAt.Add(3*whyDay))
-	histIssueMeta = whyMeta(histIssueID, entities.DocTypeIssue, "sessions never expire", histAt.Add(-5*whyDay))
+	histOldMeta   = whyMeta(histOldID, lore.DocTypeCommit, "introduce the session store", histAt)
+	histMidMeta   = whyMeta(histMidID, lore.DocTypeCommit, "expire idle sessions", histAt.Add(whyDay))
+	histNewMeta   = whyMeta(histNewID, lore.DocTypeCommit, "rename session.go", histAt.Add(2*whyDay))
+	histPRMeta    = whyMeta(histPRID, lore.DocTypePR, "expire idle sessions", histAt.Add(3*whyDay))
+	histIssueMeta = whyMeta(histIssueID, lore.DocTypeIssue, "sessions never expire", histAt.Add(-5*whyDay))
 )
 
 var (
@@ -66,18 +66,18 @@ var (
 )
 
 // git log --follow answers newest first, which is the order the cursor indexes.
-var histLog = []gitrepo.CommitRef{
+var histLog = []lore.CommitRef{
 	histCommit(histShaNew, histAt.Add(2*whyDay)),
 	histCommit(histShaMid, histAt.Add(whyDay)),
 	histCommit(histShaOld, histAt),
 }
 
-func histCommit(sha string, at time.Time) gitrepo.CommitRef {
-	return gitrepo.CommitRef{SHA: sha, Author: "Ada Lovelace", Time: at, Subject: "touching " + histFile}
+func histCommit(sha string, at time.Time) lore.CommitRef {
+	return lore.CommitRef{SHA: sha, Author: "Ada Lovelace", Time: at, Subject: "touching " + histFile}
 }
 
-func histSyntheticLog(n int) []gitrepo.CommitRef {
-	log := make([]gitrepo.CommitRef, n)
+func histSyntheticLog(n int) []lore.CommitRef {
+	log := make([]lore.CommitRef, n)
 	for i := range log {
 		log[i] = histCommit(fmt.Sprintf("%040x", i), histAt.Add(-time.Duration(i)*whyDay))
 	}
@@ -85,7 +85,7 @@ func histSyntheticLog(n int) []gitrepo.CommitRef {
 	return log
 }
 
-func histSHAs(commits []gitrepo.CommitRef) []string {
+func histSHAs(commits []lore.CommitRef) []string {
 	shas := make([]string, len(commits))
 	for i, commit := range commits {
 		shas[i] = commit.SHA
@@ -94,7 +94,7 @@ func histSHAs(commits []gitrepo.CommitRef) []string {
 	return shas
 }
 
-func histUnsyncedGaps(commits []gitrepo.CommitRef) []string {
+func histUnsyncedGaps(commits []lore.CommitRef) []string {
 	gaps := make([]string, len(commits))
 	for i, commit := range commits {
 		gaps[i] = whyUnsyncedGap(commit.SHA)
@@ -109,7 +109,7 @@ func histRequest() services.HistoryRequest {
 
 type histFixture struct {
 	store *mock_repositories.MockIndexStore
-	git   *mock_gitrepo.MockGitRepo
+	git   *mock_lore.MockCodeRepo
 	svc   services.HistoryService
 }
 
@@ -118,13 +118,13 @@ func newHistFixture(t *testing.T) histFixture {
 
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
-	git := mock_gitrepo.NewMockGitRepo(ctrl)
+	git := mock_lore.NewMockCodeRepo(ctrl)
 	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
 
 	return histFixture{store: store, git: git, svc: services.NewHistoryService(store, repos)}
 }
 
-func (f histFixture) expectLog(commits ...gitrepo.CommitRef) {
+func (f histFixture) expectLog(commits ...lore.CommitRef) {
 	f.git.EXPECT().HasFileAtHEAD(gomock.Any(), histFile).Return(true, nil)
 	f.git.EXPECT().Log(gomock.Any(), histFile).Return(commits, nil)
 }
@@ -133,22 +133,22 @@ func (f histFixture) expectResolve(sha string, candidates ...entities.DocumentMe
 	return f.store.EXPECT().ResolveRef(gomock.Any(), sha).Return(candidates, nil)
 }
 
-func (f histFixture) expectMetas(ids []entities.DocID, metas ...entities.DocumentMeta) *gomock.Call {
+func (f histFixture) expectMetas(ids []lore.DocID, metas ...entities.DocumentMeta) *gomock.Call {
 	return f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil)
 }
 
-func (f histFixture) expectNeighbors(ids []entities.DocID, edges ...entities.Edge) *gomock.Call {
+func (f histFixture) expectNeighbors(ids []lore.DocID, edges ...entities.Edge) *gomock.Call {
 	return f.store.EXPECT().Neighbors(gomock.Any(), ids, nil, entities.DirBoth).Return(edges, nil)
 }
 
 // Depth 1: the seed layer is asked for neighbours exactly once, and never again.
-func (f histFixture) expectOneHop(seeds []entities.DocID, edges []entities.Edge, reached ...entities.DocumentMeta) {
+func (f histFixture) expectOneHop(seeds []lore.DocID, edges []entities.Edge, reached ...entities.DocumentMeta) {
 	f.expectNeighbors(seeds, edges...)
 	f.expectMetas(metaIDsOf(reached), reached...)
 }
 
-func metaIDsOf(metas []entities.DocumentMeta) []entities.DocID {
-	ids := make([]entities.DocID, len(metas))
+func metaIDsOf(metas []entities.DocumentMeta) []lore.DocID {
+	ids := make([]lore.DocID, len(metas))
 	for i, meta := range metas {
 		ids[i] = meta.ID
 	}
@@ -190,7 +190,7 @@ func TestHistoryOfTimelinesEveryCommitWithItsLinkedLayer(t *testing.T) {
 	f.expectResolve(histShaMid, histMidMeta)
 	f.expectResolve(histShaOld, histOldMeta)
 
-	seeds := []entities.DocID{histNewID, histMidID, histOldID}
+	seeds := []lore.DocID{histNewID, histMidID, histOldID}
 	f.expectMetas(seeds, histNewMeta, histMidMeta, histOldMeta)
 	f.expectOneHop(seeds,
 		[]entities.Edge{histPRTouchesMid, histIssueTouchesOld},
@@ -201,7 +201,7 @@ func TestHistoryOfTimelinesEveryCommitWithItsLinkedLayer(t *testing.T) {
 		t.Fatalf("HistoryOf: %v", err)
 	}
 
-	if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []entities.DocID{
+	if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []lore.DocID{
 		histIssueID, histOldID, histMidID, histNewID, histPRID,
 	}) {
 		t.Fatalf("Nodes = %v, want them oldest first", got)
@@ -225,7 +225,7 @@ func TestHistoryOfTimelinesEveryCommitWithItsLinkedLayer(t *testing.T) {
 		t.Errorf("Question = %q, want it to name the file and the repo", bundle.Question)
 	}
 	assertHistAnchor(t, bundle.Anchor, []string{histShaNew, histShaMid, histShaOld})
-	assertWhyChains(t, bundle.Chains, [][]entities.DocID{
+	assertWhyChains(t, bundle.Chains, [][]lore.DocID{
 		{histMidID, histPRID},
 		{histOldID, histIssueID},
 	})
@@ -244,7 +244,7 @@ func TestHistoryOfReportsAnUnsyncedCommitAsAGapAndKeepsTheRest(t *testing.T) {
 	f.expectResolve(histShaMid, histPRMeta)
 	f.expectResolve(histShaOld, histOldMeta)
 
-	seeds := []entities.DocID{histOldID}
+	seeds := []lore.DocID{histOldID}
 	f.expectMetas(seeds, histOldMeta)
 	f.expectOneHop(seeds, []entities.Edge{histIssueTouchesOld}, histIssueMeta)
 
@@ -253,7 +253,7 @@ func TestHistoryOfReportsAnUnsyncedCommitAsAGapAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("HistoryOf: %v", err)
 	}
 
-	if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []entities.DocID{histIssueID, histOldID}) {
+	if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []lore.DocID{histIssueID, histOldID}) {
 		t.Errorf("Nodes = %v, want only the synced commit and its ticket", got)
 	}
 	assertGaps(t, bundle.Gaps, []string{whyUnsyncedGap(histShaNew), whyUnsyncedGap(histShaMid)})
@@ -317,7 +317,7 @@ func TestHistoryOfPagesTheCommitsOlderThanTheCursor(t *testing.T) {
 			f.expectResolve(histShaMid, histMidMeta)
 			f.expectResolve(histShaOld, histOldMeta)
 
-			seeds := []entities.DocID{histMidID, histOldID}
+			seeds := []lore.DocID{histMidID, histOldID}
 			f.expectMetas(seeds, histMidMeta, histOldMeta)
 			f.expectOneHop(seeds,
 				[]entities.Edge{histPRTouchesMid, histIssueTouchesOld},
@@ -329,7 +329,7 @@ func TestHistoryOfPagesTheCommitsOlderThanTheCursor(t *testing.T) {
 				t.Fatalf("HistoryOf: %v", err)
 			}
 
-			if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []entities.DocID{
+			if got := nodeIDs(bundle.Nodes); !slices.Equal(got, []lore.DocID{
 				histIssueID, histOldID, histMidID, histPRID,
 			}) {
 				t.Errorf("Nodes = %v, want the window before %s", got, tt.before)
@@ -398,7 +398,7 @@ func TestHistoryOfRefusesACursorTheLogDoesNotCarry(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		log      []gitrepo.CommitRef
+		log      []lore.CommitRef
 		before   string
 		kind     internalerror.Kind
 		contains []string
@@ -412,7 +412,7 @@ func TestHistoryOfRefusesACursorTheLogDoesNotCarry(t *testing.T) {
 		},
 		{
 			name:     "an abbreviation matching several commits",
-			log:      []gitrepo.CommitRef{histCommit(histShaTwinA, histAt), histCommit(histShaTwinB, histAt)},
+			log:      []lore.CommitRef{histCommit(histShaTwinA, histAt), histCommit(histShaTwinB, histAt)},
 			before:   "ab",
 			kind:     internalerror.KindBadRequest,
 			contains: []string{`"ab"`, histShaTwinA[:12], histShaTwinB[:12], "full SHA"},
@@ -606,9 +606,9 @@ func TestHistoryOfSurfacesGitAndStoreFailures(t *testing.T) {
 			arrange: func(f histFixture) {
 				f.expectLog(histLog[2])
 				f.expectResolve(histShaOld, histOldMeta)
-				f.expectMetas([]entities.DocID{histOldID}, histOldMeta)
+				f.expectMetas([]lore.DocID{histOldID}, histOldMeta)
 				f.store.EXPECT().
-					Neighbors(gomock.Any(), []entities.DocID{histOldID}, nil, entities.DirBoth).
+					Neighbors(gomock.Any(), []lore.DocID{histOldID}, nil, entities.DirBoth).
 					Return(nil, errHistStore)
 			},
 			cause:    errHistStore,
