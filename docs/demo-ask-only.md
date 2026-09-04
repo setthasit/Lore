@@ -13,7 +13,7 @@ The point of the zero-repository setup: the answers cannot come from `git log`.
 Every hop is a reference one document made to another, resolved at sync time.
 
 The story is the same one the automated end-to-end suite exercises
-(`internal/e2e/ask_only_test.go` against `internal/e2e/testdata/askonly/`), so the
+(`test/e2e/ask_only_test.go` against `test/e2e/testdata/askonly/`), so the
 shapes below are the shapes the suite holds the engine to. Which parts are
 *asserted* is called out per block.
 

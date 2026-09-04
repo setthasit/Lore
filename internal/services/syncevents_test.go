@@ -317,18 +317,25 @@ func TestSyncEventsCarryTheCumulativeTotalsOfEachRound(t *testing.T) {
 	}
 }
 
+// A round-level failure needs a step the round owns rather than an instance's, and
+// the LinkResolver pass is the one the sync round runs for itself.
+type failingLinks struct{ err error }
+
+func (failingLinks) Link(context.Context, []lore.Document) error { return nil }
+
+func (l failingLinks) LinkPending(context.Context) error { return l.err }
+
 func TestSyncEventsEndAFailedRoundWithItsError(t *testing.T) {
 	t.Parallel()
 
-	round, store := newUncontendedRound(t, nil)
-	round.connectors = []lore.Connector{repeatingConnector(t)}
-	store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errEventStore)
+	round, _ := newUncontendedRound(t, nil)
+	round.links = failingLinks{err: errEventStore}
 
 	events, unsubscribe := round.Subscribe()
 	defer unsubscribe()
 
 	if _, err := round.Sync(context.Background(), SyncOptions{}); err == nil {
-		t.Fatal("Sync() = nil, want the store failure")
+		t.Fatal("Sync() = nil, want the failure of the round's own linking pass")
 	}
 
 	got := drainEvents(events)
@@ -343,5 +350,47 @@ func TestSyncEventsEndAFailedRoundWithItsError(t *testing.T) {
 	}
 	if !errors.Is(got[1].Err, errEventStore) {
 		t.Errorf("failed event error = %v, want it to wrap %v", got[1].Err, errEventStore)
+	}
+}
+
+func TestSyncEventsNameTheInstanceThatFailedAndStillFinishTheRound(t *testing.T) {
+	t.Parallel()
+
+	round, store := newUncontendedRound(t, nil)
+	round.connectors = []lore.Connector{repeatingConnector(t)}
+	store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, errEventStore)
+
+	events, unsubscribe := round.Subscribe()
+	defer unsubscribe()
+
+	res, err := round.Sync(context.Background(), SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+	}
+	if len(res.Failures) != 1 || res.Failures[0].Instance != "github" {
+		t.Fatalf("Sync() failures = %+v, want the github instance alone", res.Failures)
+	}
+
+	// No connector_finished: the instance never reached the end of its stream.
+	want := []entities.SyncPhase{
+		entities.SyncPhaseRoundStarted,
+		entities.SyncPhaseFailed,
+		entities.SyncPhasePendingLinked,
+		entities.SyncPhaseRoundFinished,
+	}
+	got := drainEvents(events)
+	if len(got) != len(want) {
+		t.Fatalf("published %d events, want %d (%+v)", len(got), len(want), got)
+	}
+	for i, phase := range want {
+		if got[i].Phase != phase {
+			t.Errorf("event %d = %v, want %v", i, got[i].Phase, phase)
+		}
+	}
+	if got[1].Source != "github" {
+		t.Errorf("the failed event names source %q, want the failing instance", got[1].Source)
+	}
+	if !errors.Is(got[1].Err, errEventStore) {
+		t.Errorf("the failed event error = %v, want it to wrap %v", got[1].Err, errEventStore)
 	}
 }

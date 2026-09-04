@@ -9,12 +9,14 @@ install layout, signatures — is [10](10-plugin-distribution.md), not here.
 
 ## Status
 
-**The protocol is not frozen.** It freezes when the milestone that ships
-external plugins (M10) has landed *and* the plugin contract has stopped
-moving; until then it may change in any direction, including non-additively.
-Δ10 in [00](00-design-deltas.md) is why: a wire signature frozen before its
-contract settled turned an internal fix into an unimplementable contract, and
-a published protocol turns that class of fix into an ecosystem break.
+**The protocol is frozen.** It froze when the milestone that ships external
+plugins landed, and it evolves additively from here: a new operation or a new
+field is allowed, and changing or removing one is not. Δ10 in
+[00](00-design-deltas.md) is why the freeze waited for the contract to settle —
+a wire signature frozen before its contract settled turned an internal fix into
+an unimplementable contract, and a published protocol turns that class of fix
+into an ecosystem break. The additive rule is what makes the "ignore unknown
+fields" requirement below safe in both directions.
 
 ## Transport
 
@@ -66,6 +68,7 @@ multi-line objects, which are pretty-printed for readability.
 | `complete` | `KindProvider` (Complete) | request/response | `config`, `secrets`, `model`, `system`, `user` | `text` |
 | `blame` | `KindCode` | request/response | `path`, `start_line`, `end_line` | `spans` |
 | `log` | `KindCode` | request/response | `path` | `commits` |
+| `has_file` | `KindCode` | request/response | `path` | `present` |
 | `shutdown` | all | request/exit | — | `ok`, then exit 0 |
 
 `KindCode` payloads carry no `config` or `secrets`: `path` is
@@ -144,18 +147,27 @@ composes the vector-space identity as `<plugin>/<model>/<dims>`
 Empty or whitespace-only `text` is an **error**, not a success: an empty
 completion is indistinguishable from a dropped request, reported as `internal`.
 
-### blame and log
+### blame, log and has_file
 
 ```json
 { "v": 1, "id": "5", "op": "blame", "path": "/w/api/internal/auth/auth.go", "start_line": 40, "end_line": 42 }
 { "v": 1, "id": "5", "ok": true, "spans": [{ "sha": "9c1f0ab3e5d4", "line_start": 40, "line_end": 42, "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "lines": ["if !tok.Valid() {", "\treturn errUnauthorized", "}"] }] }
 { "v": 1, "id": "6", "op": "log", "path": "/w/api/internal/auth/auth.go" }
 { "v": 1, "id": "6", "ok": true, "commits": [{ "sha": "9c1f0ab3e5d4", "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "subject": "reject expired tokens" }] }
+{ "v": 1, "id": "7", "op": "has_file", "path": "/w/api/internal/auth/auth.go" }
+{ "v": 1, "id": "7", "ok": true, "present": true }
 ```
 
 Spans come in span order, `lines` holds one entry per line in the span, and
-`commits` is newest-first following renames. Both ops are read-only — a code
-plugin never writes to the clone.
+`commits` is newest-first following renames. All three ops are read-only — a
+code plugin never writes to the clone.
+
+`has_file` answers whether the path exists at the clone's current head. It is a
+separate op rather than an inference from an empty `log`, because a deleted file
+still has history: the query engine asks it before blaming so a mistyped path
+comes back as a `not_found` naming the repository instead of a raw tool failure.
+A directory, an untracked path, and a clone with no commits are all
+`"present": false`, not errors.
 
 ### shutdown
 
@@ -255,8 +267,8 @@ re-ingest is idempotent by `id`.
 | Operation | Timeout |
 |---|---|
 | `manifest` | 10s |
-| `embed`, `blame`, `log` | 60s |
-| `complete` | 120s, matching the in-process LLM `RequestTimeout` |
+| `embed`, `blame`, `log`, `has_file` | 60s |
+| `complete` | 120s, matching the in-process `lore.CompleteTimeout` |
 | `changes` | none while frames keep arriving; 300s idle |
 | `shutdown` | 5s, then the escalation above |
 

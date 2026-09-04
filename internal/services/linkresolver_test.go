@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -667,5 +668,111 @@ func TestLinkWithoutRefsTouchesNothing(t *testing.T) {
 	docs := []lore.Document{linkDoc(linkPRID, lore.DocTypePR, "no references at all")}
 	if err := m.resolver().Link(context.Background(), docs); err != nil {
 		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkRejectsAReferenceOfUnknownKind(t *testing.T) {
+	t.Parallel()
+
+	const unknown lore.RefKind = "jira_epic"
+
+	ref := lore.RawRef{Kind: unknown, Value: "EPIC-7"}
+	source := linkDoc(linkPRID, lore.DocTypePR, "rolls up EPIC-7", ref)
+	pending := []entities.PendingRef{{SourceDoc: linkPRID, Ref: ref}}
+
+	// Both passes are covered: a kind the resolver cannot rule on must never be
+	// carried by a stored ref either, however it got there.
+	tests := map[string]func(m linkMocks) error{
+		"a document brings it in at ingest": func(m linkMocks) error {
+			return m.resolver().Link(context.Background(), []lore.Document{source})
+		},
+		"a stored ref brings it back on retry": func(m linkMocks) error {
+			m.store.EXPECT().PendingRefs(gomock.Any()).Return(pending, nil)
+
+			return m.resolver().LinkPending(context.Background())
+		},
+	}
+
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			// No ResolveRef, no UpsertEdges and no UpsertPendingRefs are declared: the ref
+			// is refused before anything reads or records it.
+			err := run(newLinkMocks(t))
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("= %v (%s), want bad request", err, internalerror.KindOf(err))
+			}
+
+			var classified *internalerror.Error
+			if !errors.As(err, &classified) {
+				t.Fatalf("= %v, want a classified error", err)
+			}
+			want := []string{string(linkPRID), string(unknown),
+				"url, ticket_key, commit_sha, file_path, pr_number"}
+			for _, name := range want {
+				if !strings.Contains(classified.Message, name) {
+					t.Errorf("message = %q, want it to name %q", classified.Message, name)
+				}
+			}
+		})
+	}
+}
+
+func TestLinkGivesEveryKnownRefKindAnEdgeRule(t *testing.T) {
+	t.Parallel()
+
+	sha := linkPathSHA(7)
+	targets := map[lore.RefKind]struct {
+		value  string
+		target entities.DocumentMeta
+	}{
+		lore.RefKindURL:       {linkPageURL, linkMeta(linkPageID, lore.DocTypePage)},
+		lore.RefKindTicketKey: {linkTicket, linkMeta(linkTicketID, lore.DocTypeTicket)},
+		lore.RefKindCommitSHA: {linkFullSHA, linkMeta(linkCommitID, lore.DocTypeCommit)},
+		lore.RefKindPRNumber:  {linkSlug + "#12", linkMeta(linkPRID, lore.DocTypePR)},
+		lore.RefKindFilePath:  {linkFile, linkMeta(linkCommitDocID(sha), lore.DocTypeCommit)},
+	}
+
+	for _, kind := range lore.RefKinds() {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			fixture, covered := targets[kind]
+			if !covered {
+				t.Fatalf("the reference vocabulary grew a %q this test has no target for", kind)
+			}
+
+			m := newLinkMocks(t)
+			if kind == lore.RefKindFilePath {
+				m.expectLog(sha)
+				m.expectCommit(sha)
+			} else {
+				m.store.EXPECT().ResolveRef(gomock.Any(), fixture.value).
+					Return([]entities.DocumentMeta{fixture.target}, nil)
+			}
+
+			var got []entities.Edge
+			m.store.EXPECT().UpsertEdges(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, edges []entities.Edge) error {
+					got = edges
+
+					return nil
+				})
+			m.store.EXPECT().DeletePendingRefs(gomock.Any(), gomock.Any()).Return(nil)
+
+			source := linkDoc(linkCommentID, lore.DocTypeIssueComment,
+				"see "+fixture.value, lore.RawRef{Kind: kind, Value: fixture.value})
+			if err := m.resolver().Link(context.Background(), []lore.Document{source}); err != nil {
+				t.Fatalf("Link() = %v, want nil", err)
+			}
+
+			if len(got) != 1 {
+				t.Fatalf("Link() stored %d edges, want 1 (%+v)", len(got), got)
+			}
+			if got[0].Kind == "" || got[0].Confidence == 0 {
+				t.Errorf("a %q reference resolved to the zero rule %+v", kind, got[0])
+			}
+		})
 	}
 }

@@ -125,11 +125,11 @@ func newHeartbeatRound(t *testing.T, connectors ...lore.Connector) (*syncOrchest
 	}, m
 }
 
-func heartbeatConnector(t *testing.T) *mock_lore.MockConnector {
+func heartbeatConnector(t *testing.T, instance string) *mock_lore.MockConnector {
 	t.Helper()
 
 	conn := mock_lore.NewMockConnector(gomock.NewController(t))
-	conn.EXPECT().Name().Return("github").AnyTimes()
+	conn.EXPECT().Name().Return(instance).AnyTimes()
 
 	return conn
 }
@@ -248,8 +248,10 @@ func TestHeartbeatLeaseIgnoresTheStoreCallTheRoundCancelled(t *testing.T) {
 func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) {
 	t.Parallel()
 
-	conn := heartbeatConnector(t)
-	round, m := newHeartbeatRound(t, conn)
+	conn := heartbeatConnector(t, "github")
+	// The second instance declares no Cursor call: a lost lease ends the round rather
+	// than moving on to the instances behind the one that noticed.
+	round, m := newHeartbeatRound(t, conn, heartbeatConnector(t, "notion"))
 	recordHeartbeats(m.store, errLeaseTakenOver)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
@@ -260,7 +262,7 @@ func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) 
 		yield(lore.Batch{}, ctx.Err())
 	})
 
-	_, err := round.Sync(context.Background(), SyncOptions{})
+	res, err := round.Sync(context.Background(), SyncOptions{})
 
 	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 		t.Fatalf("Sync() error kind = %v, want %v (%v)", got, internalerror.KindPrecondition, err)
@@ -271,6 +273,9 @@ func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) 
 	if !errors.Is(err, repositories.ErrLeaseLost) {
 		t.Errorf("Sync() = %v, want it to wrap ErrLeaseLost", err)
 	}
+	if len(res.Failures) != 0 {
+		t.Errorf("Sync() blamed the instances %+v, want a lost lease charged to the round alone", res.Failures)
+	}
 	if m.links.pending.Load() != 0 {
 		t.Error("the round finished its work after losing the lease")
 	}
@@ -279,7 +284,7 @@ func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) 
 func TestSyncRidesOutATransientHeartbeatFailure(t *testing.T) {
 	t.Parallel()
 
-	conn := heartbeatConnector(t)
+	conn := heartbeatConnector(t, "github")
 	round, m := newHeartbeatRound(t, conn)
 	round.heartbeat = tolerantHeartbeat
 
@@ -314,7 +319,7 @@ func TestSyncJoinsItsHeartbeatBeforeReleasingTheLease(t *testing.T) {
 		release  = make(chan struct{})
 	)
 
-	conn := heartbeatConnector(t)
+	conn := heartbeatConnector(t, "github")
 	round, m := newHeartbeatRound(t, conn)
 	cursor := lore.Cursor{"page": "1"}
 

@@ -16,11 +16,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/app"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/transport"
-	"github.com/setthasit/Lore/internal/transport/cli"
 	"github.com/setthasit/Lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/plugins"
 )
 
 const (
@@ -42,6 +42,11 @@ const otherHolder = "lore-e2e-other-process/4242"
 const exitBadRequest = 2
 
 const fixtureTokenEnv = "LORE_E2E_GITHUB_TOKEN"
+
+// The variable the served workspace's openai instance reads its key from. The
+// value never leaves the process: the scheduler tick is far out and no test
+// here runs a round against the real API.
+const embedderKeyEnv = "LORE_E2E_OPENAI_KEY"
 
 type servedWorkspace struct {
 	*workspace
@@ -374,6 +379,8 @@ func freeWildcardAddr(t *testing.T) string {
 
 // The real embedder is 1536 wide, so serve gets an index of its own: the fixture one at
 // fakeDims fails the width check. The scheduler tick is far out; a round would hit GitHub.
+// The openai instance is declared rather than left to its defaults so the key comes from
+// a variable this test owns, and never from a real OPENAI_API_KEY the developer exported.
 func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) {
 	t.Helper()
 
@@ -381,14 +388,22 @@ func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) 
 	configPath, indexPath = filepath.Join(dir, "lore.yaml"), filepath.Join(dir, "serve.db")
 
 	t.Setenv(fixtureTokenEnv, fixtureToken)
-	t.Setenv(di.EmbedderKeyEnv, "sk-lore-e2e-not-a-real-key")
+	t.Setenv(embedderKeyEnv, "sk-lore-e2e-not-a-real-key")
 
 	body := "workspace: lore-e2e\n" +
 		"index_path: " + strconv.Quote(indexPath) + "\n" +
 		"sources:\n" +
-		"  github:\n" +
-		"    token_env: " + fixtureTokenEnv + "\n" +
-		"    repos: [" + fixtureRepo + "]\n" +
+		"  - use: github\n" +
+		"    with:\n" +
+		"      token_env: " + fixtureTokenEnv + "\n" +
+		"      repos: [" + fixtureRepo + "]\n" +
+		"providers:\n" +
+		"  - use: openai\n" +
+		"    with:\n" +
+		"      api_key_env: " + embedderKeyEnv + "\n" +
+		"embedder:\n" +
+		"  provider: openai\n" +
+		"  model: text-embedding-3-small\n" +
 		"scheduler:\n" +
 		"  interval: 24h\n" +
 		"server:\n" +
@@ -400,7 +415,9 @@ func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) 
 	return configPath, indexPath
 }
 
-// The command runs on its own goroutine so that a `serve` which binds instead of refusing
+// The command is assembled the way cmd/lore assembles it, official plugins and all:
+// what a serve refusal has to hold for is the real binary, not a hand-wired subset.
+// It runs on its own goroutine so that a `serve` which binds instead of refusing
 // fails this test rather than blocking it until the whole package times out.
 func runLore(t *testing.T, args ...string) (exitCode int, stderr string) {
 	t.Helper()
@@ -414,7 +431,7 @@ func runLore(t *testing.T, args ...string) (exitCode int, stderr string) {
 	os.Args, os.Stderr = append([]string{"lore"}, args...), captured
 
 	returned := make(chan int, 1)
-	go func() { returned <- cli.Main() }()
+	go func() { returned <- app.Run(app.With(plugins.Official()...)) }()
 
 	select {
 	case exitCode = <-returned:

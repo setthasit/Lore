@@ -28,6 +28,18 @@ type SyncOptions struct {
 type SyncResult struct {
 	// Set only when this round claimed a lease a different, dead holder still owned.
 	TookOverFrom *entities.LeaseState
+
+	// The instances that ended their stream early, in selection order. A round that
+	// completed with failures reports them here and returns no error: one broken
+	// plugin must not stop a workspace from syncing.
+	Failures []InstanceFailure
+}
+
+// InstanceFailure is one source instance that gave up at its last committed
+// cursor while the rest of the round carried on.
+type InstanceFailure struct {
+	Instance string
+	Err      error
 }
 
 // Wrapped by the precondition error a round returns when it could not take the lease.
@@ -131,7 +143,8 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 	progress := &syncProgress{bus: &s.events, now: s.now}
 	progress.emit("", entities.SyncPhaseRoundStarted, nil)
 
-	if err := s.runRound(round, opts, selected, progress); err != nil {
+	failures, err := s.runRound(round, opts, selected, progress)
+	if err != nil {
 		progress.emit("", entities.SyncPhaseFailed, err)
 
 		return SyncResult{}, err
@@ -139,7 +152,7 @@ func (s *syncOrchestrator) Sync(ctx context.Context, opts SyncOptions) (SyncResu
 
 	progress.emit("", entities.SyncPhaseRoundFinished, nil)
 
-	return SyncResult{TookOverFrom: s.tookOver(previous)}, nil
+	return SyncResult{TookOverFrom: s.tookOver(previous), Failures: failures}, nil
 }
 
 func (s *syncOrchestrator) runRound(
@@ -147,24 +160,38 @@ func (s *syncOrchestrator) runRound(
 	opts SyncOptions,
 	selected []lore.Connector,
 	progress *syncProgress,
-) error {
+) ([]InstanceFailure, error) {
 	if err := s.reconcileIdentity(round, opts); err != nil {
-		return roundFailure(round, err)
+		return nil, roundFailure(round, err)
 	}
 
+	var failures []InstanceFailure
 	for _, conn := range selected {
-		if err := s.syncConnector(round, conn, progress); err != nil {
-			return roundFailure(round, err)
+		err := s.syncConnector(round, conn, progress)
+		if err == nil {
+			continue
 		}
+
+		// A round the heartbeat or the caller ended would fail every instance after
+		// this one the same way, and that is the round's failure, not the instance's.
+		if round.Err() != nil {
+			return nil, roundFailure(round, err)
+		}
+
+		instance := conn.Name()
+		failures = append(failures, InstanceFailure{Instance: instance, Err: err})
+		progress.emit(instance, entities.SyncPhaseFailed, err)
 	}
 
+	// The pass runs over whatever was ingested, so a failing instance never costs
+	// the healthy ones their edges.
 	if err := s.links.LinkPending(round); err != nil {
-		return roundFailure(round, err)
+		return nil, roundFailure(round, err)
 	}
 
 	progress.emit("", entities.SyncPhasePendingLinked, nil)
 
-	return nil
+	return failures, nil
 }
 
 func (s *syncOrchestrator) selectConnectors(source string) ([]lore.Connector, error) {
@@ -319,47 +346,51 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 }
 
 func (s *syncOrchestrator) syncConnector(ctx context.Context, conn lore.Connector, progress *syncProgress) error {
-	name := conn.Name()
+	instance := conn.Name()
 
-	cursor, err := s.store.Cursor(ctx, name)
+	cursor, err := s.store.Cursor(ctx, instance)
 	if err != nil {
 		return internalerror.NewInternalError(
-			fmt.Sprintf("could not read the %s sync cursor", name), err)
+			fmt.Sprintf("could not read the %s sync cursor", instance), err)
 	}
 
 	for batch, err := range conn.Changes(ctx, cursor) {
 		if err != nil {
 			return internalerror.NewInternalError(
-				fmt.Sprintf("connector %s could not read changes", name), err)
+				fmt.Sprintf("connector %s could not read changes", instance), err)
 		}
 
-		chunks, err := s.commitBatch(ctx, name, batch)
+		chunks, err := s.commitBatch(ctx, instance, batch)
 		if err != nil {
 			return err
 		}
 
-		if err := s.store.SetCursor(ctx, name, batch.Cursor); err != nil {
+		if err := s.store.SetCursor(ctx, instance, batch.Cursor); err != nil {
 			return internalerror.NewInternalError(
-				fmt.Sprintf("could not checkpoint the %s sync cursor", name), err)
+				fmt.Sprintf("could not checkpoint the %s sync cursor", instance), err)
 		}
 
 		progress.documents += int64(len(batch.Docs))
-		progress.emit(name, entities.SyncPhaseBatchStored, nil)
+		progress.emit(instance, entities.SyncPhaseBatchStored, nil)
 
 		progress.chunks += int64(chunks)
-		progress.emit(name, entities.SyncPhaseChunksIndexed, nil)
+		progress.emit(instance, entities.SyncPhaseChunksIndexed, nil)
 	}
 
-	progress.emit(name, entities.SyncPhaseConnectorFinished, nil)
+	progress.emit(instance, entities.SyncPhaseConnectorFinished, nil)
 
 	return nil
 }
 
 // ReplaceChunks requires the parent document to exist, so documents commit first.
-func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch lore.Batch) (int, error) {
+func (s *syncOrchestrator) commitBatch(ctx context.Context, instance string, batch lore.Batch) (int, error) {
+	if err := assertInstanceIdentity(instance, batch.Docs); err != nil {
+		return 0, err
+	}
+
 	if err := s.store.UpsertDocuments(ctx, batch.Docs); err != nil {
 		return 0, internalerror.NewInternalError(
-			fmt.Sprintf("could not store %d documents from %s", len(batch.Docs), name), err)
+			fmt.Sprintf("could not store %d documents from %s", len(batch.Docs), instance), err)
 	}
 
 	chunks := 0
@@ -373,6 +404,28 @@ func (s *syncOrchestrator) commitBatch(ctx context.Context, name string, batch l
 	}
 
 	return chunks, s.links.Link(ctx, batch.Docs)
+}
+
+// The instance id is the cursor key, the Source value and the DocID prefix at
+// once, and nothing in the schema constrains the source column — so a plugin that
+// mislabels its documents writes into another instance's namespace unnoticed
+// unless the batch carrying them is refused here.
+func assertInstanceIdentity(instance string, docs []lore.Document) error {
+	prefix := instance + ":"
+	for _, doc := range docs {
+		if doc.Source != instance {
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"the %s source labelled document %q with source %q; every document of an instance must carry %q as its source",
+				instance, doc.ID, doc.Source, instance), nil)
+		}
+		if !strings.HasPrefix(string(doc.ID), prefix) {
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"the %s source emitted document %q; every document id of an instance must start with %q",
+				instance, doc.ID, prefix), nil)
+		}
+	}
+
+	return nil
 }
 
 // A document that chunks to nothing still calls ReplaceChunks, or the previous edit's chunks stay retrievable.

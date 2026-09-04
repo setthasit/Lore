@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/connectors/github"
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/plugins/code/git"
+	"github.com/setthasit/Lore/plugins/sources/github"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -143,7 +143,7 @@ func newCodeCorpus(t *testing.T) codeCorpus {
 		"Say what the writer's queue field holds")
 
 	return codeCorpus{
-		repos:    []services.CodeRepo{{Path: c.root, Remote: whyRemote, Git: gitrepo.New(c.root)}},
+		repos:    []services.CodeRepo{{Path: c.root, Remote: whyRemote, Git: git.New(c.root)}},
 		fixtures: materialiseCorpus(t, map[string]string{"ANCHOR_SHA": anchor, "FOLLOWUP_SHA": followUp}),
 		anchor:   anchor,
 		followUp: followUp,
@@ -191,7 +191,7 @@ func whyWorkspace(ctx context.Context, t *testing.T, fixtures string, repos []se
 	api.listen(api.serve)
 
 	w := newIndexedWorkspace(t, api, []lore.Connector{
-		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
+		github.NewConnector(githubSource, fixtureToken, []string{fixtureRepo}, api.server.URL),
 	}, repos)
 	w.sync(ctx, t, whyFixtures)
 

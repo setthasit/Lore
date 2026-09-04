@@ -144,7 +144,8 @@ toolchain, and watch a tampered digest refuse to launch.*
 
 ## Status
 
-M1–M7 are implemented and covered by tests; that part of the list is the record
-of the build order, not outstanding work. M8–M11 are the extensibility
-programme and are outstanding. The named risks stay in force — they describe
-operating conditions, not open tasks.
+M1–M11 are implemented and covered by tests; that part of the list is the record
+of the build order, not outstanding work. The wire protocol
+([09](09-plugin-protocol.md)) froze with M10 and evolves additively from here.
+The named risks stay in force — they describe operating conditions, not open
+tasks.

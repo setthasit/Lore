@@ -51,6 +51,7 @@ sdk/                  # package lore — the public contract. stdlib only.
 ├── code.go           #   CodeRepo, BlameSpan, CommitRef
 ├── plugin.go         #   Plugin, Source/Provider/CodePlugin, Manifest, Field, Secret
 ├── host.go           #   Host, SourceConfig, ProviderConfig, CodeConfig
+├── duration.go       #   ParseDuration — the duration spelling host and plugin share
 ├── httpx/            #   retrying HTTP client (Retry-After aware)
 ├── refs/             #   reference scanning helpers (URLs, ticket keys, SHAs, paths)
 └── conform/          #   connector conformance suite = plugin certification suite
@@ -62,6 +63,8 @@ plugins/              # OFFICIAL PLUGINS — no privileges a third party lacks
 internal/             # the engine — knows no source or provider name
 ├── registry/         #   register, validate manifests, build instances
 ├── plugexec/         #   external-plugin host (see 09)
+├── plugindist/       #   coordinates, lockfile, install (see 10)
+├── plugbuild/        #   `lore build` — custom binaries with plugins compiled in
 ├── config/ di/ entities/ errors/ repositories/ services/ transport/ mocks/
 test/e2e/             # composes the real binary, so it lives outside internal/
 ```
@@ -83,9 +86,15 @@ flowchart LR
 | Rule | Enforced by |
 |---|---|
 | `sdk/**` imports the standard library only — not even a YAML package | depguard |
-| `plugins/**` imports `sdk/**` and the standard library only | depguard |
+| `plugins/**` imports `sdk/**`, a sibling under `plugins/**`, and the standard library — nothing else | depguard |
 | `internal/**` never imports `plugins/**` | depguard |
-| A manifest's declared capabilities match the built value's interfaces | registry, at registration; a lie fails `make test` |
+| A manifest's declared capabilities match the built value's interfaces | registry, when an instance is built; a lie fails `make test` |
+
+A plugin may build on a sibling plugin — the OpenAI-compatible driver is preset
+rows over the OpenAI wire client, which is the whole reason it is one package
+and not nine. What the rules forbid is reaching into the engine. Each rule is
+proven to fire by a deliberate forbidden import before it is trusted: a
+depguard rule with a wrong glob silently passes.
 
 `sdk` being stdlib-only is why plugin configuration is delivered as JSON bytes
 rather than a YAML node: YAML stays a host concern, and the same bytes work
@@ -130,11 +139,35 @@ type Completer interface {
 type CodeRepo interface {
     Blame(ctx context.Context, path string, startLine, endLine int) ([]BlameSpan, error)
     Log(ctx context.Context, path string) ([]CommitRef, error)
+
+    // False, not an error, for a directory, an untracked file, or a clone with
+    // no commits: the query engine asks before blaming so a mistyped path is a
+    // NotFound naming the repository, not a raw failure from the tool.
+    HasFileAtHEAD(ctx context.Context, path string) (bool, error)
 }
 
 // Provider is deliberately unconstrained: capabilities are optional interfaces,
 // asserted by the host against the manifest and rejected on mismatch.
 type Provider = any
+
+// Capability is the role a provider is built for. A provider serving both
+// builds only the half it was asked for, because a chat model and an embedding
+// model are configured differently and eagerly building both cannot work.
+type Capability string
+
+const (
+    CapabilityEmbed    Capability = "embed"
+    CapabilityComplete Capability = "complete"
+)
+
+// RemoteMatcher is the optional interface a Connector implements when its
+// manifest declares Capabilities.RepoRemotes.
+type RemoteMatcher interface{ MatchesRemote(remote string) bool }
+
+// ParseDuration parses the form the whole system speaks — everything
+// time.ParseDuration accepts plus a whole-day "30d" — so a plugin's duration
+// field and lore.yaml cannot drift apart.
+func ParseDuration(raw string) (time.Duration, error)
 
 // ---- how a plugin declares itself ----------------------------------------
 
@@ -171,6 +204,12 @@ type Manifest struct {
     Capabilities Capabilities
     Fields       []Field      // the plugin's `with:` block
     Secrets      []Secret
+
+    // DefaultModels suggests one model per capability, for scaffolds and
+    // prompts. The host never applies a suggestion: a role binding always names
+    // its model, because a silently defaulted embedding model is a silently
+    // defaulted vector space and the index it built cannot be reinterpreted.
+    DefaultModels map[Capability]string
 }
 
 type Capabilities struct {
@@ -183,7 +222,11 @@ type Field struct {
     Name     string    // "base_url"
     Type     FieldType // string | url | int | bool | string_list | duration
     Required bool
+
+    // Default is documentation. The host shows it in scaffolds and prompts and
+    // never injects it: only the plugin knows the value's real type.
     Default  string
+
     Doc      string    // shown in `lore init` scaffolds and errors
     Prompt   string    // question `lore source add` asks
 }
@@ -210,16 +253,37 @@ and implementing `MatchesRemote(string) bool`.
 
 ```go
 type Host struct {
-    HTTP *http.Client   // retrying, Retry-After aware
-    Log  *slog.Logger
+    // A shared client with the host's request timeout. It carries no retry
+    // policy: retrying and honouring Retry-After is `sdk/httpx`'s job, and a
+    // second retry underneath it would multiply the attempt budget instead of
+    // bounding it.
+    HTTP *http.Client
+
+    Log  *slog.Logger   // already tagged with the instance id
     Now  func() time.Time
 }
 
 type SourceConfig struct {
     Instance string          // "jira-acme" — cursor key, Source value, DocID prefix
-    Config   json.RawMessage // the `with:` block
+    Config   json.RawMessage // the `with:` block, minus the keys that name secrets
     Secrets  map[string]string
     Host     Host
+}
+
+type ProviderConfig struct {
+    Instance   string
+    Capability Capability      // which half of a multi-capability provider to build
+    Model      string          // from the role binding, not the instance
+    Dimensions int             // the declared width, for drivers whose models imply none
+    Config     json.RawMessage
+    Secrets    map[string]string
+    Host       Host
+}
+
+type CodeConfig struct {
+    Root   string // workspace-absolute clone root, resolved by the host
+    Remote string // "github:acme/app"; empty when the clone maps onto no source
+    Host   Host
 }
 
 func (c SourceConfig) Decode(v any) error                    // strict: unknown fields rejected
@@ -270,20 +334,23 @@ func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
 ## Registry and composition root
 
 The registry is host-side and holds no list of its own. Registration validates
-name uniqueness, `APIVersion`, kind-versus-interface, and manifest-versus-built
-capabilities; a plugin that misdeclares itself fails at registration, not
-during a user's sync.
+name shape and uniqueness, `APIVersion`, kind-versus-interface, and the field
+and secret declarations; a plugin that misdeclares itself fails at registration,
+not during a user's sync. Manifest-versus-built capabilities are checked where
+the value exists — when an instance is built — and a provider that declares a
+capability it does not implement fails the binding, naming the broken claim.
 
-`cmd/lore/main.go` is the only file that names plugins:
+`cmd/lore/main.go` is the only file that names plugins. `Run` returns the exit
+code rather than exiting, so a whole binary stays testable:
 
 ```go
-func main() { app.Run(app.With(plugins.Official()...)) }
+func main() { os.Exit(app.Run(app.With(plugins.Official()...))) }
 ```
 
 A third-party distribution is the same file with one more argument:
 
 ```go
-app.Run(app.With(append(plugins.Official(), acmecrm.Plugin(), myjira.Plugin())...))
+os.Exit(app.Run(app.With(append(plugins.Official(), acmecrm.Plugin(), myjira.Plugin())...)))
 ```
 
 Compiled plugins and external plugins ([09](09-plugin-protocol.md)) both end up

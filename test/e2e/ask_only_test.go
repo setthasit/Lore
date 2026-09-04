@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/jira"
-	"github.com/setthasit/Lore/internal/connectors/notion"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/plugins/sources/jira"
+	"github.com/setthasit/Lore/plugins/sources/notion"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -76,8 +76,8 @@ func askOnlyWorkspace(ctx context.Context, t *testing.T) *workspace {
 	api.listen(api.serveAskOnly)
 
 	w := newIndexedWorkspace(t, api, []lore.Connector{
-		notion.NewConnector(askOnlyNotionToken, []string{notionRootPageID}, api.server.URL),
-		jira.NewConnector(api.server.URL, askOnlyJiraEmail, askOnlyJiraToken, askOnlyProjects()),
+		notion.NewConnector(notionSource, askOnlyNotionToken, []string{notionRootPageID}, api.server.URL),
+		jira.NewConnector(jiraSource, api.server.URL, askOnlyJiraEmail, askOnlyJiraToken, askOnlyProjects()),
 	}, nil)
 	w.sync(ctx, t, askOnlyFixtures)
 

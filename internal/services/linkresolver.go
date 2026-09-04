@@ -29,6 +29,9 @@ var (
 	supersedesRule    = edgeRule{entities.EdgeKindSupersedes, 0.8}
 )
 
+// Total over the closed RefKind vocabulary, which assertKnownRefKinds enforces: a
+// kind missing from either table would read a zero rule or an empty target list,
+// and so produce no edge at all.
 var refKindRules = map[lore.RefKind]edgeRule{
 	lore.RefKindURL:       {entities.EdgeKindReferencesDoc, 1.0},
 	lore.RefKindCommitSHA: {entities.EdgeKindMentionsCommit, 0.9},
@@ -41,6 +44,36 @@ var refTargetTypes = map[lore.RefKind][]lore.DocType{
 	lore.RefKindCommitSHA: {lore.DocTypeCommit},
 	lore.RefKindPRNumber:  {lore.DocTypePR, lore.DocTypeIssue},
 	lore.RefKindTicketKey: {lore.DocTypeTicket, lore.DocTypeIssue},
+}
+
+// Held once rather than rebuilt per batch: every ingested reference is checked
+// against it.
+var knownRefKinds = lore.RefKinds()
+
+// A dropped reference is a missing edge and therefore a wrong answer, and the
+// plugin author has nothing to debug once it is gone, so an unrecognised kind
+// fails the batch that carried it instead of resolving to a zero rule.
+func assertKnownRefKinds(refs []entities.PendingRef) error {
+	for _, ref := range refs {
+		if slices.Contains(knownRefKinds, ref.Ref.Kind) {
+			continue
+		}
+
+		return internalerror.NewBadRequestError(fmt.Sprintf(
+			"document %q carries a reference of unknown kind %q; the reference vocabulary is closed and holds %s",
+			ref.SourceDoc, ref.Ref.Kind, refKindVocabulary()), nil)
+	}
+
+	return nil
+}
+
+func refKindVocabulary() string {
+	names := make([]string, len(knownRefKinds))
+	for i, kind := range knownRefKinds {
+		names[i] = string(kind)
+	}
+
+	return strings.Join(names, ", ")
 }
 
 var supersedePhrases = []string{"supersede", "replaces", "replaced by"}
@@ -87,7 +120,12 @@ type resolvedRef struct {
 	target entities.DocumentMeta
 }
 
+// Both the ingest pass and the pending-ref retry pass funnel through here, so the
+// vocabulary is asserted once for every ref either of them can hand to a rule.
 func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, inHand map[lore.DocID]lore.Document) error {
+	if err := assertKnownRefKinds(refs); err != nil {
+		return err
+	}
 	if len(refs) == 0 {
 		return nil
 	}

@@ -29,19 +29,26 @@ const (
 	DocTypeTicketComment DocType = "ticket_comment"
 )
 
-// Document is the single shape every connector normalizes its source to.
+// Document is the single shape every connector normalizes its source to. The
+// tags are the wire format an out-of-process plugin speaks; they are on the
+// type rather than on a separate DTO so the two modes cannot drift.
 type Document struct {
-	ID        DocID
-	Source    string // the instance id that produced it — "github", "jira-acme", …
-	Type      DocType
-	RepoRef   string // "github:owner/repo"; empty for non-repo documents
-	Title     string
-	Body      string // normalized plain text / markdown
-	Author    string
-	URL       string    // canonical web URL — the citation target
-	CreatedAt time.Time // when the thing happened (event time)
-	UpdatedAt time.Time // last edit (freshness / sync watermark)
-	Refs      []RawRef  // unresolved references found in the body
+	ID      DocID   `json:"id"`
+	Source  string  `json:"source"` // the instance id that produced it — "github", "jira-acme", …
+	Type    DocType `json:"type"`
+	RepoRef string  `json:"repo_ref"` // "github:owner/repo"; the key is always present, the value may be empty
+	Title   string  `json:"title"`
+	Body    string  `json:"body"` // normalized plain text / markdown
+	Author  string  `json:"author"`
+	URL     string  `json:"url"` // canonical web URL — the citation target
+
+	// Both timestamps are required and non-zero, encoded RFC 3339 with an offset.
+	// A source with no true creation time sets CreatedAt equal to UpdatedAt and
+	// says so in its manifest summary.
+	CreatedAt time.Time `json:"created_at"` // when the thing happened (event time)
+	UpdatedAt time.Time `json:"updated_at"` // last edit (freshness / sync watermark)
+
+	Refs []RawRef `json:"refs"` // unresolved references found in the body
 }
 
 // RefKind classifies the textual form of an unresolved reference. The
@@ -64,8 +71,8 @@ func RefKinds() []RefKind {
 // RawRef is a reference emitted by a connector before the host turns it into an
 // edge.
 type RawRef struct {
-	Kind  RefKind
-	Value string // "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
+	Kind  RefKind `json:"kind"`
+	Value string  `json:"value"` // "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
 }
 
 // Cursor is an opaque per-instance sync position; only the connector that
@@ -75,6 +82,6 @@ type Cursor map[string]string
 // Batch is the checkpoint unit of a sync round: Cursor becomes durable once Docs
 // are durably committed. Every batch carries a cursor, empty ones included.
 type Batch struct {
-	Docs   []Document
-	Cursor Cursor
+	Docs   []Document `json:"docs"`
+	Cursor Cursor     `json:"cursor"`
 }

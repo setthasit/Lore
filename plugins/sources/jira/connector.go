@@ -1,0 +1,321 @@
+package jira
+
+import (
+	"context"
+	"fmt"
+	"iter"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/refs"
+)
+
+const (
+	// defaultBatchSize closes a batch on the next unit boundary, so it may overshoot.
+	defaultBatchSize = 50
+
+	cursorUpdatedKey = "updated_at"
+	cursorDocKey     = "doc_id"
+
+	jqlOrder      = "ORDER BY updated ASC"
+	jqlTimeLayout = "2006-01-02 15:04"
+	jqlSlack      = 24 * time.Hour
+)
+
+var _ lore.Connector = (*Connector)(nil)
+
+type Connector struct {
+	client    *client
+	instance  string
+	baseURL   string
+	projects  []string
+	batchSize int
+}
+
+type Option func(*Connector)
+
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Connector) {
+		if h != nil {
+			c.client.http = h
+		}
+	}
+}
+
+func withBatchSize(n int) Option {
+	return func(c *Connector) {
+		if n > 0 {
+			c.batchSize = n
+		}
+	}
+}
+
+func withMaxAttempts(n int) Option {
+	return func(c *Connector) {
+		if n > 0 {
+			c.client.maxAttempts = n
+		}
+	}
+}
+
+func withBackoff(base time.Duration) Option {
+	return func(c *Connector) { c.client.baseBackoff = base }
+}
+
+// NewConnector builds a connector for a Jira Cloud site ("https://acme.atlassian.net").
+// An empty projects list ingests every project the credentials can browse.
+// The instance id is this connector's identity: two Jira sites are two instances,
+// and neither may write into the other's document namespace.
+func NewConnector(instance, baseURL, email, token string, projects []string, opts ...Option) *Connector {
+	root := strings.TrimSuffix(baseURL, "/")
+	c := &Connector{
+		client:    newClient(root, email, token),
+		instance:  instance,
+		baseURL:   root,
+		projects:  slices.Clone(projects),
+		batchSize: defaultBatchSize,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+func (c *Connector) Name() string { return c.instance }
+
+// Changes streams each issue with its comments as one indivisible unit, oldest-first.
+func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
+		if err := c.checkProjectKeys(); err != nil {
+			yield(lore.Batch{}, err)
+			return
+		}
+		state := cloneCursor(cursor)
+		from, err := readCursor(state)
+		if err != nil {
+			yield(lore.Batch{}, err)
+			return
+		}
+		units, err := c.units(ctx, from)
+		if err != nil {
+			yield(lore.Batch{}, fmt.Errorf("jira: %w", err))
+			return
+		}
+
+		docs := make([]lore.Document, 0, c.batchSize)
+		for i := range units {
+			u := &units[i]
+			docs = append(docs, u.docs...)
+			writeCursor(state, u.key)
+			if len(docs) < c.batchSize {
+				continue
+			}
+			if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				return
+			}
+			docs = make([]lore.Document, 0, c.batchSize)
+		}
+		if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			return
+		}
+	}
+}
+
+// The document id breaks ties: several issues can share an updated timestamp.
+type unitKey struct {
+	updatedAt time.Time
+	docID     lore.DocID
+}
+
+func (k unitKey) compare(o unitKey) int {
+	if c := k.updatedAt.Compare(o.updatedAt); c != 0 {
+		return c
+	}
+	return strings.Compare(string(k.docID), string(o.docID))
+}
+
+func (k unitKey) after(o unitKey) bool { return k.compare(o) > 0 }
+
+// Comments carry no watermark of their own — Jira bumps the issue's updated when
+// a comment changes.
+type unit struct {
+	key  unitKey
+	docs []lore.Document
+}
+
+func (c *Connector) units(ctx context.Context, from unitKey) ([]unit, error) {
+	var units []unit
+	var buildErr error
+	err := c.client.eachIssue(ctx, c.jql(from.updatedAt), func(n *issue) bool {
+		doc := c.issueDoc(n)
+		key := unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID}
+		if !key.after(from) {
+			return true
+		}
+		docs, err := c.unitDocs(ctx, n.Key, doc)
+		if err != nil {
+			buildErr = err
+			return false
+		}
+		units = append(units, unit{key: key, docs: docs})
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	slices.SortFunc(units, func(a, b unit) int { return a.key.compare(b.key) })
+	return units, nil
+}
+
+func (c *Connector) unitDocs(ctx context.Context, key string, ticket lore.Document) ([]lore.Document, error) {
+	comments, err := c.client.comments(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	docs := make([]lore.Document, 0, 1+len(comments))
+	docs = append(docs, ticket)
+	for i := range comments {
+		docs = append(docs, c.commentDoc(key, &comments[i]))
+	}
+	return docs, nil
+}
+
+func (c *Connector) issueDoc(n *issue) lore.Document {
+	// The store derives external_key from the third id segment, so the bare key is
+	// what makes a "PROJ-123" reference resolve to this document.
+	doc := c.newDocument(lore.DocTypeTicket, n.Key)
+	doc.Title = n.Key + ": " + n.Fields.Summary
+	doc.Body = flatten(n.Fields.Description)
+	doc.Author = n.Fields.Reporter.name()
+	doc.URL = c.browseURL(n.Key)
+	doc.CreatedAt, doc.UpdatedAt = timestamps(n.Fields.Created.Time, n.Fields.Updated.Time)
+
+	var found refs.Set
+	addTextRefs(&found, n.Fields.Summary+"\n"+doc.Body)
+	doc.Refs = withoutKey(found.Refs(), n.Key)
+	return doc
+}
+
+func (c *Connector) commentDoc(key string, cm *comment) lore.Document {
+	// The chunker cuts the id at its last "#" to recover the thread, so the issue
+	// key has to sit in front of the only "#" a comment id carries.
+	doc := c.newDocument(lore.DocTypeTicketComment, key+"#"+cm.ID)
+	doc.Title = "Comment on " + key
+	doc.Body = flatten(cm.Body)
+	doc.Author = cm.Author.name()
+	doc.URL = c.browseURL(key) + "?focusedCommentId=" + cm.ID
+	doc.CreatedAt, doc.UpdatedAt = timestamps(cm.Created.Time, cm.Updated.Time)
+
+	var found refs.Set
+	found.Add(lore.RefKindTicketKey, key)
+	addTextRefs(&found, doc.Body)
+	doc.Refs = found.Refs()
+	return doc
+}
+
+func (c *Connector) newDocument(t lore.DocType, externalID string) lore.Document {
+	return lore.Document{
+		ID:     lore.NewDocID(c.instance, t, externalID),
+		Source: c.instance,
+		Type:   t,
+	}
+}
+
+func (c *Connector) browseURL(key string) string { return c.baseURL + "/browse/" + key }
+
+// A JQL datetime literal is minute-granular and read in the requesting user's own
+// zone, so jqlSlack dominates the ±14h offset range; units refilters the overlap.
+func (c *Connector) jql(watermark time.Time) string {
+	var clauses []string
+	if len(c.projects) > 0 {
+		clauses = append(clauses, "project IN ("+strings.Join(c.projects, ", ")+")")
+	}
+	if !watermark.IsZero() {
+		clauses = append(clauses, `updated >= "`+watermark.Add(-jqlSlack).UTC().Format(jqlTimeLayout)+`"`)
+	}
+	if len(clauses) == 0 {
+		return jqlOrder
+	}
+	return strings.Join(clauses, " AND ") + " " + jqlOrder
+}
+
+func (c *Connector) checkProjectKeys() error {
+	for _, key := range c.projects {
+		if !validProjectKey(key) {
+			return fmt.Errorf("jira: invalid project key %q: want uppercase letters, digits and underscores", key)
+		}
+	}
+	return nil
+}
+
+func validProjectKey(key string) bool {
+	if key == "" || key[0] < 'A' || key[0] > 'Z' {
+		return false
+	}
+	for _, r := range key {
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func addTextRefs(s *refs.Set, text string) {
+	if text == "" {
+		return
+	}
+	s.AddTicketKeys(text)
+	s.AddURLs(text)
+	s.AddCommitSHAs(text)
+	s.AddFilePaths(text)
+}
+
+func withoutKey(refs []lore.RawRef, key string) []lore.RawRef {
+	return slices.DeleteFunc(refs, func(r lore.RawRef) bool {
+		return r.Kind == lore.RefKindTicketKey && r.Value == key
+	})
+}
+
+func timestamps(created, updated time.Time) (time.Time, time.Time) {
+	switch {
+	case updated.IsZero():
+		return created, created
+	case created.IsZero():
+		return updated, updated
+	}
+	return created, updated
+}
+
+func readCursor(c lore.Cursor) (unitKey, error) {
+	raw := c[cursorUpdatedKey]
+	if raw == "" {
+		return unitKey{}, nil
+	}
+	at, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return unitKey{}, fmt.Errorf("jira: parse cursor watermark %q: %w", raw, err)
+	}
+	return unitKey{updatedAt: at, docID: lore.DocID(c[cursorDocKey])}, nil
+}
+
+// Truncating Jira's milliseconds here would replay the watermark unit on every resume.
+func writeCursor(c lore.Cursor, k unitKey) {
+	c[cursorUpdatedKey] = k.updatedAt.UTC().Format(time.RFC3339Nano)
+	c[cursorDocKey] = string(k.docID)
+}
+
+// A yielded batch owns its own map: the caller persists it while the iterator advances.
+func cloneCursor(c lore.Cursor) lore.Cursor {
+	if len(c) == 0 {
+		return lore.Cursor{}
+	}
+	return maps.Clone(c)
+}

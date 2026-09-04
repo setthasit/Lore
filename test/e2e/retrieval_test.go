@@ -15,11 +15,11 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/setthasit/Lore/internal/connectors/github"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/plugins/sources/github"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -227,7 +227,7 @@ func newWorkspace(t *testing.T, fixtures string) *workspace {
 	api.listen(api.serve)
 
 	return newIndexedWorkspace(t, api, []lore.Connector{
-		github.NewConnector(fixtureToken, []string{fixtureRepo}, api.server.URL),
+		github.NewConnector(githubSource, fixtureToken, []string{fixtureRepo}, api.server.URL),
 	}, nil)
 }
 

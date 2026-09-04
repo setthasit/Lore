@@ -133,6 +133,15 @@ func syncDoc(id lore.DocID) lore.Document {
 	}
 }
 
+// The instance assertion reads nothing but Source and ID, so a mislabelling
+// connector is one of the two set to something the instance never owns.
+func syncDocOf(source string, id lore.DocID) lore.Document {
+	doc := syncDoc(id)
+	doc.Source = source
+
+	return doc
+}
+
 func syncChunks(id lore.DocID, texts ...string) []entities.Chunk {
 	chunks := make([]entities.Chunk, len(texts))
 	for i, text := range texts {
@@ -174,6 +183,32 @@ func syncMessage(t *testing.T, err error) string {
 	}
 
 	return classified.Message
+}
+
+// The round survives a failing instance, so its error is read off the result.
+func onlySyncFailure(t *testing.T, res services.SyncResult, instance string) services.InstanceFailure {
+	t.Helper()
+
+	if len(res.Failures) != 1 {
+		t.Fatalf("Sync() reported %d instance failures, want 1 (%+v)", len(res.Failures), res.Failures)
+	}
+	if got := res.Failures[0].Instance; got != instance {
+		t.Fatalf("Sync() blamed instance %q, want %q", got, instance)
+	}
+
+	return res.Failures[0]
+}
+
+func assertSyncFailureKind(t *testing.T, failure services.InstanceFailure, want internalerror.Kind) {
+	t.Helper()
+
+	if failure.Err == nil {
+		t.Fatalf("the %s instance failed with a nil error, want a %v one", failure.Instance, want)
+	}
+	if got := internalerror.KindOf(failure.Err); got != want {
+		t.Fatalf("the %s instance failed with kind %v, want %v (%v)",
+			failure.Instance, got, want, failure.Err)
+	}
 }
 
 func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
@@ -295,15 +330,21 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 			m := newSyncMocks(t)
 			m.acquiredLease()
 			m.matchingIdentity()
+			m.linkedPending()
 
 			conn := m.connector("github")
 			// No SetCursor is declared: the strict controller fails any checkpoint of an uncommitted batch.
 			tt.setup(m, conn)
 
-			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-			assertSyncKind(t, err, tt.want)
-			if tt.wantCause != nil && !errors.Is(err, tt.wantCause) {
-				t.Errorf("Sync() error = %v, want it to wrap %v", err, tt.wantCause)
+			res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			if err != nil {
+				t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+			}
+
+			failure := onlySyncFailure(t, res, "github")
+			assertSyncFailureKind(t, failure, tt.want)
+			if tt.wantCause != nil && !errors.Is(failure.Err, tt.wantCause) {
+				t.Errorf("the github instance failed with %v, want it to wrap %v", failure.Err, tt.wantCause)
 			}
 		})
 	}
@@ -330,12 +371,107 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 	m.store.EXPECT().UpsertDocuments(gomock.Any(), nil).Return(nil)
 	m.store.EXPECT().SetCursor(gomock.Any(), "github", first).Return(nil)
 	m.linkedBatches(1)
+	m.linkedPending()
 
-	_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
-	assertSyncKind(t, err, internalerror.KindInternal)
+	res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+	}
+	assertSyncFailureKind(t, onlySyncFailure(t, res, "github"), internalerror.KindInternal)
 
 	if stream.yields != 2 {
 		t.Errorf("connector yielded %d items, want 2 — the round must abandon the stream, not drain it", stream.yields)
+	}
+}
+
+func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		doc  lore.Document
+		want []string
+	}{
+		{
+			name: "the source names another instance",
+			doc:  syncDocOf("gitlab", "github:pr:1"),
+			want: []string{`"github:pr:1"`, `"gitlab"`, "github"},
+		},
+		{
+			name: "the document id lands in another instance's namespace",
+			doc:  syncDocOf("github", "gitlab:pr:1"),
+			want: []string{`"gitlab:pr:1"`, `"github:"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			m.linkedPending()
+
+			conn := m.connector("github")
+			conn.EXPECT().Changes(gomock.Any(), nil).
+				Return(newSyncStream(syncBatch(lore.Cursor{"page": "1"}, tt.doc)).seq())
+			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+			// No UpsertDocuments and no SetCursor are declared: the batch must be refused
+			// before it is written, and the cursor must not move past it.
+
+			res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			if err != nil {
+				t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+			}
+
+			failure := onlySyncFailure(t, res, "github")
+			assertSyncFailureKind(t, failure, internalerror.KindBadRequest)
+
+			message := syncMessage(t, failure.Err)
+			for _, want := range tt.want {
+				if !strings.Contains(message, want) {
+					t.Errorf("the github instance failed with %q, want it to name %s", message, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncRunsTheRemainingInstancesAfterOneFails(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+
+	doc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
+	cursor := lore.Cursor{"last_edited_time": "no-1"}
+
+	broken, healthy := m.connector("github"), m.connector("notion")
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	broken.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncFailure(errSyncStore)).seq())
+
+	m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil)
+	healthy.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream(syncBatch(cursor, doc)).seq())
+	m.store.EXPECT().UpsertDocuments(gomock.Any(), []lore.Document{doc}).Return(nil)
+	m.chunker.EXPECT().Chunk(doc).Return(syncChunks(doc.ID, "body"))
+	m.emb.EXPECT().Embed(gomock.Any(), []string{"body"}).Return([][]float32{{0.5}}, nil)
+	m.store.EXPECT().ReplaceChunks(gomock.Any(), doc.ID,
+		withSyncVectors(syncChunks(doc.ID, "body"), [][]float32{{0.5}})).Return(nil)
+	// The only SetCursor declared is the healthy instance's: the broken one committed nothing.
+	m.store.EXPECT().SetCursor(gomock.Any(), "notion", cursor).Return(nil)
+	m.linkedBatches(1)
+	m.linkedPending()
+
+	res, err := m.orchestrator(broken, healthy).Sync(context.Background(), services.SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want a round that reports the failure and carries on", err)
+	}
+
+	failure := onlySyncFailure(t, res, "github")
+	if !errors.Is(failure.Err, errSyncStore) {
+		t.Errorf("the github instance failed with %v, want it to wrap %v", failure.Err, errSyncStore)
 	}
 }
 

@@ -6,12 +6,12 @@ it read, and the command that proves the credential works.
 Lore is **read-only toward every external source**. No source connector
 package contains a write verb: GitLab and Jira are `GET`-only, and the only
 non-GET requests among the four source connectors are GitHub's GraphQL
-*query* POST (`internal/connectors/github/client.go:138`) and Notion's
-`POST /v1/search` (`internal/connectors/notion/client.go:212`), both read
+*query* POST (`plugins/sources/github/client.go:138`) and Notion's
+`POST /v1/search` (`plugins/sources/notion/client.go:212`), both read
 endpoints. There is no `mutation`, `PUT`, `PATCH` or `DELETE` in any source
 connector. (The embedder and LLM clients do POST — to their model
 endpoints, through the shared `post()` helper,
-`internal/connectors/httpretry/httpretry.go:78-79` — but that is the
+`sdk/httpx/httpx.go:78-79` — but that is the
 outbound traffic [Fully local](fully-local.md) covers, not a source
 connector writing back to a provider.)
 
@@ -44,14 +44,14 @@ Rules that hold for all four:
   `sources.<name>.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set`
   — enforced twice, at config validation
   (`internal/config/validate.go:179-186`) and again when the connector is
-  constructed (`internal/di/modules.go:200-205`).
+  constructed (`envValue` in `internal/di/modules.go`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
   silently ignored setting: `invalid configuration at ./lore.yaml: …`
   (`internal/config/config.go:167-173`).
 - **DocIDs are `<source>:<type>:<external_id>`**
-  (`internal/entities/document.go:5-29`), and `Document.URL` is always the
+  (`sdk/document.go:5-13`), and `Document.URL` is always the
   canonical web URL — the thing a citation points a human at
-  (`internal/entities/document.go:40`).
+  (`sdk/document.go:41`).
 - All examples below use obviously fake placeholders: `acme/myproject`,
   `https://acme.atlassian.net`, `PROJ`. Substitute your own.
 - Every claim about *what Lore requests* is read out of this repository and
@@ -73,9 +73,9 @@ Rules that hold for all four:
 | Issue | `issue` | issue body | `github:owner/name` |
 | Issue comment | `issue_comment` | comment body | `github:owner/name` |
 
-Evidence: `internal/connectors/github/connector.go:251-393`; the default-branch
+Evidence: `plugins/sources/github/connector.go:251-393`; the default-branch
 restriction is `defaultBranchRef` in the commits query
-(`internal/connectors/github/client.go:524-547`).
+(`plugins/sources/github/client.go:524-547`).
 
 ### What does not
 
@@ -83,7 +83,7 @@ File contents and diffs (only the *touched path list* of a commit is read),
 releases, tags, discussions, wikis, project boards, Actions runs and logs,
 deployments, org and user profiles, and branches other than the default. None
 of them appears in any query the client issues
-(`internal/connectors/github/client.go:524-665, 826-851`).
+(`plugins/sources/github/client.go:524-665, 826-851`).
 
 ### Minimum credential
 
@@ -99,7 +99,7 @@ list in `repos:`**, and exactly four read-only repository permissions:
 | `repository.pullRequests`, `pullRequest.reviews`, review `comments`, `pullRequest.commits`, commit `associatedPullRequests` | `client.go:549-633`, `client.go:540` | **Pull requests: Read-only** [vendor] |
 | `repository.issues`, `issue.comments`, `pullRequest.closingIssuesReferences` | `client.go:635-665`, `client.go:562` | **Issues: Read-only** [vendor] |
 
-Paths are relative to `internal/connectors/github/`. The endpoint and field
+Paths are relative to `plugins/sources/github/`. The endpoint and field
 lists are read out of the repository; the mapping from those to GitHub's
 fine-grained permission names is from GitHub's own documentation, marked
 **[vendor]** — verify it against your token's permission screen, because
@@ -108,9 +108,9 @@ GitHub can retire or rename a permission without Lore noticing.
 Nothing beyond those four is used. The token reaches only the `Authorization:
 Bearer` header, alongside `Accept: application/vnd.github+json` and
 `X-GitHub-Api-Version: 2022-11-28`
-(`internal/connectors/github/client.go:197-199`); no code path logs a header,
+(`plugins/sources/github/client.go:197-199`); no code path logs a header,
 and error strings carry a status plus the API's own message, never a
-credential (`internal/connectors/github/client.go:221`, `:286-309`).
+credential (`plugins/sources/github/client.go:221`, `:286-309`).
 
 A classic PAT also authenticates — the client only sends a bearer token, so it
 cannot tell the two apart — but the narrowest classic scope that reaches
@@ -120,7 +120,8 @@ repository you can see [vendor]. Prefer fine-grained.
 GitHub Enterprise Server: the connector accepts an API root
 (`NewConnector(token, repos, baseURL)` — `connector.go:67-79`), but
 `lore.yaml` exposes no key for it and the wiring passes an empty string
-(`internal/di/modules.go:166`), so today only `github.com` is reachable.
+(`newConnectors` in `internal/di/modules.go`), so today only `github.com` is
+reachable.
 
 ### `lore.yaml`
 
@@ -173,11 +174,11 @@ commands is the end-to-end proof no matter what else is configured: the
 `github` line in `lore status` exists only after a batch committed
 (`internal/transport/cli/status.go:36-44`). An unknown name is refused:
 `unknown source "<name>"; this workspace has <the configured names>`
-(`internal/services/sync.go:177-178`). `--source` cannot be combined with
-`--reembed`: `cannot re-embed a single source: a re-embed wipes every
-source's chunks and rewinds every cursor, so it must run across the whole
-workspace` (`internal/services/sync.go:93-96`). The MCP `sync_now` tool's
-`source` field and gRPC `Trigger`'s `source` field are the same filter.
+(`selectConnectors` in `internal/services/sync.go`). `--source` cannot be
+combined with `--reembed`: `cannot re-embed a single source: a re-embed wipes
+every source's chunks and rewinds every cursor, so it must run across the
+whole workspace` (`Sync` in `internal/services/sync.go`). The MCP `sync_now`
+tool's `source` field and gRPC `Trigger`'s `source` field are the same filter.
 
 Failure looks like this (exit 1, and the token itself never appears):
 
@@ -187,10 +188,10 @@ lore: connector github could not read changes: github acme/myproject: POST https
 ```
 
 The `connector github could not read changes` prefix is Lore's
-(`internal/services/sync.go:329-331`), `github acme/myproject` names the
-repository being walked (`internal/connectors/github/connector.go:101`), and
+(`syncConnector` in `internal/services/sync.go`), `github acme/myproject` names
+the repository being walked (`plugins/sources/github/connector.go:101`), and
 the rest is the request line, the HTTP status and GitHub's own message
-(`internal/connectors/github/client.go:221`). Read it as:
+(`plugins/sources/github/client.go:221`). Read it as:
 
 | Status | Almost always means |
 |---|---|
@@ -212,7 +213,7 @@ To rotate, mint the replacement, `export LORE_GITHUB_TOKEN=<new>`, re-run
 `lore sync`, then delete the old token. Nothing has to change in `lore.yaml`
 — it stores the variable name, not the value — and the index survives, since
 cursors are per-source and per-repo, not per-credential
-(`internal/connectors/github/connector.go:459-474`). Revoking is enough to
+(`plugins/sources/github/connector.go:459-474`). Revoking is enough to
 stop all ingestion: with no valid token the connector cannot read, and Lore
 has no cached credential anywhere.
 
@@ -236,7 +237,7 @@ were introduced for it.
 `Document.Source` is `"gitlab"` and `RepoRef` is `gitlab:<group>/<project>`,
 so a subgroup path (`acme/platform/myproject`) round-trips intact. Each URL is
 GitLab's own `web_url` when the payload carries one, falling back to the
-constructed form above (`internal/connectors/gitlab/connector.go:172-182,
+constructed form above (`plugins/sources/gitlab/connector.go:172-182,
 272, 309, 419`). The sync watermark is GitLab's own filter on each list
 endpoint — `updated_after` for merge requests and issues, `since` for commit
 history — checkpointed per batch like every other connector.
@@ -286,7 +287,7 @@ project addressed by its URL-encoded namespaced path (`acme%2Fmyproject`):
 | `GET /projects/:path/issues` | `order_by=updated_at`, `sort=asc`, `updated_after` (only when resuming), `per_page`, `page` | `client.go:441-446` | `read_api` [vendor] |
 | `GET /projects/:path/issues/:iid/notes` | `order_by=created_at`, `sort=asc`, `per_page`, `page` | `client.go:453-455` | `read_api` [vendor] |
 
-Paths are relative to `internal/connectors/gitlab/`. `per_page=100` and the
+Paths are relative to `plugins/sources/gitlab/`. `per_page=100` and the
 `page` cursor are set by the shared pager (`client.go:348-358`), which follows
 GitLab's `X-Next-Page` response header and treats a full page as evidence of
 another one when GitLab omits the pagination headers
@@ -323,7 +324,7 @@ Unlike Jira, `base_url` is optional here: absent means `https://gitlab.com`.
 A project entry that is not a `group/project` path is caught one step later,
 by the connector rather than the loader:
 `gitlab: invalid project "myproject": want "group/project"`
-(`internal/connectors/gitlab/connector.go:151-153`).
+(`plugins/sources/gitlab/connector.go:151-153`).
 
 ### `lore source add gitlab`
 
@@ -382,9 +383,9 @@ sync lock: free
 ```
 
 Failure carries the same three parts as GitHub — Lore's prefix
-(`internal/services/sync.go:329-331`), the project being walked
-(`internal/connectors/gitlab/connector.go:110`), then the request line, status
-and GitLab's own message (`internal/connectors/gitlab/client.go:129`,
+(`syncConnector` in `internal/services/sync.go`), the project being walked
+(`plugins/sources/gitlab/connector.go:110`), then the request line, status
+and GitLab's own message (`plugins/sources/gitlab/client.go:129`,
 `:196-213`):
 
 ```console
@@ -393,7 +394,7 @@ lore: connector gitlab could not read changes: gitlab acme/myproject: GET https:
 ```
 
 Any URL echoed that way is scrubbed of `private_token` and `access_token`
-query parameters first (`internal/connectors/gitlab/client.go:179-194`) —
+query parameters first (`plugins/sources/gitlab/client.go:179-194`) —
 belt and braces, since Lore only ever sends the header form.
 
 | Status | Almost always means |
@@ -420,14 +421,14 @@ the workspace), not juggling several tokens.
 
 Pages only — one `page` document per page, its title from whichever property
 has type `title`, its body the page's block tree flattened to text
-(`internal/connectors/notion/connector.go:153-185`). Blocks are walked
+(`plugins/sources/notion/connector.go:153-185`). Blocks are walked
 recursively but a `child_page` block is not descended into, because that page
-arrives as its own document (`internal/connectors/notion/client.go:236-240`).
+arrives as its own document (`plugins/sources/notion/client.go:236-240`).
 Trashed pages are skipped (`connector.go:113`,
-`internal/connectors/notion/client.go:109-110`).
+`plugins/sources/notion/client.go:109-110`).
 
 Notion documents carry **no** `RepoRef` and **no** `Author`
-(`internal/connectors/notion/connector.go:174-184`) — the connector never
+(`plugins/sources/notion/connector.go:174-184`) — the connector never
 asks Notion who anybody is.
 
 ### What does not
@@ -456,7 +457,7 @@ An **internal integration** in your own workspace
 | `GET /v1/pages/{id}` | `client.go:269-275` | confirms a `root_pages` id and walks a page parent |
 | `GET /v1/blocks/{id}` | `client.go:285-291` | walks a block parent when a page is nested inside a block |
 
-Paths are relative to `internal/connectors/notion/`. Every request sends
+Paths are relative to `plugins/sources/notion/`. Every request sends
 `Authorization: Bearer` plus `Notion-Version: 2026-03-11`
 (`client.go:21`, `client.go:351-352`).
 
@@ -478,7 +479,8 @@ on it:
 
 Notion's API host is not configurable: the wiring passes an empty base URL and
 the client defaults to `https://api.notion.com`
-(`internal/di/modules.go:182`, `internal/connectors/notion/client.go:18, 52-55`).
+(`newConnectors` in `internal/di/modules.go`,
+`plugins/sources/notion/client.go:18, 52-55`).
 
 ### `lore.yaml`
 
@@ -539,10 +541,10 @@ lore: connector notion could not read changes: notion: POST https://api.notion.c
 ```
 
 `connector notion could not read changes` is Lore's
-(`internal/services/sync.go:329-331`), `notion:` is the connector's
-(`internal/connectors/notion/connector.go:141-145`), and the tail after
+(`syncConnector` in `internal/services/sync.go`), `notion:` is the connector's
+(`plugins/sources/notion/connector.go:141-145`), and the tail after
 `status 401:` is Notion's own message [vendor]
-(`internal/connectors/notion/client.go:374, 417-431`).
+(`plugins/sources/notion/client.go:374, 417-431`).
 
 The second failure does not look like one: a sync that succeeds and indexes
 **nothing**.
@@ -574,7 +576,7 @@ stay until you rebuild it — the index is derived data and safe to delete).
 ## Jira
 
 Jira **Cloud** only. The connector calls `/rest/api/3/search/jql`
-(`internal/connectors/jira/client.go:268-277`), an endpoint Jira Server and
+(`plugins/sources/jira/client.go:268-277`), an endpoint Jira Server and
 Data Center do not expose, so this connector does not support them [vendor].
 
 ### What gets ingested
@@ -585,9 +587,9 @@ Data Center do not expose, so this connector does not support them [vendor].
 | Comment | `ticket_comment` | `Comment on PROJ-123` | `<base_url>/browse/PROJ-123?focusedCommentId=<id>` |
 
 Only five fields are requested per issue — `summary,description,created,updated,reporter`
-(`internal/connectors/jira/client.go:35`) — plus its comments. Description and
+(`plugins/sources/jira/client.go:35`) — plus its comments. Description and
 comment bodies arrive as Atlassian Document Format and are flattened to plain
-text (`connector.go:193, 209`; `internal/connectors/jira/adf.go`). Jira
+text (`connector.go:193, 209`; `plugins/sources/jira/adf.go`). Jira
 documents carry no `RepoRef` (`connector.go:221-227`).
 
 The bare issue key is the document's external id on purpose: it is what makes
@@ -606,7 +608,7 @@ clause (`connector.go:233-245`).
 
 An **Atlassian API token** (id.atlassian.com → Security → API tokens) for a
 user account, sent as HTTP basic auth — `base64(email + ":" + token)`
-(`internal/connectors/jira/client.go:73-83`). Jira has no read-only token type
+(`plugins/sources/jira/client.go:73-83`). Jira has no read-only token type
 [vendor]: **the token inherits every permission of the account it belongs to**,
 so least privilege here is a property of the *account*, not of the token. Use a
 dedicated integration user whose only relevant grant is:
@@ -620,7 +622,7 @@ dedicated integration user whose only relevant grant is:
 | `GET /rest/api/3/search/jql?jql=…&fields=summary,description,created,updated,reporter&maxResults=50` | `client.go:265-290` | JQL search returns only issues in projects the account can browse |
 | `GET /rest/api/3/issue/{key}/comment?startAt=…&maxResults=100&orderBy=created` | `client.go:294-314` | comments of a browsable issue |
 
-Paths are relative to `internal/connectors/jira/`. Both are GET; the
+Paths are relative to `plugins/sources/jira/`. Both are GET; the
 connector issues no other request. The JQL it builds is
 `project IN (PROJ, PLATFORM) AND updated >= "<watermark - 24h>" ORDER BY updated ASC`
 (`connector.go:26-28, 233-245`) — the 24-hour slack absorbs JQL's
@@ -732,14 +734,14 @@ The design-level statement lives in
 is what the code does.
 
 1. **Read-only, structurally.** No source connector package imports anything
-   beyond entities, the standard library, the shared ref scanner and the
+   beyond `lore`, the standard library, the shared ref scanner and the
    shared retry helper, and each issues read requests only
    — GitLab and Jira are `GET`-only, and GitHub's GraphQL query POST and
    Notion's `POST /v1/search` are the sole non-GET calls among the four
    source connectors, both read endpoints. No `mutation`, `PUT`, `PATCH` or
    `DELETE` exists in any source connector. (The embedder and LLM clients do
    POST, to their model endpoints, through the same shared `post()` helper —
-   `internal/connectors/httpretry/httpretry.go:78-79` — that's the outbound
+   `sdk/httpx/httpx.go:78-79` — that's the outbound
    traffic [Fully local](fully-local.md) covers, not a source-connector
    write.) A compromised Lore process cannot edit a merge request, close an
    issue, or write a Notion page, because the capability is absent, not
@@ -751,19 +753,20 @@ is what the code does.
    variable is a startup error that names the variable to export
    (`internal/config/validate.go:178-187`).
 3. **Secrets never reach disk or logs.** A credential is read from the
-   environment at connector construction (`internal/di/modules.go:200-205`)
-   and lives only in a request header — `Authorization` for GitHub, Notion and
-   Jira, `PRIVATE-TOKEN` for GitLab. The index schema has nowhere to put one:
+   environment at connector construction (`envValue` in
+   `internal/di/modules.go`) and lives only in a request header —
+   `Authorization` for GitHub, Notion and Jira, `PRIVATE-TOKEN` for GitLab.
+   The index schema has nowhere to put one:
    its tables are `documents`, `chunks`, `edges`, `pending_refs`, `cursors`,
    `sync_lock` and `meta` (`internal/repositories/sqlite/schema.go:19-95`).
    Error strings carry a method, a URL, an HTTP status and the API's own
    message — bounded to 512 bytes so an HTML error page cannot flood a log
-   (`internal/connectors/github/client.go:36`,
-   `internal/connectors/notion/client.go:35`,
-   `internal/connectors/jira/client.go:30`) — and never a header. The GitLab
+   (`plugins/sources/github/client.go:36`,
+   `plugins/sources/notion/client.go:35`,
+   `plugins/sources/jira/client.go:30`) — and never a header. The GitLab
    connector additionally scrubs `private_token` and `access_token` query
    parameters out of any URL it echoes
-   (`internal/connectors/gitlab/client.go:179-194`), because GitLab documents
+   (`plugins/sources/gitlab/client.go:179-194`), because GitLab documents
    that query form even though Lore never uses it.
 4. **What a compromised token would expose.** The token's own read scope, not
    Lore's index. Read access to the private prose of your engineering process:

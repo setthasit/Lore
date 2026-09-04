@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // Defaults applied at load when the corresponding key is absent.
@@ -21,88 +23,131 @@ const (
 	DefaultWalkDepth         = 3
 	DefaultTopK              = 12
 	DefaultSchedulerInterval = Duration(30 * time.Minute)
+
+	// DefaultRepoPlugin reads a registered clone. Naming a clone without naming
+	// a code plugin means the only one a clone can have.
+	DefaultRepoPlugin = "git"
 )
 
-// Config is a parsed lore.yaml workspace configuration.
+// Config is a parsed lore.yaml workspace configuration. It names no source and
+// no provider: `use:` selects a plugin from the registry and `with:` is that
+// plugin's own business, so reaching a new system is a configuration change
+// this type never has to learn about.
 type Config struct {
-	Workspace string    `yaml:"workspace"`
-	IndexPath string    `yaml:"index_path"`
-	Sources   Sources   `yaml:"sources"`
-	Repos     []Repo    `yaml:"repos"`
-	Query     Query     `yaml:"query"`
-	Embedder  Embedder  `yaml:"embedder"`
-	LLM       *LLM      `yaml:"llm"`
-	Scheduler Scheduler `yaml:"scheduler"`
-	Server    Server    `yaml:"server"`
+	Workspace string       `yaml:"workspace"`
+	IndexPath string       `yaml:"index_path"`
+	Plugins   []PluginDecl `yaml:"plugins"`
+	Sources   []Instance   `yaml:"sources"`
+	Providers []Instance   `yaml:"providers"`
+	Embedder  RoleBinding  `yaml:"embedder"`
+	LLM       *RoleBinding `yaml:"llm"`
+	Repos     []RepoDecl   `yaml:"repos"`
+	Query     Query        `yaml:"query"`
+	Scheduler Scheduler    `yaml:"scheduler"`
+	Server    Server       `yaml:"server"`
 }
 
-// Sources declares what to ingest. Every source is optional; an absent source
-// is never synced and never required.
-type Sources struct {
-	GitHub *GitHubSource `yaml:"github"`
-	GitLab *GitLabSource `yaml:"gitlab"`
-	Notion *NotionSource `yaml:"notion"`
-	Jira   *JiraSource   `yaml:"jira"`
+// PluginDecl declares an external plugin this workspace needs. Name is what
+// `use:` refers to, From is the module its binary is resolved from, and PubKey,
+// when set, is the key that binary's signature must verify against.
+type PluginDecl struct {
+	Name   string `yaml:"name"`
+	From   string `yaml:"from"` // "github.com/jdoe/lore-linear@v0.3.1"
+	PubKey string `yaml:"pubkey"`
 }
 
-// GitHubSource ingests commits, PRs, reviews and issues for Repos. Independent
-// of local clones: no repository on disk is needed.
-type GitHubSource struct {
-	TokenEnv string   `yaml:"token_env"`
-	Repos    []string `yaml:"repos"` // "acme/myproject"
+// Instance is one configured use of a plugin: two Jira sites are two instances
+// of one plugin, not two plugins. With is captured as a node instead of being
+// decoded, because only the plugin the instance names knows which keys exist.
+type Instance struct {
+	ID   string     `yaml:"id"`
+	Use  string     `yaml:"use"`
+	With *yaml.Node `yaml:"with"`
 }
 
-// GitLabSource ingests commits, merge requests, discussion threads, issues and
-// notes for Projects. BaseURL is optional: absent means gitlab.com, and a
-// self-managed instance names its own root.
-type GitLabSource struct {
-	BaseURL  string   `yaml:"base_url"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects"` // "acme/myproject", "acme/platform/myproject"
+// UnmarshalYAML reads an instance a key at a time. It exists because a
+// yaml.Node field cannot be filled by a decoder in KnownFields mode: the
+// decoder walks the node's own struct fields and rejects the plugin's keys as
+// unknown. Keys are matched here instead, so an instance still refuses a
+// misspelling rather than ignoring it.
+func (i *Instance) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: an instance must be a mapping that names a plugin with a use key", node.Line)
+	}
+
+	for pair := 0; pair+1 < len(node.Content); pair += 2 {
+		key, value := node.Content[pair], node.Content[pair+1]
+		switch key.Value {
+		case "id":
+			if err := value.Decode(&i.ID); err != nil {
+				return err
+			}
+		case "use":
+			if err := value.Decode(&i.Use); err != nil {
+				return err
+			}
+		case "with":
+			i.With = value
+		default:
+			return fmt.Errorf("line %d: field %s not found in an instance, which has id, use and with",
+				key.Line, key.Value)
+		}
+	}
+	return nil
 }
 
-type NotionSource struct {
-	TokenEnv  string   `yaml:"token_env"`
-	RootPages []string `yaml:"root_pages"`
+// Ident is the identity the engine keys on: the sync cursor key, the value of
+// every document's source, and the document id prefix. It defaults to the
+// plugin name, so a workspace with one instance of a plugin never spells an id.
+func (i Instance) Ident() string {
+	if i.ID != "" {
+		return i.ID
+	}
+	return i.Use
 }
 
-type JiraSource struct {
-	BaseURL  string   `yaml:"base_url"`
-	EmailEnv string   `yaml:"email_env"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects"`
+// WithValues decodes the captured `with:` block into generic values, which is
+// what the registry checks against the plugin's manifest before the plugin
+// decodes the same block strictly itself. An absent or empty block is a nil
+// map: a plugin whose every field is optional is configured by naming it alone.
+func (i Instance) WithValues() (map[string]any, error) {
+	if i.With == nil || i.With.Tag == "!!null" {
+		return nil, nil
+	}
+
+	var values map[string]any
+	if err := i.With.Decode(&values); err != nil {
+		return nil, internalerror.NewBadRequestError("with: for instance "+strconv.Quote(i.Ident())+
+			" must be a mapping of configuration keys", err)
+	}
+	return values, nil
 }
 
-// Repo registers a local clone used for blame and log only. Zero repos is a
-// valid ask-only workspace.
-type Repo struct {
+// RoleBinding binds a role — embedding, synthesis — to a provider instance and
+// one of its models. Adding a role later adds a key, not plumbing.
+type RoleBinding struct {
+	Provider string `yaml:"provider"` // a providers[] id, or a provider plugin used with its defaults
+	Model    string `yaml:"model"`
+
+	// Dimensions is the vector width, for drivers whose models do not imply one;
+	// `ollama show <model>` reports it. Zero leaves the width to the driver.
+	Dimensions int `yaml:"dimensions"`
+}
+
+// RepoDecl registers a local clone, read for blame and log only. Remote maps
+// the clone onto the forge a source ingests, which is what lets a chain reach
+// from a line of code to the discussion around it. Zero repos is a valid
+// ask-only workspace.
+type RepoDecl struct {
 	Path   string `yaml:"path"`
-	Remote string `yaml:"remote"` // "github:acme/myproject"; maps the clone onto a source repo
+	Use    string `yaml:"use"`    // code plugin; DefaultRepoPlugin when absent
+	Remote string `yaml:"remote"` // "github:acme/myproject", named after the forge, not the instance
 }
 
 type Query struct {
 	EventWindow Duration `yaml:"event_window"` // ± window for event resolution
 	WalkDepth   int      `yaml:"walk_depth"`
 	TopK        int      `yaml:"top_k"`
-}
-
-type Embedder struct {
-	Provider string `yaml:"provider"` // openai | ollama
-	Model    string `yaml:"model"`
-	BaseURL  string `yaml:"base_url"` // default: the provider's own endpoint
-
-	// Dimensions is the vector width. Required for ollama, whose models do not
-	// imply one; `ollama show <model>` reports it.
-	Dimensions int `yaml:"dimensions"`
-}
-
-// LLM configures synthesis for the CLI and gRPC surfaces. Optional: MCP never
-// needs it.
-type LLM struct {
-	Provider  string `yaml:"provider"` // openai | anthropic | zai | ollama
-	Model     string `yaml:"model"`
-	APIKeyEnv string `yaml:"api_key_env"`
-	BaseURL   string `yaml:"base_url"` // default: the provider's own endpoint
 }
 
 type Scheduler struct {
@@ -122,8 +167,10 @@ type MTLS struct {
 	ClientCA string `yaml:"client_ca"`
 }
 
-// Duration is a time.Duration that additionally accepts a whole-day "30d" form,
-// which time.ParseDuration rejects.
+// Duration is a time.Duration in the form the whole system speaks, including
+// the whole-day "30d" that time.ParseDuration rejects. The spelling is the
+// contract's, not this package's, so a plugin declaring a duration field and the
+// workspace configuration cannot drift apart.
 type Duration time.Duration
 
 func (d Duration) String() string {
@@ -135,7 +182,7 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&raw); err != nil {
 		return err
 	}
-	parsed, err := parseDuration(raw)
+	parsed, err := lore.ParseDuration(raw)
 	if err != nil {
 		return fmt.Errorf("line %d: invalid duration %q: %w", node.Line, raw, err)
 	}
@@ -143,13 +190,35 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func parseDuration(raw string) (time.Duration, error) {
-	if days, ok := strings.CutSuffix(raw, "d"); ok {
-		if n, err := strconv.Atoi(days); err == nil {
-			return time.Duration(n) * 24 * time.Hour, nil
-		}
+// Decode reads one configuration document, rejecting a key no field claims. It
+// applies no defaults and validates nothing, which is what makes it usable by
+// the commands that read a configuration in order to rewrite it.
+//
+// It is exported because it is the only strict decoder in the repository: a
+// second one drifts from this one silently, and a key that Load rejects but an
+// editing command accepts writes a file the next Load refuses.
+func Decode(r io.Reader) (*Config, error) {
+	cfg, err := decode(r)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("invalid configuration", err)
 	}
-	return time.ParseDuration(raw)
+	return cfg, nil
+}
+
+// decode is the repository's only strict decoder. Load and Decode differ in
+// nothing but the error they report, so they must not differ in what they
+// accept either.
+func decode(r io.Reader) (*Config, error) {
+	decoder := yaml.NewDecoder(r)
+	decoder.KnownFields(true)
+
+	var cfg Config
+	// An empty document decodes to a configuration of nothing rather than
+	// failing, because a file about to be filled in is not a syntax error.
+	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 // Load reads lore.yaml from path, rejects unknown keys, applies defaults and
@@ -164,12 +233,9 @@ func Load(path string) (*Config, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	decoder := yaml.NewDecoder(file)
-	decoder.KnownFields(true)
-
-	var cfg Config
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, internalerror.NewBadRequestError("invalid configuration at "+path+": "+err.Error(), err)
+	cfg, err := decode(file)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("invalid configuration at "+path, err)
 	}
 
 	if err := cfg.applyDefaults(); err != nil {
@@ -178,7 +244,7 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 func (c *Config) applyDefaults() error {
@@ -210,6 +276,10 @@ func (c *Config) applyDefaults() error {
 			return err
 		}
 		c.Repos[i].Path = path
+
+		if c.Repos[i].Use == "" {
+			c.Repos[i].Use = DefaultRepoPlugin
+		}
 	}
 	return nil
 }

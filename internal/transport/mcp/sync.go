@@ -9,6 +9,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/internal/transport"
 )
 
 const (
@@ -22,7 +23,7 @@ Use this when sync_status shows the source you need is stale, or when the user s
 
 Rounds are exclusive across every process sharing this workspace. A round that cannot take the lock fails naming the holder and how long ago it last checked in, and writes nothing — report that rather than retrying in a loop. Progress is checkpointed per batch, so a round that dies partway keeps what it committed and the next one resumes there.
 
-Returns what the round covered: synced names the source, or all configured sources, and took_over_from appears only when this round reclaimed the lock from a holder that had stopped checking in.`
+Returns what the round covered: synced names the source, or all configured sources, and took_over_from appears only when this round reclaimed the lock from a holder that had stopped checking in. Sources fail independently, so failures lists any instance that gave up at its last checkpoint while the rest of the round committed — a populated list is a partial refresh, not a failed one.`
 
 const syncStatusDescription = `Report the state of the index: how much is stored, how fresh each source is, and whether a sync round is writing right now.
 
@@ -33,7 +34,7 @@ Every age here is whole seconds counted at the moment of this call, never a wall
 const allSources = "all configured sources"
 
 type syncNowInput struct {
-	Source string `json:"source,omitempty" jsonschema:"sync only this source, such as github, notion or jira; omit it to sync every configured source"`
+	Source string `json:"source,omitempty" jsonschema:"sync only this source instance, named by the id it has in the workspace configuration; omit it to sync every configured source"`
 }
 
 type syncStatusInput struct{}
@@ -41,6 +42,16 @@ type syncStatusInput struct{}
 type syncAcknowledgment struct {
 	Synced       string           `json:"synced"`
 	TookOverFrom *displacedHolder `json:"took_over_from,omitempty"`
+
+	// Failures is present only when an instance gave up while the round carried
+	// on: what the other instances committed is durable, so this is a partial
+	// success the caller should report rather than retry blindly.
+	Failures []instanceFailure `json:"failures,omitempty"`
+}
+
+type instanceFailure struct {
+	Instance string `json:"instance"`
+	Error    string `json:"error"`
 }
 
 type displacedHolder struct {
@@ -124,6 +135,10 @@ func newSyncAcknowledgment(source string, result services.SyncResult, now time.T
 			Holder:                  result.TookOverFrom.Holder,
 			LastHeartbeatSecondsAgo: secondsAgo(now, result.TookOverFrom.HeartbeatAt),
 		}
+	}
+	for _, failure := range result.Failures {
+		_, message := transport.Classify(failure.Err)
+		ack.Failures = append(ack.Failures, instanceFailure{Instance: failure.Instance, Error: message})
 	}
 
 	return ack

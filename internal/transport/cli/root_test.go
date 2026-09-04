@@ -16,6 +16,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/transport/mcp"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -60,7 +61,7 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 		return rt, func() error { res.released = true; return nil }, nil
 	}
 
-	root := newRootCommand(resolve)
+	root := newRootCommand(resolve, registry.New(lore.Host{}))
 	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&errOut)

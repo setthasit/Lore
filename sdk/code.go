@@ -22,18 +22,18 @@ type CodeRepo interface {
 // LineStart and LineEnd are 1-based and inclusive; Time is the author time in
 // UTC. Lines is the blamed source text, one entry per line in span order.
 type BlameSpan struct {
-	SHA       string
-	LineStart int
-	LineEnd   int
-	Author    string
-	Time      time.Time
-	Lines     []string
+	SHA       string    `json:"sha"`
+	LineStart int       `json:"line_start"`
+	LineEnd   int       `json:"line_end"`
+	Author    string    `json:"author"`
+	Time      time.Time `json:"time"`
+	Lines     []string  `json:"lines"`
 }
 
 // Time is the author time in UTC.
 type CommitRef struct {
-	SHA     string
-	Author  string
-	Time    time.Time
-	Subject string
+	SHA     string    `json:"sha"`
+	Author  string    `json:"author"`
+	Time    time.Time `json:"time"`
+	Subject string    `json:"subject"`
 }
