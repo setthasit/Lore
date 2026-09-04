@@ -46,7 +46,8 @@ stays, as one anchor type among several.
 
 Δ17 is superseded by Δ18–Δ24: the seam it protected is now the shipped
 contract, and the transport it deferred is specified in
-[09](09-plugin-protocol.md) — frozen only once M10 ships.
+[09](09-plugin-protocol.md), which shipped with external plugins and is now
+frozen — it evolves additively from here.
 
 ## Unchanged (deliberately)
 
