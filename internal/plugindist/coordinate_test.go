@@ -149,3 +149,33 @@ func TestCoordinateLocalWarnsAndIsNotLocked(t *testing.T) {
 		t.Fatalf("a pinned coordinate warns: %q", remote.Warning())
 	}
 }
+
+// A name becomes a directory in the plugin cache, so a name that is not one
+// path component would let a declaration reach outside it: an install writes
+// where the name says, and `lore plugin remove` deletes what it says.
+func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
+	t.Parallel()
+
+	const from = "github.com/jdoe/lore-linear@v0.3.1"
+	for _, name := range []string{"..", "../..", "../pwned", "linear/../..", "a/b", `a\b`, "/etc/lore", ".", "-flag", "two words"} {
+		_, err := Resolve(".", config.PluginDecl{Name: name, From: from})
+		if err == nil {
+			t.Errorf("declaring the name %q resolved, want a refusal", name)
+			continue
+		}
+		if !internalerror.IsBadRequest(err) {
+			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
+		}
+		// Install derives a name from a repository, so it needs the same rule.
+		if _, err := ResolveInstall(".", name, from); err == nil {
+			t.Errorf("installing under the name %q resolved, want a refusal", name)
+		}
+	}
+
+	// The accept case: the names an operator actually writes still resolve.
+	for _, name := range []string{"linear", "jira-acme", "acme_crm", "s3"} {
+		if _, err := Resolve(".", config.PluginDecl{Name: name, From: from}); err != nil {
+			t.Errorf("name %q was refused: %v", name, err)
+		}
+	}
+}

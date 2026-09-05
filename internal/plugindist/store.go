@@ -100,6 +100,9 @@ func (s *Store) ManifestPath(name, version string) string {
 
 // WriteManifest caches the handshake's answer beside the binary.
 func (s *Store) WriteManifest(name, version string, raw []byte) error {
+	if err := checkName(name); err != nil {
+		return err
+	}
 	path := s.ManifestPath(name, version)
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		return internalerror.NewInternalError("cannot cache the manifest at "+path, err)
@@ -150,6 +153,9 @@ func (s *Store) Binary(name string, coord Coordinate, lock *Lock) (string, error
 func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error) {
 	if name == "" {
 		name = coord.Name
+	}
+	if err := checkName(name); err != nil {
+		return Report{}, err
 	}
 	report := Report{Name: name, Origin: coord.Origin, Platform: s.platform.Key(), Warning: coord.Warning()}
 
@@ -266,6 +272,9 @@ func (s *Store) write(name, version, binaryName string, body []byte) (path, dige
 // Remove deletes every cached version of a plugin and reports how many there
 // were, which is what `lore plugin remove` tells the user it did.
 func (s *Store) Remove(name string) (int, error) {
+	if err := checkName(name); err != nil {
+		return 0, err
+	}
 	dir := filepath.Join(s.root, pluginsDirName, name)
 
 	entries, err := os.ReadDir(dir)

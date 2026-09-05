@@ -173,3 +173,36 @@ func TestPluginStoreRootIsOverridable(t *testing.T) {
 		t.Fatalf("root = %q, want the overridden directory", root)
 	}
 }
+
+// The store is reached with a command-line argument as well as with a resolved
+// coordinate, and it is the component holding the delete: `lore plugin remove`
+// must refuse a name that leaves the cache rather than take the workspace
+// indexes sitting beside it.
+func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	sentinel := filepath.Join(scene.store.Root(), "myproject.db")
+	if err := os.WriteFile(sentinel, []byte("an index the cache sits beside"), 0o600); err != nil {
+		t.Fatalf("write the sentinel: %v", err)
+	}
+
+	for _, name := range []string{"..", "../..", "../pwned"} {
+		versions, err := scene.store.Remove(name)
+		if err == nil {
+			t.Errorf("removing %q succeeded, want a refusal", name)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
+		}
+		if versions != 0 {
+			t.Errorf("removing %q reported %d deleted versions", name, versions)
+		}
+	}
+
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("a file beside the plugin cache was deleted: %v", err)
+	}
+	if _, err := os.Stat(scene.store.Root()); err != nil {
+		t.Fatalf("the cache root was deleted: %v", err)
+	}
+}

@@ -45,6 +45,26 @@ var archiveSuffixes = []string{".tar.gz", ".tgz"}
 // records must not be able to start pointing somewhere else.
 var versionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?$`)
 
+// namePattern is the shape of a plugin name. The name is one path component of
+// the plugin cache — <root>/plugins/<name>/<version> — as well as the token
+// every `use:` refers to, so a separator or a parent reference in it would name
+// a directory outside the cache: one that an install writes into and that
+// `lore plugin remove` deletes.
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// checkName refuses a name that cannot be one path component. It guards both
+// doors a name arrives through — a coordinate here, the cache in store.go —
+// because the store is reached with a command-line argument as well as with a
+// resolved coordinate, and the store is what holds the delete.
+func checkName(name string) error {
+	if namePattern.MatchString(name) {
+		return nil
+	}
+	return internalerror.NewBadRequestError(label(name)+" is not a usable plugin name: a name is one"+
+		" directory in the plugin cache, so it must start with a letter or a digit and carry only letters,"+
+		" digits, \"-\" and \"_\" — name it the way `use:` should read it, such as linear", nil)
+}
+
 // Coordinate is a resolved `from:` declaration. It carries the plugin's short
 // name because every message about a plugin names it the way lore.yaml does,
 // as plugins[<name>].
@@ -84,6 +104,9 @@ func parseCoordinate(dir, name, from string, allowLatest bool) (Coordinate, erro
 	if name == "" {
 		return Coordinate{}, internalerror.NewBadRequestError(
 			"a plugin declaration needs a name: the token every `use:` refers to", nil)
+	}
+	if err := checkName(name); err != nil {
+		return Coordinate{}, err
 	}
 	if from == "" {
 		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" declares no from: — a local path"+
