@@ -94,7 +94,7 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 		"go get github.com/setthasit/Lore@v0.4.0",
 		"go get github.com/acme/lore-crm/v2@v2.0.1",
 		"go get github.com/jdoe/lore-linear@v0.3.1",
-		"go mod download",
+		"go get .",
 		"go build -o " + output + " .",
 		filepath.Base(output) + " plugin list",
 	}
@@ -265,8 +265,10 @@ func TestBuildProducesARunnableBinary(t *testing.T) {
 		t.Skip("compiling the engine takes about a minute")
 	}
 
+	// No -mod=mod here: `lore build` runs the toolchain in whatever mode the
+	// operator's environment gives it, which is readonly by default, and a
+	// sequence that only completes go.sum under -mod=mod does not work there.
 	t.Setenv("GOPROXY", "off")
-	t.Setenv("GOFLAGS", "-mod=mod")
 	t.Setenv("GOSUMDB", "off")
 
 	scratchParent := t.TempDir()

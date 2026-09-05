@@ -161,13 +161,16 @@ func Build(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 
-	// The requirements are complete after the fetches above — every module the
-	// generated root imports was named explicitly — but their checksums are not,
-	// and a build refuses to compile a module it has no sum for. Download rather
-	// than tidy, because tidy would also resolve the test dependencies of every
-	// dependency, which no binary needs.
-	if out, err := runner.Run(ctx, dir, goBin, "mod", "download"); err != nil {
-		return Result{}, toolchainError("lore build cannot download the scratch module's dependencies", out, err)
+	// The fetches above pin versions; they do not complete go.sum. `go get
+	// <module>@<version>` records the module it was asked about and nothing
+	// about what that module imports, and a build refuses to compile a package
+	// it has no sum for. Resolving the generated root itself is what completes
+	// the sums, and it keeps every version the fetches pinned. Not `mod tidy`,
+	// which would also resolve the test dependencies of every dependency; not
+	// `mod download`, which downloads the explicit requirements it already has
+	// and leaves everything they import unsummed.
+	if out, err := runner.Run(ctx, dir, goBin, "get", "."); err != nil {
+		return Result{}, toolchainError("lore build cannot resolve the generated composition root's dependencies", out, err)
 	}
 
 	printStep(progress, "compiling "+output+" — this builds the engine and every plugin in it")
