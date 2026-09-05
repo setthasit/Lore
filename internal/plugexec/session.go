@@ -185,9 +185,10 @@ func (s *session) send(ctx context.Context, env envelope, req any, timeout time.
 }
 
 // await reads the next frame for env and applies the envelope rules. An error
-// frame is returned as the plugin's error and leaves the process alive and
-// ready for the next request; anything malformed kills the session, because
-// stdout is protocol-only and there is no resynchronization point to look for.
+// frame and a malformed one both end the round; the difference is how the
+// process is asked to leave, not whether it survives one. Nothing here returns
+// to a caller with the process still running, because stdout is protocol-only
+// and there is no resynchronization point to look for.
 func (s *session) await(ctx context.Context, env envelope, timeout time.Duration) (*frame, error) {
 	f, err := s.read(ctx, env.Op, timeout)
 	if err != nil {
@@ -202,6 +203,7 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 	// the host's protocol version answers with an error, and hiding that message
 	// behind a version complaint of our own would lose the one detail it carries.
 	if f.Error != nil {
+		s.endRound(ctx, env.Op)
 		return nil, fromWire(s.instance, env.Op, f.Error)
 	}
 	if f.V != lore.APIVersion {
@@ -210,6 +212,22 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 			"answered %s with protocol version %d, host speaks %d", env.Op, f.V, lore.APIVersion)
 	}
 	return f, nil
+}
+
+// endRound leaves the process no way to outlive the round it was started for.
+// A plugin that reported an expected failure — bad credentials, throttling, a
+// missing resource — is alive and still answering, so it gets the ordered
+// shutdown the protocol promises it. One that failed the shutdown itself has
+// nothing left worth asking and is escalated instead.
+func (s *session) endRound(ctx context.Context, op string) {
+	if op == opShutdown {
+		s.abort()
+		return
+	}
+	// Every failure inside close reaps the process on its own, so its error
+	// describes a plugin that is already gone and adds nothing to the error the
+	// caller is about to report.
+	_ = s.close(ctx)
 }
 
 func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*frame, error) {

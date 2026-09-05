@@ -40,6 +40,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// A leaked plugin process is invisible to an assertion: the child stays
+	// alive, the test still passes, and only a host that runs for days notices.
+	// This makes the runtime report it instead, for every test in the package.
+	if err := os.Setenv("GODEBUG", "execwait=2"); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot arm the process-leak detector:", err)
+		os.Exit(1)
+	}
+
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -534,9 +542,9 @@ func TestUnknownKindKeepsWhatThePluginClaimed(t *testing.T) {
 	}
 }
 
-func TestErrorFrameLeavesTheProcessUsable(t *testing.T) {
-	// An expected failure is an error frame, after which the process is still
-	// alive and answers shutdown — which is what keeps it out of the crash path.
+func TestErrorFrameIsAPluginErrorNotACrash(t *testing.T) {
+	// An expected failure is an error frame: the process was still answering
+	// when it sent one, which is what keeps it out of the crash path.
 	text := script(
 		sourceManifest,
 		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","retryable":true,"kind":"rate_limit"}}`,
@@ -550,6 +558,45 @@ func TestErrorFrameLeavesTheProcessUsable(t *testing.T) {
 	}
 	if !Retryable(err) {
 		t.Errorf("error %v is not retryable, want the rate limit backed off", err)
+	}
+}
+
+func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
+	// A process lives for one round, and an error frame ends one. The plugin is
+	// still answering, so it leaves the way the protocol says it may — asked,
+	// not signalled — and exit 0 is the proof: a host that walked away instead
+	// would leave this process running for as long as the host itself lives.
+	text := script(
+		sourceManifest,
+		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","retryable":true,"kind":"rate_limit"}}`,
+		shutdownOK+"\nshutdown exit 0",
+	)
+
+	ctx := context.Background()
+	tune := testTuning()
+	session, _, err := handshake(ctx, scripted(t, text), "linear", testHost(nil), tune)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	defer session.abort()
+
+	env := session.begin(opChanges)
+	request := changesRequest{envelope: env, Instance: "linear", Cursor: cursorOrEmpty(nil)}
+	if err := session.send(ctx, env, request, tune.unary); err != nil {
+		t.Fatalf("send changes: %v", err)
+	}
+
+	var plugin *Error
+	if _, err := session.await(ctx, env, tune.unary); !errors.As(err, &plugin) {
+		t.Fatalf("await = %v (%T), want the plugin's error frame", err, err)
+	}
+
+	state := session.cmd.ProcessState
+	if state == nil {
+		t.Fatal("the process was never waited for: an error frame left it running")
+	}
+	if state.ExitCode() != 0 {
+		t.Errorf("exit code = %d, want 0: the plugin answered shutdown and should not have been signalled", state.ExitCode())
 	}
 }
 
