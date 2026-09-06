@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -212,11 +213,11 @@ func renderTable(out io.Writer, header []string, rows [][]string) []int {
 func columnWidths(header []string, rows [][]string) []int {
 	widths := make([]int, len(header))
 	for i, cell := range header {
-		widths[i] = len(cell)
+		widths[i] = utf8.RuneCountInString(cell)
 	}
 	for _, row := range rows {
 		for i, cell := range row {
-			widths[i] = max(widths[i], len(cell))
+			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
 		}
 	}
 	return widths
@@ -232,7 +233,7 @@ func tableLine(cells []string, widths []int) string {
 		if i == len(cells)-1 {
 			continue
 		}
-		for n := widths[i] - len(cell); n > 0; n-- {
+		for n := widths[i] - utf8.RuneCountInString(cell); n > 0; n-- {
 			line.WriteByte(' ')
 		}
 	}

@@ -21,6 +21,8 @@ func TestRenderPluginsOutput(t *testing.T) {
 			Origin: "external /opt/x",
 		},
 		{Manifest: lore.Manifest{Name: "ünïcode", Kind: lore.KindCode, Summary: "Multibyte name"}, Origin: "built-in"},
+		{Manifest: lore.Manifest{Name: "ünïcode-wïdest", Kind: lore.KindCode, Summary: "Widest is multibyte"}, Origin: "built-in"},
+		{Manifest: lore.Manifest{Name: "日本語", Kind: lore.KindCode, Summary: "Double-width runes count as one"}, Origin: "built-in"},
 	}
 
 	tests := []struct {
@@ -34,24 +36,28 @@ func TestRenderPluginsOutput(t *testing.T) {
 			want: "no plugins are registered — this build can ingest nothing\n",
 		},
 		{
-			name:    "columns pad to the widest cell in bytes and the summary keeps no trailing space",
+			name:    "columns pad to the widest cell in runes, not bytes and not display width",
 			entries: entries,
-			want: "NAME           KIND              ORIGIN           SUMMARY\n" +
-				"git            code              built-in         Commits and diffs\n" +
-				"linear-issues  provider (embed)  external /opt/x  Linear issues\n" +
-				"ünïcode      code              built-in         Multibyte name\n",
+			want: "NAME            KIND              ORIGIN           SUMMARY\n" +
+				"git             code              built-in         Commits and diffs\n" +
+				"linear-issues   provider (embed)  external /opt/x  Linear issues\n" +
+				"ünïcode         code              built-in         Multibyte name\n" +
+				"ünïcode-wïdest  code              built-in         Widest is multibyte\n" +
+				"日本語             code              built-in         Double-width runes count as one\n",
 		},
 		{
 			name:      "declared externals align with the table's name column",
 			entries:   entries,
 			externals: []externalRow{{name: "crm", from: "github.com/acme/lore-crm", state: "not installed — run: lore plugin install crm"}},
-			want: "NAME           KIND              ORIGIN           SUMMARY\n" +
-				"git            code              built-in         Commits and diffs\n" +
-				"linear-issues  provider (embed)  external /opt/x  Linear issues\n" +
-				"ünïcode      code              built-in         Multibyte name\n" +
+			want: "NAME            KIND              ORIGIN           SUMMARY\n" +
+				"git             code              built-in         Commits and diffs\n" +
+				"linear-issues   provider (embed)  external /opt/x  Linear issues\n" +
+				"ünïcode         code              built-in         Multibyte name\n" +
+				"ünïcode-wïdest  code              built-in         Widest is multibyte\n" +
+				"日本語             code              built-in         Double-width runes count as one\n" +
 				"\n" +
-				"crm            declared from github.com/acme/lore-crm\n" +
-				"               not installed — run: lore plugin install crm\n",
+				"crm             declared from github.com/acme/lore-crm\n" +
+				"                not installed — run: lore plugin install crm\n",
 		},
 	}
 

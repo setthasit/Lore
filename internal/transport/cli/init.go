@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -268,6 +269,6 @@ func scaffoldLine(indent, body, comment string) string {
 	if comment == "" {
 		return text + "\n"
 	}
-	pad := max(commentColumn-len(text), 1)
+	pad := max(commentColumn-utf8.RuneCountInString(text), 1)
 	return text + strings.Repeat(" ", pad) + "# " + comment + "\n"
 }

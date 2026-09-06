@@ -177,18 +177,22 @@ func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
 	}
 }
 
-func TestRenderSearchResultsOutput(t *testing.T) {
+func TestRenderSearchResultsPadsColumnsByRunesNotBytesOrDisplayWidth(t *testing.T) {
 	var out bytes.Buffer
 	renderSearchResults(&out, []plugbuild.Entry{
 		{Name: "linear", Kind: "source", Summary: "Linear issues", Coordinate: "github.com/jdoe/lore-linear@v0.3.1"},
 		{Name: "t", Kind: "provider", Summary: "Together embeddings", Coordinate: "github.com/a/t@v0.1.0"},
 		{Name: "ünïcode", Kind: "source", Summary: "Multibyte name", Coordinate: "github.com/x/u@v2"},
+		{Name: "ünïcode-wïdest", Kind: "provider", Summary: "Widest is multibyte", Coordinate: "github.com/x/w@v1"},
+		{Name: "日本語", Kind: "source", Summary: "Double-width runes count as one", Coordinate: "github.com/x/j@v1"},
 	})
 
-	want := "NAME       KIND      COORDINATE                          SUMMARY\n" +
-		"linear     source    github.com/jdoe/lore-linear@v0.3.1  Linear issues\n" +
-		"t          provider  github.com/a/t@v0.1.0               Together embeddings\n" +
-		"ünïcode  source    github.com/x/u@v2                   Multibyte name\n"
+	want := "NAME            KIND      COORDINATE                          SUMMARY\n" +
+		"linear          source    github.com/jdoe/lore-linear@v0.3.1  Linear issues\n" +
+		"t               provider  github.com/a/t@v0.1.0               Together embeddings\n" +
+		"ünïcode         source    github.com/x/u@v2                   Multibyte name\n" +
+		"ünïcode-wïdest  provider  github.com/x/w@v1                   Widest is multibyte\n" +
+		"日本語             source    github.com/x/j@v1                   Double-width runes count as one\n"
 	if got := out.String(); got != want {
 		t.Errorf("renderSearchResults() =\n%q\nwant\n%q", got, want)
 	}
