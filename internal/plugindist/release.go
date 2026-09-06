@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/urlx"
 )
 
 // APIBaseEnv points the resolver at another GitHub API, which is what a
@@ -116,10 +117,10 @@ func (r release) assetNames() []string {
 func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, error) {
 	parsed, err := url.Parse(target)
 	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot request "+target, err)
+		return nil, internalerror.NewBadRequestError("cannot request that URL", err)
 	}
 	if parsed.Scheme != "https" {
-		return nil, internalerror.NewBadRequestError("refusing to download "+safeURL(parsed)+
+		return nil, internalerror.NewBadRequestError("refusing to download "+urlx.Redact(parsed)+
 			" — plugin downloads stay on https", nil)
 	}
 
@@ -132,9 +133,10 @@ func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, e
 func BoundedGet(ctx context.Context, client *http.Client, target string, limit int64) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot request "+target, err)
+		return nil, internalerror.NewBadRequestError("cannot request that URL", err)
 	}
 	request.Header.Set("Accept", "*/*")
+	safe := urlx.Redact(request.URL)
 
 	response, err := client.Do(request)
 	if err != nil {
@@ -142,24 +144,24 @@ func BoundedGet(ctx context.Context, client *http.Client, target string, limit i
 		if errors.As(err, &refused) {
 			return nil, refused
 		}
-		return nil, internalerror.NewPreconditionError("cannot reach "+target, err)
+		return nil, internalerror.NewPreconditionError("cannot reach "+safe, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	switch {
 	case response.StatusCode == http.StatusNotFound:
-		return nil, internalerror.NewNotFoundError("nothing published at "+target+" (404)", nil)
+		return nil, internalerror.NewNotFoundError("nothing published at "+safe+" (404)", nil)
 	case response.StatusCode != http.StatusOK:
-		return nil, internalerror.NewPreconditionError(target+" responded "+strconv.Itoa(response.StatusCode), nil)
+		return nil, internalerror.NewPreconditionError(safe+" responded "+strconv.Itoa(response.StatusCode), nil)
 	}
 
 	// Reading one byte past the cap is what separates a full body from a truncated one.
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, internalerror.NewPreconditionError("cannot read "+target, err)
+		return nil, internalerror.NewPreconditionError("cannot read "+safe, err)
 	}
 	if int64(len(body)) > limit {
-		return nil, internalerror.NewPreconditionError(target+" is larger than the "+
+		return nil, internalerror.NewPreconditionError(safe+" is larger than the "+
 			strconv.FormatInt(limit>>20, 10)+" MiB this build will download", nil)
 	}
 	return body, nil
@@ -170,27 +172,27 @@ func BoundedGet(ctx context.Context, client *http.Client, target string, limit i
 func refuseDowngrade(request *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return internalerror.NewPreconditionError("stopped after "+strconv.Itoa(maxRedirects)+
-			" redirects at "+safeURL(request.URL), nil)
+			" redirects at "+urlx.Redact(request.URL), nil)
 	}
 	if request.URL.Scheme == "https" {
 		return nil
 	}
-	return internalerror.NewPreconditionError("refusing a redirect to "+safeURL(request.URL)+
+	return internalerror.NewPreconditionError("refusing a redirect to "+urlx.Redact(request.URL)+
 		" — plugin downloads stay on https", nil)
 }
 
-// A presigned CDN location carries its credential in the query, and this text
-// reaches a terminal and a log.
-func safeURL(target *url.URL) string {
-	stripped := *target
-	stripped.User, stripped.RawQuery = nil, ""
-	return stripped.String()
+func safeTarget(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "an unreadable URL"
+	}
+	return urlx.Redact(parsed)
 }
 
 // resolveFailure names the coordinate and the step that failed, which together
 // are the whole diagnosis for an unresolvable coordinate.
 func resolveFailure(c Coordinate, step string, cause error) error {
-	message := label(c.Name) + " cannot resolve " + c.From + ": " + step + " failed"
+	message := label(c.Name) + " cannot resolve " + c.SafeFrom() + ": " + step + " failed"
 	if actionable := internalerror.MessageOf(cause); actionable != "" {
 		message += " — " + actionable
 	}

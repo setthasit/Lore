@@ -664,6 +664,116 @@ func TestBoundedGetClassifiesTheResponse(t *testing.T) {
 	}
 }
 
+// A private artifact is fetched from the operator's own from: string,
+// credentials and all, and every refusal about it reaches a terminal and a log.
+const (
+	fakeUser  = "svcaccount"
+	fakeToken = "fake-not-a-real-token"
+	fakeQuery = "sig=fake-signature"
+)
+
+func credentialed(target string) string {
+	return strings.Replace(target, "https://", "https://"+fakeUser+":"+fakeToken+"@", 1) + "?" + fakeQuery
+}
+
+func assertRedacted(t *testing.T, err error, keep string) {
+	t.Helper()
+
+	message := internalerror.MessageOf(err)
+	for _, secret := range []string{fakeUser, fakeToken, fakeQuery} {
+		if strings.Contains(message, secret) {
+			t.Errorf("refusal %q echoes %q", message, secret)
+		}
+	}
+	if !strings.Contains(message, keep) {
+		t.Errorf("refusal %q no longer names %q", message, keep)
+	}
+}
+
+func TestBoundedGetRefusalsDoNotEchoURLCredentials(t *testing.T) {
+	t.Parallel()
+
+	const limit = 1 << 20
+
+	cases := map[string]struct {
+		status int
+		size   int
+		down   bool
+	}{
+		"unreachable":             {down: true},
+		"nothing published":       {status: http.StatusNotFound},
+		"a status that is not ok": {status: http.StatusBadGateway},
+		"larger than the cap":     {status: http.StatusOK, size: limit + 1},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(strings.Repeat("a", c.size)))
+			}))
+			client, target := server.Client(), credentialed(server.URL+"/index.json")
+			if c.down {
+				server.Close()
+			} else {
+				t.Cleanup(server.Close)
+			}
+
+			body, err := BoundedGet(context.Background(), client, target, limit)
+			if err == nil {
+				t.Fatalf("BoundedGet() returned %d bytes, want a refusal", len(body))
+			}
+			assertRedacted(t, err, server.URL+"/index.json")
+		})
+	}
+}
+
+func TestInstallRefusalDoesNotEchoAURLCoordinatesCredentials(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	target := scene.fake.downloadURL("unpublished", "v2.0.1.tar.gz")
+
+	coord, err := Resolve(".", config.PluginDecl{Name: "linear", From: credentialed(target)})
+	if err != nil {
+		t.Fatalf("resolve the url coordinate: %v", err)
+	}
+	if coord.Origin != OriginURL {
+		t.Fatalf("origin = %s, want a url coordinate", coord.Origin)
+	}
+	scene.coord = coord
+
+	_, err = scene.install(t, &Lock{}, false)
+	if err == nil {
+		t.Fatal("installing an unpublished artifact succeeded, want a refusal")
+	}
+	if !internalerror.IsNotFound(err) {
+		t.Fatalf("kind = %v, want not found", internalerror.KindOf(err))
+	}
+	assertRedacted(t, err, target)
+}
+
+// A release's browser_download_url is the publisher's, not the operator's, and
+// a GHE or S3-backed one carries its credential in the query.
+func TestChecksumsRefusalDoesNotEchoURLCredentials(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	published := scene.fake.downloadURL("v0.3.1", "unpublished-"+ChecksumsAsset)
+
+	_, _, err := scene.installer.expected(
+		context.Background(), scene.coord, scene.asset, scene.archive, credentialed(published))
+	if err == nil {
+		t.Fatal("downloading an unpublished checksums file succeeded, want a refusal")
+	}
+	if !internalerror.IsNotFound(err) {
+		t.Fatalf("kind = %v, want not found", internalerror.KindOf(err))
+	}
+	assertRedacted(t, err, published)
+}
+
 // A URL coordinate reads its version out of the URL's last segment, so a
 // legitimate version is filename-shaped rather than semver, and the cache has
 // to keep taking it.

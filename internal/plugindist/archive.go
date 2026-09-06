@@ -46,7 +46,7 @@ type archived struct {
 func untar(c Coordinate, artifact []byte) ([]archived, error) {
 	stream, err := gzip.NewReader(bytes.NewReader(artifact))
 	if err != nil {
-		return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.From+
+		return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.SafeFrom()+
 			" is not a gzip archive", err)
 	}
 	defer func() { _ = stream.Close() }()
@@ -59,7 +59,7 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 			break
 		}
 		if err != nil {
-			return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.From+
+			return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.SafeFrom()+
 				" is not a readable tar archive", err)
 		}
 		if header.Typeflag != tar.TypeReg {
@@ -69,10 +69,10 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 		body, err := io.ReadAll(io.LimitReader(reader, budget+1))
 		if err != nil {
 			return nil, internalerror.NewPreconditionError(label(c.Name)+": cannot read "+header.Name+
-				" out of the artifact for "+c.From, err)
+				" out of the artifact for "+c.SafeFrom(), err)
 		}
 		if int64(len(body)) > budget {
-			return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.From+
+			return nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.SafeFrom()+
 				" unpacks to more than the "+strconv.Itoa(maxArtifactBytes>>20)+" MiB this build will accept", nil)
 		}
 		budget -= int64(len(body))
@@ -112,7 +112,7 @@ func pickBinary(c Coordinate, p Platform, files []archived) (string, []byte, err
 	if names := archivedNames(files); len(names) > 0 {
 		held = strings.Join(names, ", ")
 	}
-	return "", nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.From+
+	return "", nil, internalerror.NewPreconditionError(label(c.Name)+": the artifact for "+c.SafeFrom()+
 		" holds no plugin binary — looked for "+want+", and it holds: "+held, nil)
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/urlx"
 )
 
 // Origin is the shape of a `from:` coordinate, and the only thing that decides
@@ -116,10 +117,10 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	case strings.HasPrefix(from, "https://"):
 		coord, err = parseURL(name, from)
 	case strings.HasPrefix(from, "http://"):
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
 			" is plaintext HTTP, which cannot carry code anyone should run: publish the artifact over https", nil)
 	default:
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+urlx.RedactIfUserinfo(from)+
 			" is not a coordinate — use a local path (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z,"+
 			" or an https:// artifact URL", nil)
 	}
@@ -194,7 +195,8 @@ func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 func parseURL(name, from string) (Coordinate, error) {
 	parsed, err := url.Parse(from)
 	if err != nil || parsed.Host == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+" is not a valid URL", err)
+		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
+			" is not a valid URL", err)
 	}
 
 	version := path.Base(parsed.Path)
@@ -202,7 +204,7 @@ func parseURL(name, from string) (Coordinate, error) {
 		version = strings.TrimSuffix(version, suffix)
 	}
 	if !isCacheEntryName(version) {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
 			" ends in no version — the URL's last path segment names the version, as in"+
 			" https://artifacts.example.com/lore/"+name+"/v2.0.1.tar.gz", nil)
 	}
@@ -215,7 +217,7 @@ func parseURL(name, from string) (Coordinate, error) {
 // part of the URL, so moving that one is an edit to lore.yaml, not an argument.
 func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	if c.Origin != OriginGitHub {
-		return Coordinate{}, internalerror.NewBadRequestError(label(c.Name)+" is fetched from "+c.From+
+		return Coordinate{}, internalerror.NewBadRequestError(label(c.Name)+" is fetched from "+c.SafeFrom()+
 			", so its version is part of that coordinate — edit from: in lore.yaml to move it", nil)
 	}
 	return parseCoordinate("", config.PluginDecl{
@@ -223,6 +225,15 @@ func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 		From:   gitHubPrefix + c.Owner + "/" + c.Repo + "@" + strings.TrimSpace(version),
 		PubKey: c.PubKey,
 	}, true)
+}
+
+// Only a URL coordinate's from: can carry a credential; a github.com/owner/repo
+// coordinate and a local path have nowhere to put one.
+func (c Coordinate) SafeFrom() string {
+	if c.Origin != OriginURL {
+		return c.From
+	}
+	return safeTarget(c.From)
 }
 
 // Remote reports whether the coordinate must be fetched, verified and locked.

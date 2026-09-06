@@ -14,6 +14,7 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/urlx"
 )
 
 // pluginsKey is the top-level key an external plugin is declared under, and the
@@ -246,8 +247,9 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 		return nil, nil, err
 	}
 	if declared && decl.From != coord.From && version != plugindist.LatestVersion {
-		return nil, nil, internalerror.NewBadRequestError(w.path+" declares "+name+" from "+decl.From+
-			", not "+coord.From+" — edit the declaration, or run: lore plugin update "+name, nil)
+		return nil, nil, internalerror.NewBadRequestError(w.path+" declares "+name+" from "+
+			urlx.RedactIfUserinfo(decl.From)+", not "+coord.SafeFrom()+
+			" — edit the declaration, or run: lore plugin update "+name, nil)
 	}
 
 	edits := []configEdit(nil)
@@ -415,7 +417,7 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  binary:  %s", report.Binary)
 	printfln(out, "  digest:  %s (re-checked now)", report.BinaryDigest)
 	printfln(out, "  locked:  %s", report.LockedDigest)
-	printfln(out, "  from:    %s", report.LockedURL)
+	printfln(out, "  from:    %s", urlx.RedactIfUserinfo(report.LockedURL))
 	if report.Manifest {
 		printfln(out, "  manifest: cached beside the binary")
 		return
@@ -458,16 +460,13 @@ func anyPinned(results []plugindist.Result) bool {
 	return false
 }
 
-// splitInstallArgument separates the version an argument may carry. A local
-// path is never versioned, and splitting on the last "@" leaves a URL's
-// userinfo alone.
 func splitInstallArgument(argument string) (target, version string) {
 	argument = strings.TrimSpace(argument)
-	at := strings.LastIndex(argument, "@")
-	if at <= 0 {
+	versionSeparator := strings.LastIndex(argument, "@")
+	if versionSeparator <= 0 || versionSeparator < strings.LastIndex(argument, "/") {
 		return argument, ""
 	}
-	return argument[:at], argument[at+1:]
+	return argument[:versionSeparator], argument[versionSeparator+1:]
 }
 
 func coordinateAt(from, version string) string {
@@ -490,7 +489,7 @@ func nameForCoordinate(target string) (string, error) {
 	repository, isGitHub := strings.CutPrefix(target, "github.com/")
 	segments := strings.Split(repository, "/")
 	if !isGitHub || len(segments) != 2 || segments[1] == "" {
-		return "", internalerror.NewBadRequestError("install cannot derive a name for "+target+
+		return "", internalerror.NewBadRequestError("install cannot derive a name for "+urlx.RedactIfUserinfo(target)+
 			" — declare it under plugins: in lore.yaml with the name every `use:` will refer to,"+
 			" then run: lore plugin install <name>", nil)
 	}

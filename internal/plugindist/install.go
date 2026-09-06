@@ -81,7 +81,7 @@ func (ins *Installer) Pin(ctx context.Context, coord Coordinate) (Coordinate, er
 		return Coordinate{}, err
 	}
 	if latest.TagName == "" {
-		return Coordinate{}, internalerror.NewPreconditionError(label(coord.Name)+" cannot resolve "+coord.From+
+		return Coordinate{}, internalerror.NewPreconditionError(label(coord.Name)+" cannot resolve "+coord.SafeFrom()+
 			": github.com/"+coord.Owner+"/"+coord.Repo+" publishes no release", nil)
 	}
 	return coord.AtVersion(latest.TagName)
@@ -118,7 +118,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	entry, hasEntry := lock.Entry(coord.Name)
 	if hasEntry && !req.Rewrite && entry.Version != coord.Version {
 		return Result{}, internalerror.NewPreconditionError(label(coord.Name)+" is locked at "+entry.Version+
-			" but "+coord.From+" asks for "+coord.Version+" — run: lore plugin update "+coord.Name, nil)
+			" but "+coord.SafeFrom()+" asks for "+coord.Version+" — run: lore plugin update "+coord.Name, nil)
 	}
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
 	pinned := hasLocked && !req.Rewrite
@@ -132,7 +132,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	fetch := ins.fetcher()
 	artifact, err := fetch.get(ctx, artifactURL, maxArtifactBytes)
 	if err != nil {
-		return Result{}, resolveFailure(coord, "downloading "+artifactURL, err)
+		return Result{}, resolveFailure(coord, "downloading "+safeTarget(artifactURL), err)
 	}
 
 	fileName := artifactFileName(artifactURL)
@@ -229,7 +229,7 @@ func (ins *Installer) expected(
 	checksums := []byte(nil)
 	if checksumsURL != "" {
 		if checksums, err = fetch.get(ctx, checksumsURL, MaxMetadataBytes); err != nil {
-			return "", false, resolveFailure(coord, "downloading "+checksumsURL, err)
+			return "", false, resolveFailure(coord, "downloading "+safeTarget(checksumsURL), err)
 		}
 	}
 
@@ -261,7 +261,7 @@ func (ins *Installer) expected(
 	digest, found := checksumFor(checksums, fileName)
 	if !found {
 		return "", signed, internalerror.NewPreconditionError(label(coord.Name)+": "+ChecksumsAsset+" for "+
-			coord.From+" records no digest for "+fileName, nil)
+			coord.SafeFrom()+" records no digest for "+fileName, nil)
 	}
 	return digest, signed, nil
 }

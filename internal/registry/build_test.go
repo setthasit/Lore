@@ -291,7 +291,7 @@ func TestCheckURL(t *testing.T) {
 		{
 			name: "a host no parser accepts",
 			raw:  "http:// acme.dev",
-			want: "base_url is not a URL: http:// acme.dev",
+			want: "base_url is not a URL",
 		},
 	}
 
@@ -312,6 +312,38 @@ func TestCheckURL(t *testing.T) {
 			}
 			if !internalerror.IsBadRequest(err) {
 				t.Errorf("error %q is not a bad request", err)
+			}
+		})
+	}
+}
+
+func TestCheckURLRefusalDoesNotEchoURLCredentials(t *testing.T) {
+	const (
+		user  = "svcaccount"
+		token = "fake-not-a-real-token"
+		query = "sig=fake-signature"
+	)
+
+	cases := map[string]string{
+		"a scheme that is not http(s)": "ftp://" + user + ":" + token + "@acme.dev/v1?" + query,
+		"a host no parser accepts":     "http://" + user + ":" + token + "@ acme.dev/v1?" + query,
+	}
+
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := CheckURL("base_url", raw, "https://acme.dev")
+			if err == nil {
+				t.Fatalf("CheckURL(%q): want a refusal", raw)
+			}
+
+			message := internalerror.MessageOf(err)
+			for _, secret := range []string{user, token, query} {
+				if strings.Contains(message, secret) {
+					t.Errorf("refusal %q echoes %q", message, secret)
+				}
+			}
+			if !strings.Contains(message, "base_url") {
+				t.Errorf("refusal %q does not name the field", message)
 			}
 		})
 	}

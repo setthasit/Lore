@@ -346,6 +346,36 @@ func TestPluginInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	}
 }
 
+// report walks the cause chain for an unclassified error and for KindInternal,
+// so a refusal that keeps a *url.Error cause, which carries the raw URL, is
+// only safe while the supply chain classifies every one of them as something
+// else. The dead server is what puts that cause in the chain.
+func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
+	fake := newFakeReleases(t)
+	base := fake.server.URL
+	fake.server.Close()
+
+	from := strings.Replace(base, "https://", "https://svcaccount:fake-not-a-real-token@", 1) +
+		"/download/v2.0.1/v2.0.1.tar.gz?sig=fake-signature"
+	path := writePluginConfig(t, declaredConfig(from))
+
+	res := runPluginDist(t, "plugin", "install", "--config", path)
+	if res.exitCode == exitOK {
+		t.Fatalf("installing from a dead server succeeded: %q", res.stdout)
+	}
+	if !strings.Contains(res.stderr, "cannot reach") {
+		t.Fatalf("stderr %q is not the unreachable arm, so no *url.Error is in the chain", res.stderr)
+	}
+	for _, secret := range []string{"svcaccount", "fake-not-a-real-token", "sig=fake-signature"} {
+		if strings.Contains(res.stderr, secret) {
+			t.Errorf("stderr %q echoes %q", res.stderr, secret)
+		}
+	}
+	if !strings.Contains(res.stderr, "/download/v2.0.1/v2.0.1.tar.gz") {
+		t.Fatalf("stderr %q does not name the artifact", res.stderr)
+	}
+}
+
 // A coordinate argument for a plugin nobody declared yet declares it, because
 // the declaration is what every `use:` refers to afterwards.
 func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
@@ -364,6 +394,31 @@ func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	}
 	if lock := lockFile(t, path); !strings.Contains(lock, "linear:") {
 		t.Fatalf("lore.lock does not declare the plugin:\n%s", lock)
+	}
+}
+
+// A URL argument carries a separator, so it is taken for a coordinate and
+// refused for having no derivable name — with the whole argument in the text.
+func TestPluginInstallUnnameableCoordinatePrintsNoURLCredentials(t *testing.T) {
+	newFakeReleases(t)
+	path := writePluginConfig(t, "workspace: myproject\n")
+
+	res := runPluginDist(t, "plugin", "install",
+		"https://svcaccount:fake-not-a-real-token@artifacts.acme.dev/lore-linear.tar.gz?sig=fake-signature",
+		"--config", path)
+	if res.exitCode == exitOK {
+		t.Fatalf("an unnameable coordinate installed: %q", res.stdout)
+	}
+	if !strings.Contains(res.stderr, "cannot derive a name") {
+		t.Fatalf("stderr %q is not the unnameable-coordinate refusal", res.stderr)
+	}
+	for _, secret := range []string{"svcaccount", "fake-not-a-real-token", "sig=fake-signature"} {
+		if strings.Contains(res.stderr, secret) {
+			t.Errorf("stderr %q echoes %q", res.stderr, secret)
+		}
+	}
+	if !strings.Contains(res.stderr, "artifacts.acme.dev/lore-linear.tar.gz") {
+		t.Fatalf("stderr %q does not name the argument it refused", res.stderr)
 	}
 }
 

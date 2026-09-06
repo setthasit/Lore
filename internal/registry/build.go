@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -457,14 +458,14 @@ func checkType(field string, declared lore.Field, value any) error {
 func CheckURL(field, raw, example string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return internalerror.NewBadRequestError(field+" is not a URL: "+raw, err)
+		return internalerror.NewBadRequestError(field+" is not a URL", err)
 	}
 	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		want := "an absolute http(s) URL"
 		if example != "" {
 			want += " like " + example
 		}
-		return internalerror.NewBadRequestError(fmt.Sprintf("%s must be %s, got %s", field, want, raw), nil)
+		return internalerror.NewBadRequestError(fmt.Sprintf("%s must be %s, got %s", field, want, urlx.Redact(parsed)), nil)
 	}
 	return nil
 }

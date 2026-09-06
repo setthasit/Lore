@@ -11,6 +11,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist"
+	"github.com/setthasit/Lore/internal/urlx"
 )
 
 // DefaultIndexURL is the plugin index: a JSON file in a git repository, read
@@ -52,26 +53,27 @@ func (i Index) Fetch(ctx context.Context) ([]Entry, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	safe := urlx.RedactIfUserinfo(target)
 
 	body, err := plugindist.BoundedGet(ctx, client, target, plugindist.MaxMetadataBytes)
 	if err != nil {
 		if errors.As(err, new(*url.Error)) {
 			return nil, internalerror.NewPreconditionError(
-				"the plugin index at "+target+" is unreachable — searching needs network access; a plugin's own "+
+				"the plugin index at "+safe+" is unreachable — searching needs network access; a plugin's own "+
 					"README is the other place its coordinate is written", err)
 		}
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+target+" is unusable — "+internalerror.MessageOf(err), err)
+			"the plugin index at "+safe+" is unusable — "+internalerror.MessageOf(err), err)
 	}
 
 	var doc document
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+target+" is not a readable index", err)
+			"the plugin index at "+safe+" is not a readable index", err)
 	}
 	if doc.Version != indexVersion {
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+target+" is version "+strconv.Itoa(doc.Version)+
+			"the plugin index at "+safe+" is version "+strconv.Itoa(doc.Version)+
 				", and this build reads version "+strconv.Itoa(indexVersion), nil)
 	}
 	return doc.Plugins, nil

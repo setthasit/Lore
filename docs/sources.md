@@ -360,7 +360,7 @@ first rule broken is the one reported, before any request goes out (exit 2 —
 | the named variable unset | `sources[gitlab].with.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set` |
 | `projects` absent | `sources[gitlab].with.projects must be set — Namespaced paths, matched verbatim: "acme/myproject", or "acme/platform/myproject" when the project nests through subgroups.` |
 | `base_url` not absolute http(s) | `sources[gitlab].with.base_url must be an absolute http(s) URL like https://gitlab.com, got ftp://gitlab.example.com` |
-| `base_url` unparseable | `sources[gitlab].with.base_url is not a URL: <value>` |
+| `base_url` unparseable | `sources[gitlab].with.base_url is not a URL` |
 
 The remedy text on a "must be set" line is the manifest's own `Doc` for that
 field (`internal/registry/build.go:398-410`), so it is the plugin, not this
