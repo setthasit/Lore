@@ -61,28 +61,25 @@ type externalRow struct {
 // binary can be configured with, and refusing to answer because a workspace is
 // half-configured would withhold the information most likely to explain why.
 func declaredExternals(configPath string, reg *registry.Registry) []externalRow {
-	workspace, err := openPluginWorkspace(configPath)
+	workspace, err := plugindist.Open(configPath)
 	if err != nil {
 		return nil
 	}
 
 	var rows []externalRow
-	for _, decl := range workspace.config.Plugins {
+	for _, decl := range workspace.Plugins() {
 		if _, compiled := reg.Manifest(decl.Name); compiled {
 			continue
 		}
 
 		row := externalRow{name: decl.Name, from: urlx.RedactIfUserinfo(decl.From)}
-		switch coord, err := plugindist.Resolve(workspace.dir, decl); {
+		switch binary, err := workspace.Installed(decl); {
 		case err != nil:
 			row.state = "unresolvable — " + internalerror.MessageOf(err)
+		case binary == "":
+			row.state = "not installed — run: lore plugin install " + decl.Name
 		default:
-			binary, err := workspace.store.Binary(decl.Name, coord, workspace.lock)
-			if err != nil {
-				row.state = "not installed — run: lore plugin install " + decl.Name
-			} else {
-				row.state = registry.OriginExternal(binary)
-			}
+			row.state = registry.OriginExternal(binary)
 		}
 		rows = append(rows, row)
 	}

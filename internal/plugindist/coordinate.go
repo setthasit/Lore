@@ -53,7 +53,7 @@ func checkName(name string) error {
 	if registry.ValidPluginName(name) {
 		return nil
 	}
-	return internalerror.NewBadRequestError(label(name)+" is not a usable plugin name: a name is one"+
+	return internalerror.NewBadRequestError(Label(name)+" is not a usable plugin name: a name is one"+
 		" directory in the plugin cache, so it must be lower-case and hyphenated — name it the way `use:`"+
 		" should read it, such as linear or openai-compatible", nil)
 }
@@ -103,7 +103,7 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 		return Coordinate{}, err
 	}
 	if from == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" declares no from: — a local path"+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" declares no from: — a local path"+
 			" (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z, or an https:// artifact URL", nil)
 	}
 
@@ -117,10 +117,10 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	case strings.HasPrefix(from, "https://"):
 		coord, err = parseURL(name, from)
 	case strings.HasPrefix(from, "http://"):
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
 			" is plaintext HTTP, which cannot carry code anyone should run: publish the artifact over https", nil)
 	default:
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+urlx.RedactIfUserinfo(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+urlx.RedactIfUserinfo(from)+
 			" is not a coordinate — use a local path (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z,"+
 			" or an https:// artifact URL", nil)
 	}
@@ -131,10 +131,10 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	if decl.PubKey != "" {
 		pubkey := strings.TrimSpace(decl.PubKey)
 		if pubkey == "" {
-			return Coordinate{}, internalerror.NewBadRequestError(label(name)+" declares a blank pubkey: — name"+
+			return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" declares a blank pubkey: — name"+
 				" the public key a signature must verify against, or remove the line to install unsigned", nil)
 		}
-		if coord.PubKey, err = absolutePath(dir, pubkey, label(name)+" pubkey:"); err != nil {
+		if coord.PubKey, err = absolutePath(dir, pubkey, Label(name)+" pubkey:"); err != nil {
 			return Coordinate{}, err
 		}
 	}
@@ -150,8 +150,33 @@ func IsLocalPath(from string) bool {
 	return false
 }
 
+// A declaration's name is a bare token; every shape parseCoordinate accepts
+// carries a scheme or a path separator.
+func isCoordinate(target string) bool {
+	return strings.ContainsAny(target, `/\:`)
+}
+
+// Only a repository coordinate carries a name: the convention is lore-<name>,
+// and a repository that ignores it is declared by hand rather than guessed at.
+func nameFor(target string) (string, error) {
+	_, repo, ok := gitHubRepo(target)
+	if !ok {
+		return "", internalerror.NewBadRequestError("install cannot derive a name for "+
+			urlx.RedactIfUserinfo(target)+" — declare it under plugins: in lore.yaml with the name every"+
+			" `use:` will refer to, then run: lore plugin install <name>", nil)
+	}
+	return strings.TrimPrefix(repo, "lore-"), nil
+}
+
+func gitHubRepo(from string) (owner, repo string, ok bool) {
+	repoPart, isGitHub := strings.CutPrefix(from, gitHubPrefix)
+	repoPart, _, _ = strings.Cut(repoPart, "@")
+	owner, repo, split := strings.Cut(repoPart, "/")
+	return owner, repo, isGitHub && split && owner != "" && repo != "" && !strings.Contains(repo, "/")
+}
+
 func parseLocal(dir, name, from string) (Coordinate, error) {
-	absolute, err := absolutePath(dir, from, label(name)+" from")
+	absolute, err := absolutePath(dir, from, Label(name)+" from")
 	if err != nil {
 		return Coordinate{}, err
 	}
@@ -159,33 +184,32 @@ func parseLocal(dir, name, from string) (Coordinate, error) {
 }
 
 func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
-	repoPart, version, versioned := strings.Cut(strings.TrimPrefix(from, gitHubPrefix), "@")
-
-	segments := strings.Split(repoPart, "/")
-	if len(segments) != 2 || segments[0] == "" || segments[1] == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+	owner, repo, ok := gitHubRepo(from)
+	if !ok {
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
 			" names no repository — write github.com/owner/repo@vX.Y.Z", nil)
 	}
+	_, version, versioned := strings.Cut(from, "@")
 	if !versioned || version == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
 			" pins no version — write "+from+"@v0.3.1, or run `lore plugin install "+name+
 			"@latest` to pin the newest release", nil)
 	}
 
 	switch {
 	case version == LatestVersion && !allowLatest:
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
 			" floats: @latest resolves differently on two machines, which would run different code against"+
 			" one index — run `lore plugin install "+name+"@latest` to pin the version it resolves to now", nil)
 	case version == LatestVersion:
 	case !ExactVersion(version):
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
 			" pins @"+version+", which is not an exact version — pin a release tag like @v0.3.1", nil)
 	}
 
 	return Coordinate{
 		Name: name, Origin: OriginGitHub, From: from,
-		Owner: segments[0], Repo: segments[1], Version: version,
+		Owner: owner, Repo: repo, Version: version,
 	}, nil
 }
 
@@ -195,7 +219,7 @@ func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 func parseURL(name, from string) (Coordinate, error) {
 	parsed, err := url.Parse(from)
 	if err != nil || parsed.Host == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
 			" is not a valid URL", err)
 	}
 
@@ -204,7 +228,7 @@ func parseURL(name, from string) (Coordinate, error) {
 		version = strings.TrimSuffix(version, suffix)
 	}
 	if !isCacheEntryName(version) {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+safeTarget(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
 			" ends in no version — the URL's last path segment names the version, as in"+
 			" https://artifacts.example.com/lore/"+name+"/v2.0.1.tar.gz", nil)
 	}
@@ -217,7 +241,7 @@ func parseURL(name, from string) (Coordinate, error) {
 // part of the URL, so moving that one is an edit to lore.yaml, not an argument.
 func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	if c.Origin != OriginGitHub {
-		return Coordinate{}, internalerror.NewBadRequestError(label(c.Name)+" is fetched from "+c.SafeFrom()+
+		return Coordinate{}, internalerror.NewBadRequestError(Label(c.Name)+" is fetched from "+c.SafeFrom()+
 			", so its version is part of that coordinate — edit from: in lore.yaml to move it", nil)
 	}
 	return parseCoordinate("", config.PluginDecl{
@@ -254,7 +278,7 @@ func (c Coordinate) Warning() string {
 	if c.Origin != OriginLocal {
 		return ""
 	}
-	return label(c.Name) + " runs " + c.Path + " in place: a local plugin is unpinned," +
+	return Label(c.Name) + " runs " + c.Path + " in place: a local plugin is unpinned," +
 		" has no lore.lock entry and no digest, and is for development only"
 }
 
@@ -299,10 +323,10 @@ func (p Platform) String() string {
 	return p.Key()
 }
 
-// label spells a plugin the way lore.yaml does, so an error points at the line
+// Label spells a plugin the way lore.yaml does, so an error points at the line
 // the reader has to edit.
-func label(name string) string {
-	return "plugins[" + name + "]"
+func Label(name string) string {
+	return pluginsKey + "[" + name + "]"
 }
 
 func absolutePath(configDir, raw, field string) (string, error) {

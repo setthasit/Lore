@@ -91,7 +91,7 @@ func (s *Store) Dir(name, version string) (string, error) {
 		return "", err
 	}
 	if !isCacheEntryName(version) {
-		return "", internalerror.NewBadRequestError(label(name)+" is pinned to "+version+", which is not a"+
+		return "", internalerror.NewBadRequestError(Label(name)+" is pinned to "+version+", which is not a"+
 			" usable version: a version is one directory in the plugin cache, so it must be a single name"+
 			" that neither starts with a dot nor contains a path separator", nil)
 	}
@@ -173,7 +173,7 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 	if coord.Origin == OriginLocal {
 		info, err := os.Stat(coord.Path)
 		if err != nil || info.IsDir() {
-			return Report{}, internalerror.NewPreconditionError(label(name)+" runs "+coord.Path+
+			return Report{}, internalerror.NewPreconditionError(Label(name)+" runs "+coord.Path+
 				" in place, but there is no file there", err)
 		}
 		report.Binary, report.Version = coord.Path, OriginLocal.String()
@@ -182,7 +182,7 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 
 	artifact, locked := lock.Artifact(name, s.platform)
 	if !locked {
-		return Report{}, internalerror.NewPreconditionError(label(name)+" has no "+LockFileName+" entry for "+
+		return Report{}, internalerror.NewPreconditionError(Label(name)+" has no "+LockFileName+" entry for "+
 			s.platform.Key()+" — run: lore plugin install "+name, nil)
 	}
 	entry, _ := lock.Entry(name)
@@ -212,7 +212,7 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 		return Report{}, err
 	}
 	if expected := strings.TrimSpace(string(recorded)); expected != actual {
-		return Report{}, internalerror.NewPreconditionError(label(name)+": digest mismatch for "+s.platform.Key()+
+		return Report{}, internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+s.platform.Key()+
 			" (expected "+expected+", got "+actual+")", nil)
 	}
 
@@ -266,7 +266,7 @@ func isCacheEntryName(name string) bool {
 // write stores an unpacked binary and the digest re-checked at every launch.
 func (s *Store) write(name, version, binaryName string, body []byte) (path, digest string, err error) {
 	if !isCacheEntryName(binaryName) {
-		return "", "", internalerror.NewPreconditionError(label(name)+": the artifact names its binary "+
+		return "", "", internalerror.NewPreconditionError(Label(name)+": the artifact names its binary "+
 			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
 			" must be a single name that neither starts with a dot nor is the cached "+manifestFileName, nil)
 	}
@@ -323,7 +323,7 @@ func (s *Store) Remove(name string) (int, error) {
 }
 
 func notInstalled(name string) error {
-	return internalerror.NewPreconditionError(label(name)+" is not installed — run: lore plugin install "+name, nil)
+	return internalerror.NewPreconditionError(Label(name)+" is not installed — run: lore plugin install "+name, nil)
 }
 
 // A digest carries its algorithm, so a lockfile written today stays readable

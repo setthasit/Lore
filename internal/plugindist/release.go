@@ -100,7 +100,7 @@ func (r release) asset(c Coordinate, want string) (string, error) {
 	if names := r.assetNames(); len(names) > 0 {
 		held = strings.Join(names, ", ")
 	}
-	return "", internalerror.NewPreconditionError(label(c.Name)+": the "+c.Version+" release of github.com/"+
+	return "", internalerror.NewPreconditionError(Label(c.Name)+": the "+c.Version+" release of github.com/"+
 		c.Owner+"/"+c.Repo+" publishes no "+want+" — it has: "+held, nil)
 }
 
@@ -179,7 +179,7 @@ func safeTarget(raw string) string {
 // resolveFailure names the coordinate and the step that failed, which together
 // are the whole diagnosis for an unresolvable coordinate.
 func resolveFailure(c Coordinate, step string, cause error) error {
-	message := label(c.Name) + " cannot resolve " + c.SafeFrom() + ": " + step + " failed"
+	message := Label(c.Name) + " cannot resolve " + c.SafeFrom() + ": " + step + " failed"
 	if actionable := internalerror.MessageOf(cause); actionable != "" {
 		message += " — " + actionable
 	}

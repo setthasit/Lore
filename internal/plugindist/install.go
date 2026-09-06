@@ -84,7 +84,7 @@ func (ins *Installer) Pin(ctx context.Context, coord Coordinate) (Coordinate, er
 		return Coordinate{}, err
 	}
 	if latest.TagName == "" {
-		return Coordinate{}, internalerror.NewPreconditionError(label(coord.Name)+" cannot resolve "+coord.SafeFrom()+
+		return Coordinate{}, internalerror.NewPreconditionError(Label(coord.Name)+" cannot resolve "+coord.SafeFrom()+
 			": github.com/"+coord.Owner+"/"+coord.Repo+" publishes no release", nil)
 	}
 	return coord.AtVersion(latest.TagName)
@@ -96,7 +96,7 @@ func (ins *Installer) Pin(ctx context.Context, coord Coordinate) (Coordinate, er
 func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Result, error) {
 	coord := req.Coordinate
 	if coord.Floating() {
-		return Result{}, internalerror.NewInternalError(label(coord.Name)+" reached install still pinned at @"+
+		return Result{}, internalerror.NewInternalError(Label(coord.Name)+" reached install still pinned at @"+
 			LatestVersion, nil)
 	}
 
@@ -120,7 +120,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	platform := ins.Store.platform
 	entry, hasEntry := lock.Entry(coord.Name)
 	if hasEntry && !req.Rewrite && entry.Version != coord.Version {
-		return Result{}, internalerror.NewPreconditionError(label(coord.Name)+" is locked at "+entry.Version+
+		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
 			" but "+coord.SafeFrom()+" asks for "+coord.Version+" — run: lore plugin update "+coord.Name, nil)
 	}
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
@@ -146,11 +146,11 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 
 	digest := digestOf(artifact)
 	if expected != "" && expected != digest {
-		return Result{}, internalerror.NewPreconditionError(label(coord.Name)+": digest mismatch for "+
+		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+": digest mismatch for "+
 			platform.Key()+" (expected "+expected+", got "+digest+")", nil)
 	}
 	if pinned && locked.Digest != digest {
-		return Result{}, internalerror.NewPreconditionError(label(coord.Name)+": digest mismatch for "+
+		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+": digest mismatch for "+
 			platform.Key()+" (expected "+locked.Digest+", got "+digest+")", nil)
 	}
 	result.ArtifactDigest, result.Locked = digest, pinned
@@ -247,7 +247,7 @@ func (ins *Installer) expected(
 		}
 		signature, err := BoundedGet(ctx, client, signedURL+verify.signatureSuffix(), maxSignatureSize)
 		if err != nil {
-			return "", false, internalerror.NewPreconditionError(label(coord.Name)+" declares pubkey: "+coord.PubKey+
+			return "", false, internalerror.NewPreconditionError(Label(coord.Name)+" declares pubkey: "+coord.PubKey+
 				", but "+signedName+verify.signatureSuffix()+" is not published beside it: an unsigned artifact"+
 				" is refused, not accepted unsigned", err)
 		}
@@ -262,7 +262,7 @@ func (ins *Installer) expected(
 	}
 	digest, found := checksumFor(checksums, fileName)
 	if !found {
-		return "", signed, internalerror.NewPreconditionError(label(coord.Name)+": "+ChecksumsAsset+" for "+
+		return "", signed, internalerror.NewPreconditionError(Label(coord.Name)+": "+ChecksumsAsset+" for "+
 			coord.SafeFrom()+" records no digest for "+fileName, nil)
 	}
 	return digest, signed, nil

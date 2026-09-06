@@ -63,14 +63,14 @@ type verifier struct {
 func loadVerifier(name, pubkeyPath string) (verifier, error) {
 	raw, err := os.ReadFile(pubkeyPath)
 	if err != nil {
-		return verifier{}, internalerror.NewPreconditionError(label(name)+" declares pubkey: "+pubkeyPath+
+		return verifier{}, internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+
 			", which cannot be read", err)
 	}
 
 	if block, _ := pem.Decode(raw); block != nil {
 		key, err := x509.ParsePKIXPublicKey(block.Bytes)
 		if err != nil {
-			return verifier{}, internalerror.NewPreconditionError(label(name)+" declares pubkey: "+pubkeyPath+
+			return verifier{}, internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+
 				", which is PEM but holds no public key this build can read", err)
 		}
 		return verifier{name: name, format: "cosign", suffix: cosignSuffix, cosign: key}, nil
@@ -80,7 +80,7 @@ func loadVerifier(name, pubkeyPath string) (verifier, error) {
 
 func loadMinisignKey(name, pubkeyPath string, raw []byte) (verifier, error) {
 	refuse := func(detail string) error {
-		return internalerror.NewPreconditionError(label(name)+" declares pubkey: "+pubkeyPath+
+		return internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+
 			", which is neither a PEM public key nor a minisign public key: "+detail, nil)
 	}
 
@@ -143,7 +143,7 @@ func (v verifier) verifyCosign(signedName string, signed, signature []byte) erro
 		}
 		return nil
 	default:
-		return internalerror.NewPreconditionError(label(v.name)+" declares a "+fmt.Sprintf("%T", v.cosign)+
+		return internalerror.NewPreconditionError(Label(v.name)+" declares a "+fmt.Sprintf("%T", v.cosign)+
 			" public key, which this build cannot verify with the standard library — publish an ECDSA P-256"+
 			" (the cosign default) or Ed25519 key", nil)
 	}
@@ -173,7 +173,7 @@ func (v verifier) verifyMinisign(signedName string, signed, signature []byte) er
 	switch algorithm := string(decoded[:2]); algorithm {
 	case minisignLegacy:
 	case minisignPrehash:
-		return internalerror.NewPreconditionError(label(v.name)+": "+signedName+" carries a prehashed minisign"+
+		return internalerror.NewPreconditionError(Label(v.name)+": "+signedName+" carries a prehashed minisign"+
 			" signature ("+minisignPrehash+"), which is Ed25519 over a BLAKE2b hash. BLAKE2b is not in the Go"+
 			" standard library and this build adds no dependency for it, so the signature cannot be checked and"+
 			" is refused rather than skipped — publish a non-prehashed minisign signature or a cosign one", nil)
@@ -223,7 +223,7 @@ func (v verifier) verifyTrustedComment(signedName string, lines []string, signat
 }
 
 func (v verifier) refuse(signedName, detail string) error {
-	return internalerror.NewPreconditionError(label(v.name)+": "+signedName+" fails "+v.format+
+	return internalerror.NewPreconditionError(Label(v.name)+": "+signedName+" fails "+v.format+
 		" verification — "+detail, nil)
 }
 

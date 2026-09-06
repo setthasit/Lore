@@ -64,7 +64,7 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
-	original, current, err := readConfig(configPath)
+	original, current, err := config.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	if err != nil {
 		return err
 	}
-	if err := writeConfig(configPath, updated, "the "+draft.ident()+" instance does not fit "+
+	if err := config.WriteFile(configPath, updated, "the "+draft.ident()+" instance does not fit "+
 		configPath+", which is unchanged"); err != nil {
 		return err
 	}

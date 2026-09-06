@@ -1,13 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/fsx"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -108,22 +109,22 @@ func (i Instance) Ident() string {
 }
 
 func (c *Config) InstancesUsing(plugin string) []string {
-	used := []string(nil)
-	for section, instances := range map[string][]Instance{
-		"sources": c.Sources, "providers": c.Providers,
-	} {
-		for _, instance := range instances {
-			if instance.Use == plugin {
-				used = append(used, section+"["+instance.Ident()+"]")
-			}
-		}
-	}
+	used := instancesUsing(nil, "sources", c.Sources, plugin)
+	used = instancesUsing(used, "providers", c.Providers, plugin)
 	for _, repo := range c.Repos {
 		if repo.Use == plugin {
 			used = append(used, "repos["+repo.Path+"]")
 		}
 	}
-	slices.Sort(used)
+	return used
+}
+
+func instancesUsing(used []string, section string, instances []Instance, plugin string) []string {
+	for _, instance := range instances {
+		if instance.Use == plugin {
+			used = append(used, section+"["+instance.Ident()+"]")
+		}
+	}
 	return used
 }
 
@@ -266,6 +267,37 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ReadFile reads a configuration for editing, returning the file's text because
+// an edit to a hand-written document is a splice rather than a round trip.
+func ReadFile(path string) (text string, cfg *Config, err error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, internalerror.NewNotFoundError("no configuration at "+path+
+				" — run `lore init` to create one", err)
+		}
+		return "", nil, internalerror.NewInternalError("cannot read "+path, err)
+	}
+
+	parsed, err := Decode(bytes.NewReader(content))
+	if err != nil {
+		return "", nil, internalerror.NewBadRequestError("cannot parse "+path, err)
+	}
+	return string(content), parsed, nil
+}
+
+// WriteFile refuses a splice that no longer decodes, with the caller's own
+// sentence: a file the next command cannot read must never reach the disk.
+func WriteFile(path, updated, refusal string) error {
+	if _, err := Decode(strings.NewReader(updated)); err != nil {
+		return internalerror.NewInternalError(refusal, err)
+	}
+	if err := fsx.WriteAtomic(path, []byte(updated), fsx.ModeOf(path, 0o644)); err != nil {
+		return internalerror.NewInternalError("cannot write "+path, err)
+	}
+	return nil
 }
 
 func (c *Config) applyDefaults() error {
