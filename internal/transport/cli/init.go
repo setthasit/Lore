@@ -184,15 +184,12 @@ func (s *scaffold) llmBlock() string {
 		scaffoldLine("#   ", "model: "+scalar(s.llm.DefaultModels[lore.CapabilityComplete]), "")
 }
 
-// variables are the environment variables the scaffold's active stanzas name, in
-// the order they appear in it. The commented llm: stanza is left out: nothing has
-// to be exported for a workspace that is not synthesizing yet.
 func (s *scaffold) variables() []string {
 	var names []string
 	for _, manifest := range []lore.Manifest{s.source, s.embedder} {
-		for _, secret := range manifest.Secrets {
-			if secret.DefaultEnv != "" && !slices.Contains(names, secret.DefaultEnv) {
-				names = append(names, secret.DefaultEnv)
+		for _, name := range defaultVariables(manifest) {
+			if !slices.Contains(names, name) {
+				names = append(names, name)
 			}
 		}
 	}
@@ -248,20 +245,22 @@ func scalar(value string) string {
 	return value
 }
 
-// credentialNote names the variables a role binding's provider reads. A binding
-// that names a plugin rather than a declared instance is built with that
-// plugin's defaults, so the manifest's default variables are the ones in force.
 func credentialNote(m lore.Manifest) string {
+	names := defaultVariables(m)
+	if len(names) == 0 {
+		return ""
+	}
+	return "credentials come from " + strings.Join(names, " and ")
+}
+
+func defaultVariables(m lore.Manifest) []string {
 	var names []string
 	for _, secret := range m.Secrets {
 		if secret.DefaultEnv != "" {
 			names = append(names, secret.DefaultEnv)
 		}
 	}
-	if len(names) == 0 {
-		return ""
-	}
-	return "credentials come from " + strings.Join(names, " and ")
+	return names
 }
 
 func scaffoldLine(indent, body, comment string) string {

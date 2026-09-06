@@ -2,12 +2,9 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,7 +14,6 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	"github.com/setthasit/Lore/internal/fsx"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -75,16 +71,9 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
-	original, err := os.ReadFile(configPath)
+	original, current, err := readConfig(configPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return internalerror.NewNotFoundError("no configuration at "+configPath+" — run `lore init` to create one", err)
-		}
-		return internalerror.NewInternalError("cannot read "+configPath, err)
-	}
-	current, err := config.Decode(bytes.NewReader(original))
-	if err != nil {
-		return internalerror.NewBadRequestError("cannot parse "+configPath, err)
+		return err
 	}
 
 	draft, err := promptSource(&prompter{
@@ -95,17 +84,12 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
-	updated, err := insertSource(string(original), draft)
+	updated, err := insertSource(original, draft)
 	if err != nil {
 		return err
 	}
-	// The spliced result is decoded before it is written, so a file that would
-	// no longer load is refused while the one on disk is still the old one.
-	if _, err := config.Decode(strings.NewReader(updated)); err != nil {
-		return internalerror.NewInternalError("the "+draft.ident()+" instance does not fit "+
-			configPath+", which is unchanged", err)
-	}
-	if err := replaceFile(configPath, updated); err != nil {
+	if err := writeConfig(configPath, updated, "the "+draft.ident()+" instance does not fit "+
+		configPath+", which is unchanged"); err != nil {
 		return err
 	}
 
@@ -545,11 +529,4 @@ func splitInlineComment(rest string) (value, comment string) {
 		return strings.TrimSpace(rest[:at]), strings.TrimSpace(rest[at:])
 	}
 	return strings.TrimSpace(rest), ""
-}
-
-func replaceFile(path, content string) error {
-	if err := fsx.WriteAtomic(path, []byte(content), fsx.ModeOf(path, 0o644)); err != nil {
-		return internalerror.NewInternalError("cannot write "+path, err)
-	}
-	return nil
 }

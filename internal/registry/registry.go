@@ -16,9 +16,11 @@ import (
 	"maps"
 )
 
-// OriginBuiltin marks a plugin compiled into this binary. External plugins
-// carry the path of the binary the host executes instead.
 const OriginBuiltin = "builtin"
+
+func OriginExternal(binary string) string {
+	return "external " + binary
+}
 
 // Also one directory in the plugin cache (plugindist): never admit a separator or a dot.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)

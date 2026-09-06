@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -118,5 +119,41 @@ func TestSyncStaysSilentWithoutATakeover(t *testing.T) {
 	res := run(t, rt, "sync")
 	if strings.Contains(res.stdout, "took over") {
 		t.Errorf("stdout = %q, want no takeover line", res.stdout)
+	}
+}
+
+func TestSyncCountsTheInstancesThatDidNotFinish(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures []services.InstanceFailure
+		want     string
+	}{
+		{
+			name:     "one",
+			failures: []services.InstanceFailure{{Instance: "forge", Err: errors.New("read timed out")}},
+			want:     "1 source did not finish this round",
+		},
+		{
+			name: "two",
+			failures: []services.InstanceFailure{
+				{Instance: "forge", Err: errors.New("read timed out")},
+				{Instance: "tracker", Err: errors.New("read timed out")},
+			},
+			want: "2 sources did not finish this round",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, orchestrator := mockSync(t)
+			orchestrator.EXPECT().Sync(gomock.Any(), gomock.Any()).
+				Return(services.SyncResult{Failures: tc.failures}, nil)
+
+			res := run(t, rt, "sync")
+			if res.exitCode != exitInternal {
+				t.Fatalf("exit = %d, want %d", res.exitCode, exitInternal)
+			}
+			if !strings.Contains(res.stderr, tc.want) {
+				t.Errorf("stderr = %q, want %q", res.stderr, tc.want)
+			}
+		})
 	}
 }

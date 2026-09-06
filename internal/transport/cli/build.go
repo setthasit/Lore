@@ -63,7 +63,7 @@ func runBuild(cmd *cobra.Command, with []string, output string) error {
 
 	out := cmd.OutOrStdout()
 	printfln(out, "wrote %s against engine %s with %s compiled in:",
-		result.Output, result.Engine, pluralize(len(result.Added), "plugin", "plugins"))
+		result.Output, result.Engine, plural(len(result.Added), "plugin", "plugins"))
 	for _, added := range result.Added {
 		printfln(out, "  %s", added)
 	}
@@ -101,27 +101,17 @@ func runPluginSearch(cmd *cobra.Command, query string) error {
 	matched := plugbuild.Match(entries, query)
 	if len(matched) == 0 {
 		printfln(out, "no plugin matches %q — the index holds %s, searched by name, summary and kind",
-			query, pluralize(len(entries), "plugin", "plugins"))
+			query, plural(len(entries), "plugin", "plugins"))
 		return nil
 	}
 	renderSearchResults(out, matched)
 	return nil
 }
 
-// The coordinate is a column rather than a footnote: it is the argument of the
-// next command the reader runs, whether that is install or build.
 func renderSearchResults(out io.Writer, entries []plugbuild.Entry) {
-	nameWidth, kindWidth, coordinateWidth := len("NAME"), len("KIND"), len("COORDINATE")
-	for _, e := range entries {
-		nameWidth = max(nameWidth, len(e.Name))
-		kindWidth = max(kindWidth, len(e.Kind))
-		coordinateWidth = max(coordinateWidth, len(e.Coordinate))
+	rows := make([][]string, len(entries))
+	for i, e := range entries {
+		rows[i] = []string{e.Name, e.Kind, e.Coordinate, e.Summary}
 	}
-
-	printfln(out, "%s  %s  %s  %s",
-		pad("NAME", nameWidth), pad("KIND", kindWidth), pad("COORDINATE", coordinateWidth), "SUMMARY")
-	for _, e := range entries {
-		printfln(out, "%s  %s  %s  %s",
-			pad(e.Name, nameWidth), pad(e.Kind, kindWidth), pad(e.Coordinate, coordinateWidth), e.Summary)
-	}
+	renderTable(out, []string{"NAME", "KIND", "COORDINATE", "SUMMARY"}, rows)
 }

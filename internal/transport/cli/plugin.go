@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"strconv"
-	"strings"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -42,7 +41,7 @@ func newPluginListCommand(configPath *string, reg *registry.Registry) *cobra.Com
 			"between what the configuration asks for and what is on disk is visible.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			renderPlugins(cmd, reg.List(), declaredExternals(*configPath, reg))
+			renderPlugins(cmd.OutOrStdout(), reg.List(), declaredExternals(*configPath, reg))
 			return nil
 		},
 	}
@@ -81,7 +80,7 @@ func declaredExternals(configPath string, reg *registry.Registry) []externalRow 
 			if err != nil {
 				row.state = "not installed — run: lore plugin install " + decl.Name
 			} else {
-				row.state = "external " + binary
+				row.state = registry.OriginExternal(binary)
 			}
 		}
 		rows = append(rows, row)
@@ -89,39 +88,23 @@ func declaredExternals(configPath string, reg *registry.Registry) []externalRow 
 	return rows
 }
 
-// The columns are padded rather than tabwritten because the set is small and a
-// fixed-width table stays readable when a summary wraps.
-func renderPlugins(cmd *cobra.Command, entries []registry.Entry, externals []externalRow) {
-	out := cmd.OutOrStdout()
+func renderPlugins(out io.Writer, entries []registry.Entry, externals []externalRow) {
 	if len(entries) == 0 {
 		printfln(out, "no plugins are registered — this build can ingest nothing")
 		return
 	}
 
-	nameWidth, kindWidth, originWidth := len("NAME"), len("KIND"), len("ORIGIN")
-	for _, e := range entries {
-		nameWidth = max(nameWidth, len(e.Manifest.Name))
-		kindWidth = max(kindWidth, len(kindLabel(e.Manifest)))
-		originWidth = max(originWidth, len(e.Origin))
+	header := []string{"NAME", "KIND", "ORIGIN", "SUMMARY"}
+	rows := make([][]string, len(entries))
+	for i, e := range entries {
+		rows[i] = []string{e.Manifest.Name, kindLabel(e.Manifest), e.Origin, e.Manifest.Summary}
 	}
+	widths := renderTable(out, header, rows)
 
-	printfln(out, "%s  %s  %s  %s",
-		pad("NAME", nameWidth), pad("KIND", kindWidth), pad("ORIGIN", originWidth), "SUMMARY")
-	for _, e := range entries {
-		printfln(out, "%s  %s  %s  %s",
-			pad(e.Manifest.Name, nameWidth),
-			pad(kindLabel(e.Manifest), kindWidth),
-			pad(e.Origin, originWidth),
-			e.Manifest.Summary)
-	}
-
-	// Declared externals print below the table rather than inside it: their
-	// kind and summary live in a manifest only the binary can answer for, and
-	// listing does not execute anything.
 	for _, row := range externals {
 		printfln(out, "")
-		printfln(out, "%s  declared from %s", pad(row.name, nameWidth), row.from)
-		printfln(out, "%s  %s", pad("", nameWidth), row.state)
+		printfln(out, "%s", tableLine([]string{row.name, "declared from " + row.from}, widths))
+		printfln(out, "%s", tableLine([]string{"", row.state}, widths))
 	}
 }
 
@@ -130,19 +113,4 @@ func kindLabel(m lore.Manifest) string {
 		return string(m.Kind)
 	}
 	return string(m.Kind) + " (" + m.Capabilities.String() + ")"
-}
-
-func pad(text string, width int) string {
-	if n := width - len(text); n > 0 {
-		return text + strings.Repeat(" ", n)
-	}
-	return text
-}
-
-// pluralize keeps the failure lines readable without a second format string.
-func pluralize(n int, singular, plural string) string {
-	if n == 1 {
-		return strconv.Itoa(n) + " " + singular
-	}
-	return strconv.Itoa(n) + " " + plural
 }

@@ -200,6 +200,45 @@ func renderGaps(w io.Writer, gaps []string) {
 	}
 }
 
+func renderTable(out io.Writer, header []string, rows [][]string) []int {
+	widths := columnWidths(header, rows)
+	printfln(out, "%s", tableLine(header, widths))
+	for _, row := range rows {
+		printfln(out, "%s", tableLine(row, widths))
+	}
+	return widths
+}
+
+func columnWidths(header []string, rows [][]string) []int {
+	widths := make([]int, len(header))
+	for i, cell := range header {
+		widths[i] = len(cell)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			widths[i] = max(widths[i], len(cell))
+		}
+	}
+	return widths
+}
+
+func tableLine(cells []string, widths []int) string {
+	var line strings.Builder
+	for i, cell := range cells {
+		if i > 0 {
+			line.WriteString("  ")
+		}
+		line.WriteString(cell)
+		if i == len(cells)-1 {
+			continue
+		}
+		for n := widths[i] - len(cell); n > 0; n-- {
+			line.WriteByte(' ')
+		}
+	}
+	return line.String()
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one

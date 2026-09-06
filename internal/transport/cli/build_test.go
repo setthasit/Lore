@@ -176,3 +176,20 @@ func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
 		t.Errorf("exit = %d, want %d", code, exitPrecondition)
 	}
 }
+
+func TestRenderSearchResultsOutput(t *testing.T) {
+	var out bytes.Buffer
+	renderSearchResults(&out, []plugbuild.Entry{
+		{Name: "linear", Kind: "source", Summary: "Linear issues", Coordinate: "github.com/jdoe/lore-linear@v0.3.1"},
+		{Name: "t", Kind: "provider", Summary: "Together embeddings", Coordinate: "github.com/a/t@v0.1.0"},
+		{Name: "ünïcode", Kind: "source", Summary: "Multibyte name", Coordinate: "github.com/x/u@v2"},
+	})
+
+	want := "NAME       KIND      COORDINATE                          SUMMARY\n" +
+		"linear     source    github.com/jdoe/lore-linear@v0.3.1  Linear issues\n" +
+		"t          provider  github.com/a/t@v0.1.0               Together embeddings\n" +
+		"ünïcode  source    github.com/x/u@v2                   Multibyte name\n"
+	if got := out.String(); got != want {
+		t.Errorf("renderSearchResults() =\n%q\nwant\n%q", got, want)
+	}
+}

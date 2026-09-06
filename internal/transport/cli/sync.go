@@ -59,7 +59,7 @@ func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	}
 	printfln(out, "the remaining sources are committed; `lore status` for counts and cursor ages")
 
-	return internalerror.NewInternalError(pluralize(len(failures), "source", "sources")+
+	return internalerror.NewInternalError(plural(len(failures), "source", "sources")+
 		" did not finish this round", errors.Join(errs(failures)...))
 }
 

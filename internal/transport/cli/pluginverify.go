@@ -51,7 +51,7 @@ func certify(out io.Writer, name, binary string, host lore.Host) error {
 		return nil
 	}
 
-	printfln(out, "  conformance: %s", pluralize(len(findings), "failure", "failures"))
+	printfln(out, "  conformance: %s", plural(len(findings), "failure", "failures"))
 	for _, f := range findings {
 		printfln(out, "    %s: %s", f.Check, f.Detail)
 	}

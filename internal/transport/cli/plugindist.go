@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"bytes"
-	"errors"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -97,18 +94,9 @@ type pluginWorkspace struct {
 }
 
 func openPluginWorkspace(configPath string) (*pluginWorkspace, error) {
-	content, err := os.ReadFile(configPath)
+	content, parsed, err := readConfig(configPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, internalerror.NewNotFoundError("no configuration at "+configPath+
-				" — run `lore init` to create one", err)
-		}
-		return nil, internalerror.NewInternalError("cannot read "+configPath, err)
-	}
-
-	parsed, err := config.Decode(bytes.NewReader(content))
-	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot parse "+configPath, err)
+		return nil, err
 	}
 
 	dir := filepath.Dir(configPath)
@@ -121,7 +109,7 @@ func openPluginWorkspace(configPath string) (*pluginWorkspace, error) {
 		return nil, err
 	}
 	return &pluginWorkspace{
-		path: configPath, dir: dir, content: string(content),
+		path: configPath, dir: dir, content: content,
 		config: parsed, lock: lock, store: store,
 	}, nil
 }
@@ -187,7 +175,7 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 		if pinned.From != request.Coordinate.From {
 			// @latest was an argument, so the version it resolved to goes back
 			// into the file: the next machine must run the same code.
-			edits = append(edits, configEdit{name: pinned.Name, from: pinned.From})
+			edits = append(edits, configEdit{name: pinned.Name, from: pinned.From, kind: editPin})
 		}
 		request.Coordinate = pinned
 
@@ -198,7 +186,7 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 		results = append(results, result)
 	}
 
-	if err := workspace.commit(edits, anyPinned(results)); err != nil {
+	if err := workspace.commitPins(edits, anyPinned(results)); err != nil {
 		return err
 	}
 	for _, result := range results {
@@ -264,7 +252,7 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 
 	edits := []configEdit(nil)
 	if !declared {
-		edits = append(edits, configEdit{name: name, from: coord.From, add: true})
+		edits = append(edits, configEdit{name: name, from: coord.From, kind: editDeclare})
 	}
 	return []plugindist.Request{{Coordinate: coord}}, edits, nil
 }
@@ -318,9 +306,9 @@ func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
 
 	edits := []configEdit(nil)
 	if pinned.From != decl.From {
-		edits = append(edits, configEdit{name: name, from: pinned.From})
+		edits = append(edits, configEdit{name: name, from: pinned.From, kind: editPin})
 	}
-	if err := workspace.commit(edits, true); err != nil {
+	if err := workspace.commitPins(edits, true); err != nil {
 		return err
 	}
 	renderInstall(out, result)
@@ -340,27 +328,14 @@ func runPluginRemove(cmd *cobra.Command, name, configPath string) error {
 			" — remove those first, or the next `lore sync` has nothing to build them from", nil)
 	}
 
-	updated, err := removePluginDecl(workspace.content, name)
-	if err != nil {
-		return err
-	}
-	if _, err := config.Decode(strings.NewReader(updated)); err != nil {
-		return internalerror.NewInternalError("removing "+pluginLabel(name)+" would leave "+workspace.path+
-			" unreadable, so it is unchanged", err)
-	}
-
 	versions, err := workspace.store.Remove(name)
 	if err != nil {
 		return err
 	}
 	unlocked := workspace.lock.Remove(name)
-	if err := replaceFile(workspace.path, updated); err != nil {
+	refusal := "removing " + pluginLabel(name) + " would leave " + workspace.path + " unreadable, so it is unchanged"
+	if err := workspace.commit([]configEdit{{name: name, kind: editRemove}}, refusal, unlocked); err != nil {
 		return err
-	}
-	if unlocked {
-		if err := workspace.lock.Save(workspace.dir); err != nil {
-			return err
-		}
 	}
 
 	out := cmd.OutOrStdout()
@@ -368,7 +343,7 @@ func runPluginRemove(cmd *cobra.Command, name, configPath string) error {
 	if unlocked {
 		printfln(out, "  dropped its entry from %s", plugindist.LockFileName)
 	}
-	printfln(out, "  deleted %s from the plugin cache", pluralize(versions, "cached version", "cached versions"))
+	printfln(out, "  deleted %s from the plugin cache", plural(versions, "cached version", "cached versions"))
 	return nil
 }
 
@@ -448,11 +423,7 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  manifest: not cached — the handshake reads it from the binary anyway")
 }
 
-// commit writes the configuration and the lockfile, in that order and only
-// after every install succeeded. The configuration is decoded before it is
-// written, so a splice that would no longer load is refused while the file on
-// disk is still the old one.
-func (w *pluginWorkspace) commit(edits []configEdit, lockChanged bool) error {
+func (w *pluginWorkspace) commit(edits []configEdit, refusal string, lockChanged bool) error {
 	if len(edits) > 0 {
 		updated := w.content
 		for _, edit := range edits {
@@ -462,11 +433,7 @@ func (w *pluginWorkspace) commit(edits []configEdit, lockChanged bool) error {
 			}
 			updated = applied
 		}
-		if _, err := config.Decode(strings.NewReader(updated)); err != nil {
-			return internalerror.NewInternalError("the pinned coordinates do not fit "+w.path+
-				", which is unchanged", err)
-		}
-		if err := replaceFile(w.path, updated); err != nil {
+		if err := writeConfig(w.path, updated, refusal); err != nil {
 			return err
 		}
 		w.content = updated
@@ -476,6 +443,10 @@ func (w *pluginWorkspace) commit(edits []configEdit, lockChanged bool) error {
 		return w.lock.Save(w.dir)
 	}
 	return nil
+}
+
+func (w *pluginWorkspace) commitPins(edits []configEdit, lockChanged bool) error {
+	return w.commit(edits, "the pinned coordinates do not fit "+w.path+", which is unchanged", lockChanged)
 }
 
 func anyPinned(results []plugindist.Result) bool {
@@ -552,19 +523,32 @@ func pluginLabel(name string) string {
 	return pluginsKey + "[" + name + "]"
 }
 
-// configEdit is a change to the plugins: block of lore.yaml. There are only
-// two: pin a declaration's version, and declare a plugin an argument named.
 type configEdit struct {
 	name string
 	from string
-	add  bool
+	kind editKind
 }
 
+type editKind int
+
+const (
+	editPin editKind = iota
+	editDeclare
+	editRemove
+)
+
 func (e configEdit) apply(content string) (string, error) {
-	if e.add {
+	switch e.kind {
+	case editPin:
+		return setPluginFrom(content, e.name, e.from)
+	case editDeclare:
 		return appendPluginDecl(content, e.name, e.from)
+	case editRemove:
+		return removePluginDecl(content, e.name)
+	default:
+		return "", internalerror.NewInternalError("unhandled configuration edit kind "+
+			strconv.Itoa(int(e.kind)), nil)
 	}
-	return setPluginFrom(content, e.name, e.from)
 }
 
 // pluginDecl is where one declaration sits in the text of a configuration.

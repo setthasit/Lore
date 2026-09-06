@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -310,5 +311,96 @@ func assertNoSecretValues(t *testing.T, content string) {
 				t.Errorf("line %q assigns a secret directly; only *_env keys are allowed", line)
 			}
 		}
+	}
+}
+
+func manifestWithSecrets(envs ...string) lore.Manifest {
+	m := lore.Manifest{}
+	for _, env := range envs {
+		m.Secrets = append(m.Secrets, lore.Secret{DefaultEnv: env})
+	}
+	return m
+}
+
+func TestCredentialNoteNamesEverySecretsDefaultVariable(t *testing.T) {
+	tests := []struct {
+		name string
+		envs []string
+		want string
+	}{
+		{name: "no secrets", want: ""},
+		{name: "no secret suggests a variable", envs: []string{"", ""}, want: ""},
+		{name: "one secret", envs: []string{"LORE_A_TOKEN"}, want: "credentials come from LORE_A_TOKEN"},
+		{
+			name: "two secrets naming distinct variables",
+			envs: []string{"LORE_A_EMAIL", "LORE_A_TOKEN"},
+			want: "credentials come from LORE_A_EMAIL and LORE_A_TOKEN",
+		},
+		{
+			name: "two secrets sharing one variable",
+			envs: []string{"LORE_A_TOKEN", "LORE_A_TOKEN"},
+			want: "credentials come from LORE_A_TOKEN and LORE_A_TOKEN",
+		},
+		{
+			name: "one secret suggesting nothing",
+			envs: []string{"", "LORE_A_TOKEN"},
+			want: "credentials come from LORE_A_TOKEN",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := credentialNote(manifestWithSecrets(tt.envs...)); got != tt.want {
+				t.Errorf("credentialNote(%v) = %q, want %q", tt.envs, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffoldVariablesDedupesInDeclarationOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   []string
+		embedder []string
+		want     []string
+	}{
+		{name: "no secrets"},
+		{name: "no secret suggests a variable", source: []string{""}, embedder: []string{""}},
+		{
+			name:     "one secret each",
+			source:   []string{"LORE_FORGE_TOKEN"},
+			embedder: []string{"VECTORS_API_KEY"},
+			want:     []string{"LORE_FORGE_TOKEN", "VECTORS_API_KEY"},
+		},
+		{
+			name:     "two secrets naming distinct variables",
+			source:   []string{"LORE_FORGE_EMAIL", "LORE_FORGE_TOKEN"},
+			embedder: []string{"VECTORS_API_KEY"},
+			want:     []string{"LORE_FORGE_EMAIL", "LORE_FORGE_TOKEN", "VECTORS_API_KEY"},
+		},
+		{
+			name:     "two secrets sharing one variable",
+			source:   []string{"LORE_FORGE_TOKEN", "LORE_FORGE_TOKEN"},
+			embedder: []string{"VECTORS_API_KEY"},
+			want:     []string{"LORE_FORGE_TOKEN", "VECTORS_API_KEY"},
+		},
+		{
+			name:     "one variable shared across manifests",
+			source:   []string{"LORE_SHARED_TOKEN"},
+			embedder: []string{"LORE_SHARED_TOKEN"},
+			want:     []string{"LORE_SHARED_TOKEN"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := &scaffold{
+				source:   manifestWithSecrets(tt.source...),
+				embedder: manifestWithSecrets(tt.embedder...),
+			}
+			if got := plan.variables(); !slices.Equal(got, tt.want) {
+				t.Errorf("variables() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -63,7 +63,7 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 				"plugins[%s] does not answer the plugin protocol at %s: %s", decl.Name, binary, err.Error()), err)
 		}
 
-		out.plugins = append(out.plugins, external{name: decl.Name, origin: "external " + binary, plugin: plugin})
+		out.plugins = append(out.plugins, external{name: decl.Name, origin: registry.OriginExternal(binary), plugin: plugin})
 		if warning := coord.Warning(); warning != "" {
 			out.warnings = append(out.warnings, warning)
 		}

@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
@@ -510,5 +511,18 @@ func TestPluginRemoveRefusesWhileAnInstanceUsesIt(t *testing.T) {
 	}
 	if config := readWorkspaceFile(t, path); config != declared {
 		t.Fatalf("a refused removal rewrote the configuration:\n%s", config)
+	}
+}
+
+func TestConfigEditRefusesAnUnhandledKind(t *testing.T) {
+	_, err := configEdit{name: "linear", kind: editKind(99)}.apply(declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+	if err == nil {
+		t.Fatal("an unhandled edit kind was applied")
+	}
+	if !internalerror.IsInternal(err) {
+		t.Errorf("kind = %v, want %v", internalerror.KindOf(err), internalerror.KindInternal)
+	}
+	if !strings.Contains(err.Error(), "99") {
+		t.Errorf("error = %q, want it to name the unhandled kind", err)
 	}
 }
