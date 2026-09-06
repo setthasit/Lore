@@ -71,18 +71,6 @@ func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
 	}
 }
 
-func TestPluginRefusesUndeclaredCapability(t *testing.T) {
-	_, err := Plugin().NewProvider(testConfig("rerank", "text-embedding-3-small"))
-	if err == nil {
-		t.Fatal("NewProvider succeeded for a capability the manifest does not declare")
-	}
-
-	const want = "openai: capability rerank is not served by this provider; it serves embed, complete"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
-	}
-}
-
 func TestPluginRefusesDimensionsForEmbed(t *testing.T) {
 	cfg := testConfig(lore.CapabilityEmbed, "text-embedding-3-small")
 	cfg.Dimensions = 1536

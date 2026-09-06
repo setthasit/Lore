@@ -1,5 +1,10 @@
 package lore
 
+import (
+	"slices"
+	"strings"
+)
+
 // APIVersion is the contract version this SDK implements. A plugin declares the
 // version it was built against and the host refuses a mismatch, naming both
 // numbers: running a source over a contract the two sides do not agree on
@@ -54,6 +59,16 @@ type Provider = any
 // working without the engine knowing a forge by name.
 type RemoteMatcher interface {
 	MatchesRemote(remote string) bool
+}
+
+func SplitRemote(remote string) (forge, path string, ok bool) {
+	forge, path, ok = strings.Cut(remote, ":")
+	return forge, path, ok && forge != "" && IsNamespacedPath(path)
+}
+
+func IsNamespacedPath(path string) bool {
+	segments := strings.Split(path, "/")
+	return len(segments) >= 2 && !slices.Contains(segments, "")
 }
 
 // Manifest is the single description of a plugin's configuration. It is not
@@ -116,6 +131,19 @@ func (c Capabilities) Names() []Capability {
 		out = append(out, CapabilityComplete)
 	}
 	return out
+}
+
+func (c Capabilities) String() string {
+	names := c.Names()
+	if len(names) == 0 {
+		return "nothing"
+	}
+
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = string(n)
+	}
+	return strings.Join(out, ", ")
 }
 
 // FieldType is the shape a configuration value must have. The host checks it

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -94,8 +93,8 @@ func (c *Connector) Name() string { return c.instance }
 // this instance ingests, which is what keeps the startup warning about an
 // unmatched clone working without the engine knowing a forge by name.
 func (c *Connector) MatchesRemote(remote string) bool {
-	forge, path, ok := strings.Cut(remote, ":")
-	if !ok || forge != forgeName || !namespacedPath(path) {
+	forge, path, ok := lore.SplitRemote(remote)
+	if !ok || forge != forgeName {
 		return false
 	}
 	// GitHub owner and repository names are case-insensitive.
@@ -104,17 +103,10 @@ func (c *Connector) MatchesRemote(remote string) bool {
 	})
 }
 
-// A repository path is at least a namespace and a name. Depth beyond that is the
-// forge's business: an entry no configured repo lists still fails to match.
-func namespacedPath(path string) bool {
-	segments := strings.Split(path, "/")
-	return len(segments) >= 2 && !slices.Contains(segments, "")
-}
-
 // Changes walks the configured repositories in order, oldest-first within each.
 func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
 	return func(yield func(lore.Batch, error) bool) {
-		state := cloneCursor(cursor)
+		state := cursor.Clone()
 
 		for _, name := range c.repos {
 			r, err := parseRepo(name)
@@ -148,12 +140,12 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 				if len(docs) < c.batchSize {
 					continue
 				}
-				if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				if !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 					return
 				}
 				docs = make([]lore.Document, 0, c.batchSize)
 			}
-			if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 				return
 			}
 		}
@@ -504,12 +496,4 @@ func readCursor(c lore.Cursor, r repo) (unitKey, error) {
 func writeCursor(c lore.Cursor, r repo, k unitKey) {
 	c[r.slug+cursorUpdatedSuffix] = k.updatedAt.UTC().Format(time.RFC3339)
 	c[r.slug+cursorDocSuffix] = string(k.docID)
-}
-
-// A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c lore.Cursor) lore.Cursor {
-	if len(c) == 0 {
-		return lore.Cursor{}
-	}
-	return maps.Clone(c)
 }

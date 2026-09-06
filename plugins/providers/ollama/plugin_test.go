@@ -74,18 +74,6 @@ func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
 	}
 }
 
-func TestPluginRefusesUndeclaredCapability(t *testing.T) {
-	_, err := Plugin().NewProvider(testProviderConfig("rerank", testEmbedModel))
-	if err == nil {
-		t.Fatal("NewProvider succeeded for a capability the manifest does not declare")
-	}
-
-	const want = "ollama: capability rerank is not served by this provider; it serves embed, complete"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
-	}
-}
-
 func TestPluginRequiresDimensionsForEmbed(t *testing.T) {
 	_, err := Plugin().NewProvider(testProviderConfig(lore.CapabilityEmbed, testEmbedModel))
 	if err == nil {

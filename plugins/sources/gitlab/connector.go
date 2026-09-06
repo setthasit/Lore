@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -103,26 +102,18 @@ func (c *Connector) Name() string { return c.instance }
 // this instance ingests, which is what keeps the startup warning about an
 // unmatched clone working without the engine knowing GitLab by name.
 func (c *Connector) MatchesRemote(remote string) bool {
-	forge, path, ok := strings.Cut(remote, ":")
-	if !ok || forge != forgeName || !namespacedPath(path) {
+	forge, path, ok := lore.SplitRemote(remote)
+	if !ok || forge != forgeName {
 		return false
 	}
-	// A GitLab path is case-sensitive and may nest through subgroups, so it is
-	// matched verbatim rather than folded.
+	// GitLab paths are case-sensitive; compare verbatim.
 	return slices.Contains(c.projects, path)
-}
-
-// A repository path is at least a namespace and a name. Depth beyond that is
-// GitLab's business: a clone no configured project lists still warns.
-func namespacedPath(path string) bool {
-	segments := strings.Split(path, "/")
-	return len(segments) >= 2 && !slices.Contains(segments, "")
 }
 
 // Changes walks the configured projects in order, oldest-first within each.
 func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
 	return func(yield func(lore.Batch, error) bool) {
-		state := cloneCursor(cursor)
+		state := cursor.Clone()
 
 		for _, name := range c.projects {
 			p, err := parseProject(name)
@@ -156,12 +147,12 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 				if len(docs) < c.batchSize {
 					continue
 				}
-				if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				if !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 					return
 				}
 				docs = make([]lore.Document, 0, c.batchSize)
 			}
-			if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 				return
 			}
 		}
@@ -177,7 +168,7 @@ type project struct {
 
 func parseProject(s string) (project, error) {
 	path := strings.Trim(s, "/")
-	if !namespacedPath(path) {
+	if !lore.IsNamespacedPath(path) {
 		return project{}, fmt.Errorf("gitlab: invalid project %q: want \"group/project\"", s)
 	}
 	return project{path: path, encoded: strings.ReplaceAll(path, "/", "%2F")}, nil
@@ -552,12 +543,4 @@ func readCursor(c lore.Cursor, p project) (unitKey, error) {
 func writeCursor(c lore.Cursor, p project, k unitKey) {
 	c[p.path+cursorUpdatedSuffix] = k.updatedAt.UTC().Format(time.RFC3339Nano)
 	c[p.path+cursorDocSuffix] = string(k.docID)
-}
-
-// A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c lore.Cursor) lore.Cursor {
-	if len(c) == 0 {
-		return lore.Cursor{}
-	}
-	return maps.Clone(c)
 }

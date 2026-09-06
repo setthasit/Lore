@@ -124,21 +124,11 @@ func renderPlugins(cmd *cobra.Command, entries []registry.Entry, externals []ext
 	}
 }
 
-// A provider's kind alone says nothing useful, so the capabilities it serves are
-// what the column reports: that is the part a role binding has to match.
 func kindLabel(m lore.Manifest) string {
-	if m.Kind != lore.KindProvider {
+	if m.Kind != lore.KindProvider || len(m.Capabilities.Names()) == 0 {
 		return string(m.Kind)
 	}
-
-	served := make([]string, 0, 2)
-	for _, c := range m.Capabilities.Names() {
-		served = append(served, string(c))
-	}
-	if len(served) == 0 {
-		return string(m.Kind)
-	}
-	return string(m.Kind) + " (" + strings.Join(served, ", ") + ")"
+	return string(m.Kind) + " (" + m.Capabilities.String() + ")"
 }
 
 func pad(text string, width int) string {

@@ -1,6 +1,9 @@
 package lore
 
-import "time"
+import (
+	"maps"
+	"time"
+)
 
 // DocID is the globally unique document identity, formatted
 // "<source>:<type>:<external_id>".
@@ -78,6 +81,14 @@ type RawRef struct {
 // Cursor is an opaque per-instance sync position; only the connector that
 // produced it interprets its keys.
 type Cursor map[string]string
+
+// Clone never returns nil; a nil or empty receiver yields a fresh empty Cursor.
+func (c Cursor) Clone() Cursor {
+	if len(c) == 0 {
+		return Cursor{}
+	}
+	return maps.Clone(c)
+}
 
 // Batch is the checkpoint unit of a sync round: Cursor becomes durable once Docs
 // are durably committed. Every batch carries a cursor, empty ones included.

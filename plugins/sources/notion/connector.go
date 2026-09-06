@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -84,7 +83,7 @@ func (c *Connector) Name() string { return c.instance }
 
 func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
 	return func(yield func(lore.Batch, error) bool) {
-		state := cloneCursor(cursor)
+		state := cursor.Clone()
 		from, err := readCursor(state)
 		if err != nil {
 			yield(lore.Batch{}, err)
@@ -104,7 +103,7 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 		walkErr := c.client.eachPage(ctx, "", func(p *page) bool {
 			// Notion orders search by last_edited_time alone, so a batch never closes mid-timestamp.
 			if len(docs) >= c.batchSize && p.LastEditedTime.After(pos.lastEditedAt) {
-				if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+				if !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 					stopped = true
 					return false
 				}
@@ -147,7 +146,7 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			return
 		}
 		if len(docs) > 0 {
-			yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil)
+			yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil)
 		}
 	}
 }
@@ -346,12 +345,4 @@ func readCursor(c lore.Cursor) (pageKey, error) {
 func writeCursor(c lore.Cursor, k pageKey) {
 	c[cursorLastEditedKey] = k.lastEditedAt.UTC().Format(time.RFC3339Nano)
 	c[cursorDocKey] = string(k.docID)
-}
-
-// A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c lore.Cursor) lore.Cursor {
-	if len(c) == 0 {
-		return lore.Cursor{}
-	}
-	return maps.Clone(c)
 }

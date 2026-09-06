@@ -195,16 +195,10 @@ func assertCapability(b Binding, id string, manifest lore.Manifest, built lore.P
 }
 
 func serves(manifest lore.Manifest) string {
-	names := manifest.Capabilities.Names()
-	if len(names) == 0 {
+	if len(manifest.Capabilities.Names()) == 0 {
 		return "it serves no model capability at all"
 	}
-
-	served := make([]string, 0, len(names))
-	for _, n := range names {
-		served = append(served, string(n))
-	}
-	return "it serves " + strings.Join(served, " and ")
+	return "it serves " + manifest.Capabilities.String()
 }
 
 // BuildCode builds one accessor per registered clone. Root is already absolute:

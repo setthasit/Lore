@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -94,7 +93,7 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			yield(lore.Batch{}, err)
 			return
 		}
-		state := cloneCursor(cursor)
+		state := cursor.Clone()
 		from, err := readCursor(state)
 		if err != nil {
 			yield(lore.Batch{}, err)
@@ -114,12 +113,12 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			if len(docs) < c.batchSize {
 				continue
 			}
-			if !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+			if !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 				return
 			}
 			docs = make([]lore.Document, 0, c.batchSize)
 		}
-		if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: cloneCursor(state)}, nil) {
+		if len(docs) > 0 && !yield(lore.Batch{Docs: docs, Cursor: state.Clone()}, nil) {
 			return
 		}
 	}
@@ -310,12 +309,4 @@ func readCursor(c lore.Cursor) (unitKey, error) {
 func writeCursor(c lore.Cursor, k unitKey) {
 	c[cursorUpdatedKey] = k.updatedAt.UTC().Format(time.RFC3339Nano)
 	c[cursorDocKey] = string(k.docID)
-}
-
-// A yielded batch owns its own map: the caller persists it while the iterator advances.
-func cloneCursor(c lore.Cursor) lore.Cursor {
-	if len(c) == 0 {
-		return lore.Cursor{}
-	}
-	return maps.Clone(c)
 }

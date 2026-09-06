@@ -1,6 +1,7 @@
 package lore_test
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
@@ -104,5 +105,41 @@ func TestDocTypeConstants(t *testing.T) {
 			t.Errorf("duplicate DocType value %q", tt.docType)
 		}
 		seen[tt.docType] = struct{}{}
+	}
+}
+
+func TestCursorClone(t *testing.T) {
+	tests := []struct {
+		name string
+		src  lore.Cursor
+	}{
+		{name: "nil cursor", src: nil},
+		{name: "empty cursor", src: lore.Cursor{}},
+		{
+			name: "populated cursor",
+			src: lore.Cursor{
+				"updated_at": "2024-05-01T12:00:00Z",
+				"doc_id":     "jira:ticket:PROJ-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := maps.Clone(tt.src)
+
+			got := tt.src.Clone()
+			if got == nil {
+				t.Fatal("Clone returned nil, want a writable cursor")
+			}
+			if !maps.Equal(got, tt.src) {
+				t.Fatalf("clone\n got %v\nwant %v", got, tt.src)
+			}
+
+			got["doc_id"] = "notion:page:written"
+			if !maps.Equal(tt.src, original) {
+				t.Errorf("writing to the clone changed the source\n got %v\nwant %v", tt.src, original)
+			}
+		})
 	}
 }

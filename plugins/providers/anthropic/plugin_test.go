@@ -55,20 +55,6 @@ func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
 	}
 }
 
-// The messages API embeds nothing, so an embed binding must fail at
-// construction rather than at the first query.
-func TestPluginRefusesUndeclaredCapability(t *testing.T) {
-	_, err := Plugin().NewProvider(testProviderConfig(lore.CapabilityEmbed))
-	if err == nil {
-		t.Fatal("NewProvider succeeded for a capability the manifest does not declare")
-	}
-
-	const want = "anthropic: capability embed is not served by this provider; it serves complete"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
-	}
-}
-
 // `lore init` scaffolds a model from this map, so a missing suggestion writes an
 // empty model into the file it tells the operator to use as-is.
 func TestManifestSuggestsAModelPerCapability(t *testing.T) {

@@ -2,7 +2,6 @@ package ollama
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/setthasit/Lore/sdk"
 )
@@ -61,17 +60,6 @@ func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	case lore.CapabilityComplete:
 		return New(c.Model, cfg.BaseURL)
 	default:
-		return nil, unsupportedCapability(c.Capability, p.Manifest().Capabilities)
+		return nil, fmt.Errorf("ollama: capability %s is not served by this provider; it serves %s", c.Capability, p.Manifest().Capabilities)
 	}
-}
-
-// unsupportedCapability names both sides, because the operator bound a role to
-// this provider and the fix is one of the roles it does declare.
-func unsupportedCapability(want lore.Capability, have lore.Capabilities) error {
-	declared := have.Names()
-	names := make([]string, len(declared))
-	for i, name := range declared {
-		names[i] = string(name)
-	}
-	return fmt.Errorf("ollama: capability %s is not served by this provider; it serves %s", want, strings.Join(names, ", "))
 }
