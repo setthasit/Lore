@@ -155,9 +155,9 @@ func Build(ctx context.Context, req Request) (Result, error) {
 			continue
 		}
 
-		printStep(progress, "fetching "+want.Query())
-		if out, err := runner.Run(ctx, dir, goBin, "get", want.Query()); err != nil {
-			return Result{}, toolchainError("lore build cannot fetch "+want.Query(), out, err)
+		printStep(progress, "fetching "+want.String())
+		if out, err := runner.Run(ctx, dir, goBin, "get", want.String()); err != nil {
+			return Result{}, toolchainError("lore build cannot fetch "+want.String(), out, err)
 		}
 	}
 

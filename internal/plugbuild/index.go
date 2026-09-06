@@ -3,12 +3,14 @@ package plugbuild
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
 )
 
 // DefaultIndexURL is the plugin index: a JSON file in a git repository, read
@@ -16,11 +18,6 @@ import (
 // index is one small file, and an ecosystem large enough to need either does
 // not exist yet.
 const DefaultIndexURL = "https://raw.githubusercontent.com/setthasit/lore-plugins/main/index.json"
-
-// maxIndexBytes bounds what a search will read. The index is a catalogue, so a
-// file orders of magnitude larger than the whole plugin ecosystem is a mistake
-// or an attack, and either way not worth buffering.
-const maxIndexBytes = 4 << 20
 
 // indexVersion is the schema this reader understands.
 const indexVersion = 1
@@ -40,52 +37,41 @@ type document struct {
 	Plugins []Entry `json:"plugins"`
 }
 
-// Index reads the plugin index. The client is injected because the index is the
-// one thing in this package that talks to the network.
 type Index struct {
 	HTTP *http.Client
 	URL  string
 }
 
-// Fetch returns every entry in the index. An empty index is not an error: until
-// an ecosystem exists that is the honest state of the world, and the caller
-// says so in words rather than printing nothing.
+// An empty index is not an error; the caller says so in words.
 func (i Index) Fetch(ctx context.Context) ([]Entry, error) {
-	url := i.URL
-	if url == "" {
-		url = DefaultIndexURL
+	target := i.URL
+	if target == "" {
+		target = DefaultIndexURL
 	}
 	client := i.HTTP
 	if client == nil {
 		client = http.DefaultClient
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := plugindist.BoundedGet(ctx, client, target, plugindist.MaxMetadataBytes)
 	if err != nil {
-		return nil, internalerror.NewInternalError("the plugin index URL "+url+" is not usable", err)
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
+		if errors.As(err, new(*url.Error)) {
+			return nil, internalerror.NewPreconditionError(
+				"the plugin index at "+target+" is unreachable — searching needs network access; a plugin's own "+
+					"README is the other place its coordinate is written", err)
+		}
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+url+" is unreachable — searching needs network access; a plugin's own "+
-				"README is the other place its coordinate is written", err)
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+url+" answered HTTP "+strconv.Itoa(response.StatusCode), nil)
+			"the plugin index at "+target+" is unusable — "+internalerror.MessageOf(err), err)
 	}
 
 	var doc document
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxIndexBytes)).Decode(&doc); err != nil {
+	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+url+" is not a readable index", err)
+			"the plugin index at "+target+" is not a readable index", err)
 	}
 	if doc.Version != indexVersion {
 		return nil, internalerror.NewPreconditionError(
-			"the plugin index at "+url+" is version "+strconv.Itoa(doc.Version)+
+			"the plugin index at "+target+" is version "+strconv.Itoa(doc.Version)+
 				", and this build reads version "+strconv.Itoa(indexVersion), nil)
 	}
 	return doc.Plugins, nil

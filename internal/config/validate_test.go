@@ -836,12 +836,16 @@ func TestExpandHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	if got, err := expandHome("index_path", "~"); err != nil || got != home {
-		t.Errorf(`expandHome("~") = %q, %v; want %q`, got, err, home)
+	if got, err := ExpandHome("index_path", "~"); err != nil || got != home {
+		t.Errorf(`ExpandHome("~") = %q, %v; want %q`, got, err, home)
+	}
+	want := filepath.Join(home, "index.db")
+	if got, err := ExpandHome("index_path", "~/index.db"); err != nil || got != want {
+		t.Errorf(`ExpandHome("~/index.db") = %q, %v; want %q`, got, err, want)
 	}
 	for _, path := range []string{"./index.db", "/var/lib/lore/index.db", "index~backup.db", "~notauser/index.db"} {
-		if got, err := expandHome("index_path", path); err != nil || got != path {
-			t.Errorf("expandHome(%q) = %q, %v; want it unchanged", path, got, err)
+		if got, err := ExpandHome("index_path", path); err != nil || got != path {
+			t.Errorf("ExpandHome(%q) = %q, %v; want it unchanged", path, got, err)
 		}
 	}
 }

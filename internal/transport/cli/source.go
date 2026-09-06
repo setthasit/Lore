@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -262,7 +261,7 @@ func promptField(p *prompter, field string, declared lore.Field) (any, bool, err
 func parseField(field string, declared lore.Field, answer string) (any, error) {
 	switch declared.Type {
 	case lore.FieldURL:
-		if err := validateURL(field, answer, declared.Default); err != nil {
+		if err := registry.CheckURL(field, answer, declared.Default); err != nil {
 			return nil, err
 		}
 		return answer, nil
@@ -380,23 +379,6 @@ func (p *prompter) requiredList(field, question string) ([]string, error) {
 		return nil, internalerror.NewBadRequestError(field+" must list at least one entry", nil)
 	}
 	return items, nil
-}
-
-// An unset optional URL means the plugin's own default, so only a value that was
-// actually given has to be one a request can be built from.
-func validateURL(field, raw, example string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return internalerror.NewBadRequestError(field+" is not a URL: "+raw, err)
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		refusal := field + " must be an absolute http(s) URL"
-		if example != "" {
-			refusal += " like " + example
-		}
-		return internalerror.NewBadRequestError(refusal+", got "+raw, nil)
-	}
-	return nil
 }
 
 // encodeBlock renders the draft as one sequence item at the block's own

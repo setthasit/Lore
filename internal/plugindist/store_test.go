@@ -72,7 +72,7 @@ func TestPluginBinaryNotInstalledNamesTheInstallCommand(t *testing.T) {
 	}
 
 	const want = "plugins[linear] is not installed — run: lore plugin install linear"
-	if got := actionableCause(err); got != want {
+	if got := internalerror.MessageOf(err); got != want {
 		t.Fatalf("message = %q, want %q", got, want)
 	}
 }

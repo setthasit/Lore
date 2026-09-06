@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugbuild"
 )
 
@@ -68,7 +69,7 @@ func TestBuildCommandAsksForAnExplicitPackage(t *testing.T) {
 	if err == nil {
 		t.Fatal("build accepted a coordinate whose package name cannot be derived")
 	}
-	if got := actionableMessage(err); !strings.Contains(got, "=acmecrm") {
+	if got := internalerror.MessageOf(err); !strings.Contains(got, "=acmecrm") {
 		t.Errorf("error = %q, want the =<package> suffix spelled out", got)
 	}
 	if code := report(io.Discard, err); code != exitBadRequest {
@@ -83,7 +84,7 @@ func TestBuildCommandWithoutAToolchainSaysWhyItNeedsOne(t *testing.T) {
 	if err == nil {
 		t.Fatal("build succeeded with no Go toolchain on PATH")
 	}
-	message := actionableMessage(err)
+	message := internalerror.MessageOf(err)
 	for _, want := range []string{"Go toolchain", "compile-time type safety", "lore plugin install"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("error = %q, want it to mention %q", message, want)
@@ -167,7 +168,7 @@ func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
 	if err == nil {
 		t.Fatal("search succeeded with no network")
 	}
-	message := actionableMessage(err)
+	message := internalerror.MessageOf(err)
 	if !strings.Contains(message, "unreachable") || !strings.Contains(message, "https://example.test/index.json") {
 		t.Errorf("error = %q, want it to name the unreachable index", message)
 	}

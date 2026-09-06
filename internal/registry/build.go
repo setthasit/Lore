@@ -438,7 +438,7 @@ func checkType(field string, declared lore.Field, value any) error {
 		if !ok {
 			return typeError(field, "an absolute http(s) URL", value)
 		}
-		return checkURL(field, raw, declared.Default)
+		return CheckURL(field, raw, declared.Default)
 	case lore.FieldInt:
 		if !integral(value) {
 			return typeError(field, "a whole number", value)
@@ -470,9 +470,7 @@ func checkType(field string, declared lore.Field, value any) error {
 	return nil
 }
 
-// An unset optional URL means the plugin's own default, so only a value that is
-// present has to be one a request can actually be built from.
-func checkURL(field, raw, example string) error {
+func CheckURL(field, raw, example string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return internalerror.NewBadRequestError(field+" is not a URL: "+raw, err)

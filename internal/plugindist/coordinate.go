@@ -2,7 +2,6 @@ package plugindist
 
 import (
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -41,10 +40,13 @@ const gitHubPrefix = "github.com/"
 // Anything else served at a URL is taken to be the binary itself.
 var archiveSuffixes = []string{".tar.gz", ".tgz"}
 
-// versionPattern is what "pinned to an exact version" means here. A branch or a
-// moving tag is refused rather than resolved, because the tag a lockfile
-// records must not be able to start pointing somewhere else.
 var versionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?$`)
+
+// A branch or a moving tag is not exact: the version a lockfile records must not be able to start
+// pointing somewhere else.
+func ExactVersion(version string) bool {
+	return versionPattern.MatchString(version)
+}
 
 func checkName(name string) error {
 	if registry.ValidPluginName(name) {
@@ -107,7 +109,7 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	var coord Coordinate
 	var err error
 	switch {
-	case isLocalPath(from):
+	case IsLocalPath(from):
 		coord, err = parseLocal(dir, name, from)
 	case strings.HasPrefix(from, gitHubPrefix):
 		coord, err = parseGitHub(name, from, allowLatest)
@@ -131,16 +133,14 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 			return Coordinate{}, internalerror.NewBadRequestError(label(name)+" declares a blank pubkey: — name"+
 				" the public key a signature must verify against, or remove the line to install unsigned", nil)
 		}
-		if coord.PubKey, err = absolutePath(dir, pubkey, label(name)+" pubkey: "+pubkey); err != nil {
+		if coord.PubKey, err = absolutePath(dir, pubkey, label(name)+" pubkey:"); err != nil {
 			return Coordinate{}, err
 		}
 	}
 	return coord, nil
 }
 
-// A local coordinate is recognised by its shape alone, exactly as documented,
-// so a bare token can never be mistaken for a path and executed by accident.
-func isLocalPath(from string) bool {
+func IsLocalPath(from string) bool {
 	for _, prefix := range []string{"./", "../", "/", "~/", `.\`, `..\`} {
 		if strings.HasPrefix(from, prefix) {
 			return true
@@ -150,7 +150,7 @@ func isLocalPath(from string) bool {
 }
 
 func parseLocal(dir, name, from string) (Coordinate, error) {
-	absolute, err := absolutePath(dir, from, label(name)+" from "+from)
+	absolute, err := absolutePath(dir, from, label(name)+" from")
 	if err != nil {
 		return Coordinate{}, err
 	}
@@ -177,7 +177,7 @@ func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 			" floats: @latest resolves differently on two machines, which would run different code against"+
 			" one index — run `lore plugin install "+name+"@latest` to pin the version it resolves to now", nil)
 	case version == LatestVersion:
-	case !versionPattern.MatchString(version):
+	case !ExactVersion(version):
 		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
 			" pins @"+version+", which is not an exact version — pin a release tag like @v0.3.1", nil)
 	}
@@ -294,36 +294,19 @@ func label(name string) string {
 	return "plugins[" + name + "]"
 }
 
-// absolutePath resolves a path a declaration wrote against dir, the directory
-// its lore.yaml sits in. blame names the declaration a refusal points at.
-func absolutePath(dir, raw, blame string) (string, error) {
-	expanded, err := expandHome(raw, blame)
+func absolutePath(configDir, raw, field string) (string, error) {
+	expanded, err := config.ExpandHome(field, raw)
 	if err != nil {
 		return "", err
 	}
 
 	// os/exec reads a separator-free name as a PATH lookup, so a declared path is made absolute, not cleaned.
 	if !filepath.IsAbs(expanded) {
-		expanded = filepath.Join(dir, expanded)
+		expanded = filepath.Join(configDir, expanded)
 	}
 	absolute, err := filepath.Abs(expanded)
 	if err != nil {
-		return "", internalerror.NewBadRequestError(blame+" cannot be resolved to a path", err)
+		return "", internalerror.NewBadRequestError(field+" "+raw+" cannot be resolved to a path", err)
 	}
 	return absolute, nil
-}
-
-// Only a leading "~" is expanded, matching how the rest of the configuration
-// treats a path.
-func expandHome(raw, blame string) (string, error) {
-	if !strings.HasPrefix(raw, "~/") {
-		return raw, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", internalerror.NewBadRequestError(blame+
-			" starts with ~, but this user has no home directory; declare an absolute path", err)
-	}
-	return filepath.Join(home, strings.TrimPrefix(raw, "~/")), nil
 }

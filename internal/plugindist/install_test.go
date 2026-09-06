@@ -596,6 +596,74 @@ func TestGetStopsAnHTTPSRedirectLoop(t *testing.T) {
 	}
 }
 
+func TestBoundedGetClassifiesTheResponse(t *testing.T) {
+	t.Parallel()
+
+	const limit = 1 << 20
+
+	cases := map[string]struct {
+		status int
+		size   int
+		want   string
+		kind   internalerror.Kind
+	}{
+		"one byte under the limit": {status: http.StatusOK, size: limit - 1},
+		"exactly the limit":        {status: http.StatusOK, size: limit},
+		"one byte over the limit": {
+			status: http.StatusOK,
+			size:   limit + 1,
+			want:   "is larger than the 1 MiB this build will download",
+			kind:   internalerror.KindPrecondition,
+		},
+		"nothing published": {
+			status: http.StatusNotFound,
+			want:   "nothing published at",
+			kind:   internalerror.KindNotFound,
+		},
+		"server error": {
+			status: http.StatusBadGateway,
+			want:   "responded 502",
+			kind:   internalerror.KindPrecondition,
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(strings.Repeat("a", c.size)))
+			}))
+			t.Cleanup(server.Close)
+
+			body, err := BoundedGet(context.Background(), server.Client(), server.URL+"/index.json", limit)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("BoundedGet() = %v, want the body", err)
+				}
+				if len(body) != c.size {
+					t.Fatalf("body = %d bytes, want %d", len(body), c.size)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("BoundedGet() returned %d bytes, want a refusal", len(body))
+			}
+			if body != nil {
+				t.Errorf("body = %d bytes, want nothing returned with an error", len(body))
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %q, want it to mention %q", err, c.want)
+			}
+			if internalerror.KindOf(err) != c.kind {
+				t.Errorf("kind = %v, want %v", internalerror.KindOf(err), c.kind)
+			}
+		})
+	}
+}
+
 // A URL coordinate reads its version out of the URL's last segment, so a
 // legitimate version is filename-shaped rather than semver, and the cache has
 // to keep taking it.

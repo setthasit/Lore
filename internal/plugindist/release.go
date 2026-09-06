@@ -32,7 +32,7 @@ const ChecksumsAsset = "checksums.txt"
 // is a memory bomb waiting for a hostile mirror.
 const (
 	maxArtifactBytes = 256 << 20
-	maxMetadataBytes = 4 << 20
+	MaxMetadataBytes = 4 << 20
 	maxSignatureSize = 64 << 10
 )
 
@@ -74,7 +74,7 @@ func (f fetcher) latestRelease(ctx context.Context, c Coordinate) (release, erro
 func (f fetcher) release(ctx context.Context, c Coordinate, endpoint, what string) (release, error) {
 	target := f.apiBase + "/repos/" + url.PathEscape(c.Owner) + "/" + url.PathEscape(c.Repo) + endpoint
 
-	body, err := f.get(ctx, target, maxMetadataBytes)
+	body, err := f.get(ctx, target, MaxMetadataBytes)
 	if err != nil {
 		return release{}, resolveFailure(c, "reading "+what+" of github.com/"+c.Owner+"/"+c.Repo, err)
 	}
@@ -114,20 +114,29 @@ func (r release) assetNames() []string {
 }
 
 func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	parsed, err := url.Parse(target)
 	if err != nil {
 		return nil, internalerror.NewBadRequestError("cannot request "+target, err)
 	}
-	if request.URL.Scheme != "https" {
-		return nil, internalerror.NewBadRequestError("refusing to download "+safeURL(request.URL)+
+	if parsed.Scheme != "https" {
+		return nil, internalerror.NewBadRequestError("refusing to download "+safeURL(parsed)+
 			" — plugin downloads stay on https", nil)
 	}
-	request.Header.Set("Accept", "*/*")
 
 	guarded := *f.client
 	guarded.CheckRedirect = refuseDowngrade
 
-	response, err := guarded.Do(request)
+	return BoundedGet(ctx, &guarded, target, limit)
+}
+
+func BoundedGet(ctx context.Context, client *http.Client, target string, limit int64) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("cannot request "+target, err)
+	}
+	request.Header.Set("Accept", "*/*")
+
+	response, err := client.Do(request)
 	if err != nil {
 		var refused *internalerror.Error
 		if errors.As(err, &refused) {
@@ -135,10 +144,7 @@ func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, e
 		}
 		return nil, internalerror.NewPreconditionError("cannot reach "+target, err)
 	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, response.Body)
-		_ = response.Body.Close()
-	}()
+	defer func() { _ = response.Body.Close() }()
 
 	switch {
 	case response.StatusCode == http.StatusNotFound:
@@ -147,8 +153,7 @@ func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, e
 		return nil, internalerror.NewPreconditionError(target+" responded "+strconv.Itoa(response.StatusCode), nil)
 	}
 
-	// One byte past the cap is read on purpose: a body that fills the limit
-	// exactly is indistinguishable from a truncated one otherwise.
+	// Reading one byte past the cap is what separates a full body from a truncated one.
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return nil, internalerror.NewPreconditionError("cannot read "+target, err)
@@ -186,7 +191,7 @@ func safeURL(target *url.URL) string {
 // are the whole diagnosis for an unresolvable coordinate.
 func resolveFailure(c Coordinate, step string, cause error) error {
 	message := label(c.Name) + " cannot resolve " + c.From + ": " + step + " failed"
-	if actionable := actionableCause(cause); actionable != "" {
+	if actionable := internalerror.MessageOf(cause); actionable != "" {
 		message += " — " + actionable
 	}
 
@@ -194,20 +199,6 @@ func resolveFailure(c Coordinate, step string, cause error) error {
 		return internalerror.NewNotFoundError(message, cause)
 	}
 	return internalerror.NewPreconditionError(message, cause)
-}
-
-// The classified message alone is what a reader can act on; an unclassified
-// transport error says its own piece.
-func actionableCause(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	var classified *internalerror.Error
-	if errors.As(err, &classified) {
-		return classified.Message
-	}
-	return err.Error()
 }
 
 // checksumFor reads the digest of one file out of a checksums.txt. The format

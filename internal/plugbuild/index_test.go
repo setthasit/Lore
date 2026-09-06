@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
 )
 
 // roundTripper serves the index from memory: a search test that reached the
@@ -130,7 +131,7 @@ func TestFetchRejectsAnUnusableIndex(t *testing.T) {
 		rt   roundTripper
 		want string
 	}{
-		"missing": {rt: roundTripper{status: http.StatusNotFound, body: "not found"}, want: "HTTP 404"},
+		"missing": {rt: roundTripper{status: http.StatusNotFound, body: "not found"}, want: "nothing published at"},
 		"garbage": {rt: roundTripper{status: http.StatusOK, body: "<html>proxy error</html>"}, want: "not a readable index"},
 		"future schema": {
 			rt:   roundTripper{status: http.StatusOK, body: `{"version": 2, "plugins": []}`},
@@ -144,9 +145,27 @@ func TestFetchRejectsAnUnusableIndex(t *testing.T) {
 			t.Errorf("%s: Fetch() succeeded", name)
 			continue
 		}
-		if !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: error = %q, want it to mention %q", name, err, c.want)
+		if message := internalerror.MessageOf(err); !strings.Contains(message, c.want) {
+			t.Errorf("%s: message = %q, want it to mention %q", name, message, c.want)
 		}
+	}
+}
+
+// An index the cap cuts short is not a JSON mistake, and reporting it as one
+// sends the reader looking for a syntax error that is not there.
+func TestFetchRefusesAnOversizedIndexAsTooLarge(t *testing.T) {
+	oversized := roundTripper{status: http.StatusOK, body: strings.Repeat("a", plugindist.MaxMetadataBytes+1)}
+
+	_, err := fakeIndex(oversized).Fetch(context.Background())
+	if err == nil {
+		t.Fatal("Fetch() accepted an index larger than the cap")
+	}
+	message := internalerror.MessageOf(err)
+	if !strings.Contains(message, "larger than") {
+		t.Errorf("message = %q, want it to refuse the index as too large", message)
+	}
+	if strings.Contains(message, "not a readable index") {
+		t.Errorf("message = %q, want a size refusal rather than a parse failure", message)
 	}
 }
 

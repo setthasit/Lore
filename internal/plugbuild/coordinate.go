@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
 )
 
 // repoPrefix is the naming convention the distribution document fixes for a
@@ -34,12 +35,7 @@ type Coordinate struct {
 	Package string // the package name the generated root calls Plugin() on
 }
 
-// String renders the coordinate the way it is written on the command line,
-// without the package suffix: that suffix is a detail of code generation.
 func (c Coordinate) String() string { return c.Module + "@" + c.Version }
-
-// Query is what the go command is asked to fetch.
-func (c Coordinate) Query() string { return c.Module + "@" + c.Version }
 
 // ParseCoordinate reads `github.com/owner/repo@vX.Y.Z` with an optional
 // `=<package>` suffix. The package name is derived from the module path only
@@ -51,17 +47,14 @@ func ParseCoordinate(raw string) (Coordinate, error) {
 	if spec == "" {
 		return Coordinate{}, badCoordinate(raw, "it is empty")
 	}
-	if strings.HasPrefix(spec, ".") || strings.HasPrefix(spec, "/") || strings.HasPrefix(spec, "~") {
+	if plugindist.IsLocalPath(spec) {
 		return Coordinate{}, badCoordinate(raw, "lore build takes module coordinates, not paths — "+
 			"a local plugin runs out of process, declared as `from: "+spec+"` under plugins: in lore.yaml")
 	}
 
 	spec, pkg, explicit := cutPackage(spec)
 
-	module, version, found := strings.Cut(spec, "@")
-	if !found {
-		return Coordinate{}, badCoordinate(raw, "it names no version — write "+module+"@v0.3.1")
-	}
+	module, version, _ := strings.Cut(spec, "@")
 	if err := checkModule(raw, module); err != nil {
 		return Coordinate{}, err
 	}
@@ -100,21 +93,20 @@ func checkModule(raw, module string) error {
 		return badCoordinate(raw, "it names no module")
 	case strings.ContainsAny(module, " \t\"'"):
 		return badCoordinate(raw, "the module path contains whitespace or quotes")
+	case module[0] == '.' || module[0] == '~':
+		return badCoordinate(raw, "a module path begins with a host, not "+module[:1]+
+			" — write github.com/owner/repo")
 	case !strings.Contains(module, "/"):
 		return badCoordinate(raw, "a module path needs a host, as in github.com/owner/repo")
 	}
 	return nil
 }
 
-// @latest is refused here even though `lore plugin install` accepts it: install
-// writes the version it resolved back into lore.yaml, while a custom binary
-// records nothing, so a floating query would leave no evidence anywhere of what
-// was compiled in.
 func checkVersion(raw, module, version string) error {
 	switch {
 	case version == "", version == "v":
 		return badCoordinate(raw, "it names no version — write "+module+"@v0.3.1")
-	case !strings.HasPrefix(version, "v"):
+	case !plugindist.ExactVersion(version):
 		return badCoordinate(raw, "the version must be an exact module version tag — write "+module+"@v0.3.1")
 	}
 	return nil

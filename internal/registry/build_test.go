@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -248,6 +249,50 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error %q does not contain %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckURL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "plain http is as absolute as https",
+			raw:  "http://acme.dev",
+		},
+		{
+			name: "a scheme without a host names no server",
+			raw:  "http:///v1",
+			want: "base_url must be an absolute http(s) URL like https://acme.dev, got http:///v1",
+		},
+		{
+			name: "a host no parser accepts",
+			raw:  "http:// acme.dev",
+			want: "base_url is not a URL: http:// acme.dev",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckURL("base_url", tt.raw, "https://acme.dev")
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("CheckURL(%q): %v", tt.raw, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("CheckURL(%q): want an error", tt.raw)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error %q does not contain %q", err, tt.want)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Errorf("error %q is not a bad request", err)
 			}
 		})
 	}

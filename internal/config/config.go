@@ -264,14 +264,14 @@ func (c *Config) applyDefaults() error {
 		c.Scheduler.Interval = DefaultSchedulerInterval
 	}
 
-	indexPath, err := expandHome("index_path", c.IndexPath)
+	indexPath, err := ExpandHome("index_path", c.IndexPath)
 	if err != nil {
 		return err
 	}
 	c.IndexPath = indexPath
 
 	for i := range c.Repos {
-		path, err := expandHome("repos path", c.Repos[i].Path)
+		path, err := ExpandHome("repos path", c.Repos[i].Path)
 		if err != nil {
 			return err
 		}
@@ -285,14 +285,18 @@ func (c *Config) applyDefaults() error {
 }
 
 // Only a leading "~" is expanded.
-func expandHome(field, path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+func ExpandHome(field, path string) (string, error) {
+	if !startsAtHome(path) {
 		return path, nil
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", internalerror.NewBadRequestError(field+" "+path+" starts with ~, but this user has no home directory; set an absolute "+field, err)
+		return "", internalerror.NewBadRequestError(field+" "+path+" starts with ~, but this user has no home directory; declare an absolute path", err)
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
+}
+
+func startsAtHome(path string) bool {
+	return path == "~" || (len(path) > 1 && path[0] == '~' && os.IsPathSeparator(path[1]))
 }

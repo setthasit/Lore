@@ -55,7 +55,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 // to be able to tell.
 func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	for _, failure := range failures {
-		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, actionableMessage(failure.Err))
+		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, internalerror.MessageOf(failure.Err))
 	}
 	printfln(out, "the remaining sources are committed; `lore status` for counts and cursor ages")
 

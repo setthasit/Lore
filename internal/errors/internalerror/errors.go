@@ -84,6 +84,19 @@ func KindOf(err error) Kind {
 	return KindUnclassified
 }
 
+// Empty for a nil err; the plain Error() text when the chain holds no classified error.
+func MessageOf(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var classified *Error
+	if errors.As(err, &classified) {
+		return classified.Message
+	}
+	return err.Error()
+}
+
 func IsBadRequest(err error) bool {
 	return KindOf(err) == KindBadRequest
 }

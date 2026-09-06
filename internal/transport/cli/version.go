@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
 // Stamped by the release build with -ldflags "-X". A plain `go build` leaves
@@ -100,7 +101,7 @@ func runVersion(cmd *cobra.Command, resolve Resolver, configPath string) error {
 
 	rt, stop, err := resolve(cmd.Context(), configPath)
 	if err != nil {
-		printfln(out, "workspace: unavailable — %s", actionableMessage(err))
+		printfln(out, "workspace: unavailable — %s", internalerror.MessageOf(err))
 		return nil
 	}
 	defer func() { _ = stop() }()
@@ -118,7 +119,7 @@ func renderStamp(w io.Writer, s buildStamp) {
 
 func renderEmbedder(w io.Writer, identity entities.EmbedderIdentity, err error) {
 	if err != nil {
-		printfln(w, "embedder:  unavailable — %s", actionableMessage(err))
+		printfln(w, "embedder:  unavailable — %s", internalerror.MessageOf(err))
 		return
 	}
 

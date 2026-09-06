@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
@@ -74,7 +75,7 @@ func declaredExternals(configPath string, reg *registry.Registry) []externalRow 
 		row := externalRow{name: decl.Name, from: decl.From}
 		switch coord, err := plugindist.Resolve(workspace.dir, decl); {
 		case err != nil:
-			row.state = "unresolvable — " + actionableMessage(err)
+			row.state = "unresolvable — " + internalerror.MessageOf(err)
 		default:
 			binary, err := workspace.store.Binary(decl.Name, coord, workspace.lock)
 			if err != nil {

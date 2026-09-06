@@ -21,6 +21,9 @@ func TestCoordinateDispatchesByShape(t *testing.T) {
 	}{
 		{name: "relative path", from: "./bin/lore-scratch", origin: OriginLocal},
 		{name: "parent path", from: "../plugins/lore-scratch", origin: OriginLocal},
+		{name: "home path", from: "~/plugins/lore-scratch", origin: OriginLocal},
+		{name: "windows relative path", from: `.\bin\lore-scratch`, origin: OriginLocal},
+		{name: "windows parent path", from: `..\plugins\lore-scratch`, origin: OriginLocal},
 		{name: "absolute path", from: "/opt/lore/lore-scratch", origin: OriginLocal},
 		{name: "release", from: "github.com/jdoe/lore-linear@v0.3.1", origin: OriginGitHub, version: "v0.3.1"},
 		{name: "prerelease", from: "github.com/jdoe/lore-linear@v1.0.0-rc.1", origin: OriginGitHub, version: "v1.0.0-rc.1"},
@@ -86,6 +89,8 @@ func TestCoordinateRefusesUnpinnedAndMalformed(t *testing.T) {
 		want string
 	}{
 		{name: "no version", from: "github.com/jdoe/lore-linear", want: "pins no version"},
+		{name: "major version only", from: "github.com/jdoe/lore-linear@v1", want: "is not an exact version"},
+		{name: "minor version only", from: "github.com/jdoe/lore-linear@v1.2", want: "is not an exact version"},
 		{name: "branch", from: "github.com/jdoe/lore-linear@main", want: "is not an exact version"},
 		{name: "no repository", from: "github.com/jdoe@v0.3.1", want: "names no repository"},
 		{name: "plaintext", from: "http://artifacts.example.com/x/v1.0.0.tar.gz", want: "plaintext HTTP"},
@@ -204,6 +209,8 @@ func TestCoordinateResolvesPubKeyAgainstTheConfigDirectory(t *testing.T) {
 		{name: "parent relative", declared: "../jdoe.pub", want: filepath.Join(filepath.Dir(dir), "jdoe.pub")},
 		{name: "absolute", declared: absolute, want: absolute},
 		{name: "home relative", declared: "~/keys/jdoe.pub", want: filepath.Join(home, "keys", "jdoe.pub")},
+		{name: "home itself", declared: "~", want: home},
+		{name: "home with a separator", declared: "~" + string(filepath.Separator), want: home},
 		{name: "unset means unsigned", declared: "", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

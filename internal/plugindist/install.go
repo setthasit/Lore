@@ -228,7 +228,7 @@ func (ins *Installer) expected(
 
 	checksums := []byte(nil)
 	if checksumsURL != "" {
-		if checksums, err = fetch.get(ctx, checksumsURL, maxMetadataBytes); err != nil {
+		if checksums, err = fetch.get(ctx, checksumsURL, MaxMetadataBytes); err != nil {
 			return "", false, resolveFailure(coord, "downloading "+checksumsURL, err)
 		}
 	}
