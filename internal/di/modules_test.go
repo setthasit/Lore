@@ -2,11 +2,14 @@ package di
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"iter"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +21,7 @@ import (
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/services"
@@ -508,6 +512,145 @@ repos:
 				t.Errorf("warning = %q, want it to name the unmatched remote %s", warnings[0], test.remote)
 			}
 		})
+	}
+}
+
+const (
+	declaredPlugin = "almanac"
+	renamedPlugin  = "ledger"
+)
+
+var scriptedFixtureDir string
+
+var scriptedFixture = sync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "di-scripted-fixture")
+	if err != nil {
+		return "", err
+	}
+	scriptedFixtureDir = dir
+
+	binary := filepath.Join(dir, "scripted")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", binary, "../plugexec/testdata/scripted").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build the scripted plugin: %w\n%s", err, out)
+	}
+	return binary, nil
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = os.RemoveAll(scriptedFixtureDir)
+	os.Exit(code)
+}
+
+func scriptedPlugin(t *testing.T, manifestName string) string {
+	t.Helper()
+
+	built, err := scriptedFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	binary := filepath.Join(dir, filepath.Base(built))
+	if err := os.Link(built, binary); err != nil {
+		t.Fatalf("place the scripted plugin beside its script: %v", err)
+	}
+
+	script := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"` + manifestName +
+		`","kind":"source","api_version":1,"summary":"a scripted external source",` +
+		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}` +
+		"\n\n" + `shutdown emit {"v":1,"id":"$ID","ok":true}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(script), 0o600); err != nil {
+		t.Fatalf("write the plugin script: %v", err)
+	}
+	return binary
+}
+
+func externalConfig(t *testing.T, name, from string) string {
+	t.Helper()
+
+	return writeConfig(t, `plugins:
+  - name: `+name+`
+    from: "`+from+`"
+repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+`+embedderBlock)
+}
+
+func TestWorkspaceRefusesAnExternalPluginItCannotRunUnderTheDeclaredName(t *testing.T) {
+	tests := []struct {
+		name        string
+		from        func(*testing.T) string
+		wantKind    internalerror.Kind
+		wantMessage string
+	}{
+		{
+			name:        "nothing pins which version of a remote plugin runs",
+			from:        func(*testing.T) string { return "github.com/example/lore-" + declaredPlugin + "@v0.1.0" },
+			wantKind:    internalerror.KindPrecondition,
+			wantMessage: plugindist.LockFileName,
+		},
+		{
+			name: "the file the declaration points at answers no handshake",
+			from: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "lore-"+declaredPlugin)
+				if err := os.WriteFile(path, []byte("not a plugin\n"), 0o600); err != nil {
+					t.Fatalf("write the file the declaration points at: %v", err)
+				}
+				return path
+			},
+			wantKind:    internalerror.KindPrecondition,
+			wantMessage: "does not answer the plugin protocol",
+		},
+		{
+			name:        "the binary's manifest calls itself something else",
+			from:        func(t *testing.T) string { return scriptedPlugin(t, renamedPlugin) },
+			wantKind:    internalerror.KindBadRequest,
+			wantMessage: `calls itself "` + renamedPlugin + `"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(plugindist.RootEnv, t.TempDir())
+
+			var warnings registry.Warnings
+			err := startWorkspace(t, externalConfig(t, declaredPlugin, test.from(t)), &warnings)
+			if err == nil {
+				t.Fatal("resolve workspace: want a refusal rather than a `use:` bound to something else")
+			}
+			if got := internalerror.KindOf(err); got != test.wantKind {
+				t.Errorf("kind = %s, want %s (error %v)", got, test.wantKind, err)
+			}
+			for _, want := range []string{"plugins[" + declaredPlugin + "]", test.wantMessage} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceWarnsThatALocalPluginRunsUnpinned(t *testing.T) {
+	t.Setenv(plugindist.RootEnv, t.TempDir())
+	binary := scriptedPlugin(t, declaredPlugin)
+
+	var warnings registry.Warnings
+	if err := startWorkspace(t, externalConfig(t, declaredPlugin, binary), &warnings); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want the one an unpinned local plugin is worth", warnings)
+	}
+	for _, want := range []string{"plugins[" + declaredPlugin + "]", binary, "unpinned"} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning %q does not contain %q", warnings[0], want)
+		}
 	}
 }
 

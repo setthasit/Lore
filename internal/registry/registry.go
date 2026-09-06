@@ -20,9 +20,7 @@ import (
 // carry the path of the binary the host executes instead.
 const OriginBuiltin = "builtin"
 
-// Plugin names are lower-case and hyphenated ("openai-compatible"); a name is
-// written by hand in `use:` and printed in errors, so the shape is fixed rather
-// than left to each author's taste.
+// Also one directory in the plugin cache (plugindist): never admit a separator or a dot.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
 // Field, secret and secret-config keys are snake_case because they are YAML
@@ -35,6 +33,10 @@ var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // An instance id becomes the DocID prefix, so a colon in it would make document
 // identities unparseable. Everything else about the shape is the operator's taste.
 var instancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+func ValidPluginName(name string) bool {
+	return namePattern.MatchString(name)
+}
 
 // Entry is one registered plugin as `lore plugin list` reports it.
 type Entry struct {
@@ -88,10 +90,13 @@ func (r *Registry) Register(plugins ...lore.Plugin) error {
 	return r.register(OriginBuiltin, plugins...)
 }
 
-// RegisterExternal records a plugin whose implementation is a binary the host
-// executes, so `lore plugin list` can say where it came from.
-func (r *Registry) RegisterExternal(origin string, plugins ...lore.Plugin) error {
-	return r.register(origin, plugins...)
+func (r *Registry) RegisterExternal(origin, name string, p lore.Plugin) error {
+	if got := p.Manifest().Name; got != name {
+		return internalerror.NewBadRequestError(fmt.Sprintf(
+			"plugins[%s] is a binary whose manifest calls itself %q; rename the declaration or the plugin",
+			name, got), nil)
+	}
+	return r.register(origin, p)
 }
 
 func (r *Registry) register(origin string, plugins ...lore.Plugin) error {
@@ -104,9 +109,10 @@ func (r *Registry) register(origin string, plugins ...lore.Plugin) error {
 		if err := validateManifest(m, p); err != nil {
 			return err
 		}
-		if _, taken := r.entries[m.Name]; taken {
-			return internalerror.NewInternalError(
-				fmt.Sprintf("plugin %q is registered twice; every plugin name must be unique because `use:` resolves by name", m.Name), nil)
+		if existing, taken := r.entries[m.Name]; taken {
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"plugin %q is registered twice (%s and %s); every plugin name must be unique because `use:` resolves by name",
+				m.Name, existing.Origin, origin), nil)
 		}
 
 		r.entries[m.Name] = Entry{Manifest: m, Origin: origin}
@@ -167,7 +173,7 @@ func validateManifest(m lore.Manifest, p lore.Plugin) error {
 	if m.Name == "" {
 		return internalerror.NewInternalError("a plugin declares no name, so nothing in a configuration could refer to it", nil)
 	}
-	if !namePattern.MatchString(m.Name) {
+	if !ValidPluginName(m.Name) {
 		return internalerror.NewInternalError(fmt.Sprintf(
 			"plugin name %q must be lower-case and hyphenated, like \"openai-compatible\"", m.Name), nil)
 	}

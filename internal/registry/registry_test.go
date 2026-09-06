@@ -230,6 +230,41 @@ func TestRegisterRejectsADuplicateName(t *testing.T) {
 	if !strings.Contains(err.Error(), "registered twice") {
 		t.Errorf("error %q does not name the collision", err)
 	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+}
+
+func TestRegisterExternalRejectsAManifestThatRenamesItself(t *testing.T) {
+	r := New(lore.Host{})
+
+	err := r.RegisterExternal("external ./bin/lore-acme", "acme", stubSource{manifest: sourceManifest("other")})
+	if err == nil {
+		t.Fatal("RegisterExternal: want an error")
+	}
+	for _, want := range []string{"plugins[acme]", `calls itself "other"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+	if _, ok := r.Manifest("other"); ok {
+		t.Error("the plugin registered under its manifest name anyway")
+	}
+}
+
+func TestRegisterExternalKeepsTheDeclaredNameAsTheOrigin(t *testing.T) {
+	r := New(lore.Host{})
+
+	if err := r.RegisterExternal("external ./bin/lore-acme", "acme", stubSource{manifest: sourceManifest("acme")}); err != nil {
+		t.Fatalf("RegisterExternal: %v", err)
+	}
+	entries := r.List()
+	if len(entries) != 1 || entries[0].Origin != "external ./bin/lore-acme" {
+		t.Errorf("entries = %+v, want one entry from ./bin/lore-acme", entries)
+	}
 }
 
 func TestBuildSourcesNamesEveryInstanceAfterItsID(t *testing.T) {

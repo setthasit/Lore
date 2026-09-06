@@ -21,6 +21,7 @@ type externals struct {
 }
 
 type external struct {
+	name   string
 	origin string
 	plugin lore.Plugin
 }
@@ -42,18 +43,6 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 
 	var out externals
 	for _, decl := range cfg.Plugins {
-		if decl.Name == "" {
-			return externals{}, internalerror.NewBadRequestError(
-				"every entry in plugins: must have a name — it is the token `use:` refers to", nil)
-		}
-		// A declaration that shadows a compiled plugin would make `use:` ambiguous,
-		// and which one won would depend on registration order.
-		if _, taken := compiled.Manifest(decl.Name); taken {
-			return externals{}, internalerror.NewBadRequestError(fmt.Sprintf(
-				"plugins[%s] names a plugin this build already compiles in; pick another name or drop the declaration",
-				decl.Name), nil)
-		}
-
 		coord, err := plugindist.Resolve(string(dir), decl)
 		if err != nil {
 			return externals{}, err
@@ -74,7 +63,7 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 				"plugins[%s] does not answer the plugin protocol at %s: %s", decl.Name, binary, err.Error()), err)
 		}
 
-		out.plugins = append(out.plugins, external{origin: "external " + binary, plugin: plugin})
+		out.plugins = append(out.plugins, external{name: decl.Name, origin: "external " + binary, plugin: plugin})
 		if warning := coord.Warning(); warning != "" {
 			out.warnings = append(out.warnings, warning)
 		}
@@ -88,7 +77,7 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 func newWorkspaceRegistry(compiled registry.Compiled, ext externals) (*registry.Registry, error) {
 	reg := compiled.Clone()
 	for _, e := range ext.plugins {
-		if err := reg.RegisterExternal(e.origin, e.plugin); err != nil {
+		if err := reg.RegisterExternal(e.origin, e.name, e.plugin); err != nil {
 			return nil, err
 		}
 	}

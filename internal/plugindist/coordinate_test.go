@@ -157,7 +157,8 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 	t.Parallel()
 
 	const from = "github.com/jdoe/lore-linear@v0.3.1"
-	for _, name := range []string{"..", "../..", "../pwned", "linear/../..", "a/b", `a\b`, "/etc/lore", ".", "-flag", "two words"} {
+	for _, name := range []string{"..", "../..", "../pwned", "linear/../..", "a/b", `a\b`, "/etc/lore", ".", "-flag", "two words",
+		"Acme_CRM", "acme_crm", "2fa", "linear-", "a--b"} {
 		_, err := Resolve(".", config.PluginDecl{Name: name, From: from})
 		if err == nil {
 			t.Errorf("declaring the name %q resolved, want a refusal", name)
@@ -173,7 +174,7 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 	}
 
 	// The accept case: the names an operator actually writes still resolve.
-	for _, name := range []string{"linear", "jira-acme", "acme_crm", "s3"} {
+	for _, name := range []string{"linear", "jira-acme", "acme-crm", "s3"} {
 		if _, err := Resolve(".", config.PluginDecl{Name: name, From: from}); err != nil {
 			t.Errorf("name %q was refused: %v", name, err)
 		}
