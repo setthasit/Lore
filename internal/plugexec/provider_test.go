@@ -11,18 +11,25 @@ import (
 
 func embedderOf(t *testing.T, text string, cfg lore.ProviderConfig) (lore.Embedder, error) {
 	t.Helper()
+	embedder, _, err := embedderWithLogs(t, text, cfg)
+	return embedder, err
+}
+
+func embedderWithLogs(t *testing.T, text string, cfg lore.ProviderConfig) (lore.Embedder, *syncBuffer, error) {
+	t.Helper()
 	cfg.Capability = lore.CapabilityEmbed
-	plugin := mustOpenScript(t, text)
+	plugin, logs := openWithLogs(t, text)
+	cfg.Host = testHost(logs)
 
 	built, err := plugin.(lore.ProviderPlugin).NewProvider(cfg)
 	if err != nil {
-		return nil, err
+		return nil, logs, err
 	}
 	embedder, ok := built.(lore.Embedder)
 	if !ok {
 		t.Fatalf("NewProvider built %T for the embed capability, want a lore.Embedder", built)
 	}
-	return embedder, nil
+	return embedder, logs, nil
 }
 
 func completerOf(t *testing.T, text string) lore.Completer {
@@ -46,6 +53,39 @@ func completerOf(t *testing.T, text string) lore.Completer {
 
 func embedLine(vectors, dimensions string) string {
 	return `embed emit {"v":1,"id":"$ID","ok":true,"vectors":` + vectors + `,"dimensions":` + dimensions + `}`
+}
+
+func TestEachProviderInstanceLogsUnderTheHostItsConfigSupplied(t *testing.T) {
+	text := script(providerManifest, "embed stderr embedding\n"+embedLine(`[[0.5,-0.25]]`, "2"), shutdownOK)
+	provider := mustOpenScript(t, text).(lore.ProviderPlugin)
+
+	build := func(instance string, host lore.Host) lore.Embedder {
+		t.Helper()
+		built, err := provider.NewProvider(lore.ProviderConfig{
+			Instance:   instance,
+			Capability: lore.CapabilityEmbed,
+			Model:      "m",
+			Dimensions: 2,
+			Host:       host,
+		})
+		if err != nil {
+			t.Fatalf("NewProvider(%s): %v", instance, err)
+		}
+		return built.(lore.Embedder)
+	}
+
+	openaiHost, openaiLogs := instanceHost("openai")
+	localHost, localLogs := instanceHost("local")
+	for _, embedder := range []lore.Embedder{build("openai", openaiHost), build("local", localHost)} {
+		if _, err := embedder.Embed(context.Background(), []string{"why B over A"}); err != nil {
+			t.Fatalf("Embed: %v", err)
+		}
+	}
+
+	assertOwnLogsOnly(t,
+		instanceLog{instance: "openai", line: "embedding", logs: openaiLogs},
+		instanceLog{instance: "local", line: "embedding", logs: localLogs},
+	)
 }
 
 func TestEmbedReturnsOneVectorPerText(t *testing.T) {
@@ -118,28 +158,25 @@ func TestMisalignedVectorsAreAProtocolErrorNotAPartialSuccess(t *testing.T) {
 	}
 }
 
-func TestDimensionsAreProbedWhenTheOperatorDeclaresNone(t *testing.T) {
-	// The index's vector column is created before the first document is
-	// embedded, and the protocol reports the width only in an embed response, so
-	// an undeclared width is learned by embedding once at construction.
-	text := script(providerManifest, embedLine(`[[1,2,3,4]]`, "4"), shutdownOK)
-
-	embedder, err := embedderOf(t, text, lore.ProviderConfig{Instance: "vec", Model: "m"})
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
-	if got := embedder.Dimensions(); got != 4 {
-		t.Errorf("Dimensions() = %d, want the probed 4", got)
-	}
-}
-
-func TestAProbeThatFailsFailsConstruction(t *testing.T) {
+func TestAWidthNobodyDeclaredIsRefusedWithoutEmbedding(t *testing.T) {
+	const reached = "the embed op reached the plugin"
 	text := script(providerManifest,
-		`embed emit {"v":1,"id":"$ID","error":{"message":"no such model","retryable":false,"kind":"not_found"}}`,
+		"embed stderr "+reached+"\n"+embedLine(`[[1,2,3,4]]`, "4"),
 		shutdownOK)
 
-	if _, err := embedderOf(t, text, lore.ProviderConfig{Instance: "vec", Model: "nope"}); err == nil {
-		t.Fatal("a provider whose probe failed was built anyway")
+	_, logs, err := embedderWithLogs(t, text, lore.ProviderConfig{Instance: "vec", Model: "m"})
+	if err == nil {
+		t.Fatal("built an embedder for a provider whose width nobody declared")
+	}
+	if !strings.Contains(err.Error(), "embedder.dimensions must be set") {
+		t.Errorf("error %q does not name the width that is missing", err)
+	}
+	var pluginErr *Error
+	if !errors.As(err, &pluginErr) || pluginErr.Op != opEmbed {
+		t.Fatalf("error = %v, want a *plugexec.Error naming %s", err, opEmbed)
+	}
+	if strings.Contains(logs.String(), reached) {
+		t.Error("construction sent an embed request instead of trusting the configured width")
 	}
 }
 

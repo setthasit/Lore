@@ -32,37 +32,15 @@ var (
 	_ lore.Completer = (*completer)(nil)
 )
 
-// probeText is embedded once when the operator declared no width. Its content
-// is irrelevant: only the width of the vector that comes back is read.
-const probeText = "lore dimension probe"
-
 func newEmbedder(c call, declared int) (*embedder, error) {
-	e := &embedder{call: c, dims: declared}
-	if declared > 0 {
-		return e, nil
+	if declared <= 0 {
+		return nil, protocolError(c.instance, opEmbed,
+			"embedder.dimensions must be set: the protocol reports a width only in an embed response, "+
+				"and the index's vector column is created before the first document is embedded")
 	}
-
-	// lore.Embedder answers Dimensions() synchronously because the index's
-	// vector column is created before the first document is embedded, while the
-	// protocol reports dimensions only in an embed response. So a width nobody
-	// declared is learned by embedding once here, at construction, where a
-	// failure is a configuration error rather than a half-written index.
-	frame, err := c.unary(context.Background(), c.instance, opEmbed, c.tuning.unary, func(env envelope) any {
-		return embedRequest{envelope: env, Config: c.config, Secrets: c.secrets, Model: c.model, Texts: []string{probeText}}
-	})
-	if err != nil {
-		return nil, err
-	}
-	vectors, err := e.aligned(frame, []string{probeText})
-	if err != nil {
-		return nil, err
-	}
-	e.dims = len(vectors[0])
-	return e, nil
+	return &embedder{call: c, dims: declared}, nil
 }
 
-// Dimensions is the width every vector this provider returns carries; the host
-// composes the vector-space identity from it, so the plugin never names itself.
 func (e *embedder) Dimensions() int { return e.dims }
 
 func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
@@ -81,10 +59,8 @@ func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 	return e.aligned(frame, texts)
 }
 
-// aligned enforces the one rule that makes an embedding response usable: the
-// vectors are positionally aligned with the texts. A short, reordered or
-// filtered result is a protocol error and never a partial success, because the
-// host would otherwise store one document's vector under another's id.
+// Misalignment is never a partial success: the host would otherwise store one
+// document's vector under another's id.
 func (e *embedder) aligned(frame *frame, texts []string) ([][]float32, error) {
 	if len(frame.Vectors) != len(texts) {
 		return nil, protocolError(e.instance, opEmbed,
@@ -94,9 +70,8 @@ func (e *embedder) aligned(frame *frame, texts []string) ([][]float32, error) {
 	if frame.Dimensions <= 0 {
 		return nil, protocolError(e.instance, opEmbed, "reported dimensions %d, which is not a vector width", frame.Dimensions)
 	}
-	// A width that moves under a live index cannot be reinterpreted afterwards,
-	// so a provider that changes its mind fails the operation instead.
-	if e.dims > 0 && frame.Dimensions != e.dims {
+	// A width that moves under a live index cannot be reinterpreted afterwards.
+	if frame.Dimensions != e.dims {
 		return nil, protocolError(e.instance, opEmbed,
 			"reported dimensions %d, but this instance's vector space is %d wide", frame.Dimensions, e.dims)
 	}

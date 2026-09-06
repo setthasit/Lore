@@ -165,6 +165,34 @@ func testHost(logs io.Writer) lore.Host {
 	}
 }
 
+func instanceHost(instance string) (lore.Host, *syncBuffer) {
+	logs := &syncBuffer{}
+	host := testHost(logs)
+	host.Log = host.Log.With(slog.String("instance", instance))
+	return host, logs
+}
+
+type instanceLog struct {
+	instance string
+	line     string
+	logs     *syncBuffer
+}
+
+func assertOwnLogsOnly(t *testing.T, want ...instanceLog) {
+	t.Helper()
+	for _, w := range want {
+		out := w.logs.String()
+		if !strings.Contains(out, "instance="+w.instance) || !strings.Contains(out, w.instance+": "+w.line) {
+			t.Errorf("the host built for %s logged %q, want %q under instance=%s", w.instance, out, w.line, w.instance)
+		}
+		for _, other := range want {
+			if other.instance != w.instance && strings.Contains(out, "instance="+other.instance) {
+				t.Errorf("the host built for %s also logged %s's lines:\n%s", w.instance, other.instance, out)
+			}
+		}
+	}
+}
+
 func openScript(t *testing.T, text string) (lore.Plugin, error) {
 	t.Helper()
 	return open(scripted(t, text), testHost(nil), testTuning())
@@ -179,19 +207,35 @@ func mustOpenScript(t *testing.T, text string) lore.Plugin {
 	return plugin
 }
 
-// connectorOf opens a source plugin and builds one instance of it.
+func openWithLogs(t *testing.T, text string) (lore.Plugin, *syncBuffer) {
+	t.Helper()
+	logs := &syncBuffer{}
+	plugin, err := open(scripted(t, text), testHost(logs), testTuning())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	return plugin, logs
+}
+
 func connectorOf(t *testing.T, text string, cfg lore.SourceConfig) lore.Connector {
 	t.Helper()
-	plugin := mustOpenScript(t, text)
+	conn, _ := connectorWithLogs(t, text, cfg)
+	return conn
+}
+
+func connectorWithLogs(t *testing.T, text string, cfg lore.SourceConfig) (lore.Connector, *syncBuffer) {
+	t.Helper()
+	plugin, logs := openWithLogs(t, text)
 	source, ok := plugin.(lore.SourcePlugin)
 	if !ok {
 		t.Fatalf("plugin is %T, want a lore.SourcePlugin", plugin)
 	}
+	cfg.Host = testHost(logs)
 	conn, err := source.NewSource(cfg)
 	if err != nil {
 		t.Fatalf("NewSource: %v", err)
 	}
-	return conn
+	return conn, logs
 }
 
 func drain(conn lore.Connector, cursor lore.Cursor) ([]lore.Batch, error) {
@@ -267,10 +311,6 @@ func TestManifestIsRequiredBeforeAnyOperation(t *testing.T) {
 	}
 }
 
-// A source declaring repo_remotes answers remote questions over its own op, so
-// the capability works the same out of process as in. Refusing it to external
-// plugins would have made the unmatched-clone warning a privilege of compiled
-// code, which is exactly the asymmetry the plugin contract exists to prevent.
 func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 	claims := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
 		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[]}}`
@@ -283,9 +323,6 @@ func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 		{name: "the instance ingests it", answer: `{"v":1,"id":"$ID","ok":true,"matches":true}`, matches: true},
 		{name: "the instance does not", answer: `{"v":1,"id":"$ID","ok":true,"matches":false}`, matches: false},
 		{
-			// A startup warning must never be the reason a workspace fails to
-			// start, so a plugin that cannot answer reads as "not mine" and the
-			// operator gets the warning instead of an error.
 			name:    "the plugin cannot answer",
 			answer:  `{"v":1,"id":"$ID","error":{"message":"no idea","retryable":false,"kind":"internal"}}`,
 			matches: false,
@@ -318,6 +355,24 @@ func TestAnEmptyRemoteNeverReachesThePlugin(t *testing.T) {
 	conn := connectorOf(t, script(claims, shutdownOK), lore.SourceConfig{Instance: "scripted"})
 	if conn.(lore.RemoteMatcher).MatchesRemote("") {
 		t.Error("MatchesRemote(\"\") = true, want false")
+	}
+}
+
+func TestASourceWithoutRepoRemotesIsNeverAsked(t *testing.T) {
+	const reached = "the plugin was asked a remote question"
+	text := script(
+		sourceManifest,
+		"matches_remote stderr "+reached+"\n"+
+			`matches_remote emit {"v":1,"id":"$ID","ok":true,"matches":true}`,
+		shutdownOK,
+	)
+
+	conn, logs := connectorWithLogs(t, text, lore.SourceConfig{Instance: "scripted"})
+	if conn.(lore.RemoteMatcher).MatchesRemote("scripted:acme/app") {
+		t.Error("MatchesRemote = true for a manifest declaring no repo_remotes, want false")
+	}
+	if out := logs.String(); strings.Contains(out, reached) {
+		t.Errorf("a process was spawned for an op the manifest does not declare:\n%s", out)
 	}
 }
 
@@ -686,21 +741,13 @@ func TestSecretsNeverReachArgvOrTheChildEnvironment(t *testing.T) {
 }
 
 func TestStderrIsForwardedToTheHostLoggerWithTheInstance(t *testing.T) {
-	logs := &syncBuffer{}
 	text := script(
 		sourceManifest,
 		"changes stderr fetching page 1 of 3\n"+batchLine("", `{"after":"0"}`)+"\n"+doneLine,
 		shutdownOK,
 	)
 
-	plugin, err := open(scripted(t, text), testHost(logs), testTuning())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	conn, err := plugin.(lore.SourcePlugin).NewSource(lore.SourceConfig{Instance: "linear"})
-	if err != nil {
-		t.Fatalf("NewSource: %v", err)
-	}
+	conn, logs := connectorWithLogs(t, text, lore.SourceConfig{Instance: "linear"})
 	if _, err := drain(conn, nil); err != nil {
 		t.Fatalf("Changes: %v", err)
 	}
@@ -711,6 +758,98 @@ func TestStderrIsForwardedToTheHostLoggerWithTheInstance(t *testing.T) {
 	}
 	if !strings.Contains(out, "level=DEBUG") {
 		t.Errorf("plugin stderr was not logged at debug level:\n%s", out)
+	}
+}
+
+func TestEachSourceInstanceLogsUnderTheHostItsConfigSupplied(t *testing.T) {
+	text := script(
+		sourceManifest,
+		"changes stderr streaming\n"+batchLine("", `{"after":"0"}`)+"\n"+doneLine,
+		shutdownOK,
+	)
+	source := mustOpenScript(t, text).(lore.SourcePlugin)
+
+	linearHost, linearLogs := instanceHost("linear")
+	jiraHost, jiraLogs := instanceHost("jira")
+	linear, err := source.NewSource(lore.SourceConfig{Instance: "linear", Host: linearHost})
+	if err != nil {
+		t.Fatalf("NewSource(linear): %v", err)
+	}
+	jira, err := source.NewSource(lore.SourceConfig{Instance: "jira", Host: jiraHost})
+	if err != nil {
+		t.Fatalf("NewSource(jira): %v", err)
+	}
+	for _, conn := range []lore.Connector{linear, jira} {
+		if _, err := drain(conn, nil); err != nil {
+			t.Fatalf("Changes: %v", err)
+		}
+	}
+
+	assertOwnLogsOnly(t,
+		instanceLog{instance: "linear", line: "streaming", logs: linearLogs},
+		instanceLog{instance: "jira", line: "streaming", logs: jiraLogs},
+	)
+}
+
+func TestTheLastStderrLineOfACrashReachesTheLogger(t *testing.T) {
+	text := script(
+		sourceManifest,
+		"changes partial panic: assignment to entry in nil map\nchanges exit 3",
+		shutdownOK,
+	)
+
+	conn, logs := connectorWithLogs(t, text, lore.SourceConfig{Instance: "linear"})
+	_, err := drain(conn, nil)
+
+	var crash *CrashError
+	if !errors.As(err, &crash) {
+		t.Fatalf("error = %v (%T), want a *plugexec.CrashError", err, err)
+	}
+	if out := logs.String(); !strings.Contains(out, `msg="linear: panic: assignment to entry in nil map"`) {
+		t.Errorf("the plugin's unterminated last line never reached the logger:\n%s", out)
+	}
+}
+
+func TestAGrandchildHoldingStderrDoesNotStallTheKill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture is a POSIX shell script; holding a pipe from a grandchild needs another launcher")
+	}
+	// The child inherits no PATH, so a bare `sleep` would exit at once and hold nothing.
+	sleeper, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("sleep is not on PATH, so no grandchild can hold the pipe open")
+	}
+
+	binary := filepath.Join(t.TempDir(), "orphan")
+	// The fork is announced on stdout because a wait racing it would test nothing.
+	body := "#!/bin/sh\n" + quote(sleeper) + " 5 &\necho forked\nexit 0\n"
+	if err := os.WriteFile(binary, []byte(body), 0o700); err != nil {
+		t.Fatalf("writing the fixture: %v", err)
+	}
+
+	tune := testTuning()
+	tune.grace = 200 * time.Millisecond
+	session, err := spawn(binary, "orphan", testHost(nil), tune)
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if _, err := session.readLine(); err != nil {
+		t.Fatalf("the fixture never announced its fork: %v", err)
+	}
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- session.waitWithin(tune.grace) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("waitWithin = %v, want nil: the plugin exited 0 and only left its pipe open", err)
+		}
+		if elapsed := time.Since(start); elapsed < tune.grace {
+			t.Errorf("waitWithin returned in %v, under the %v bound: no descendant held the pipe, so the wait was never bounded by anything", elapsed, tune.grace)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("waitWithin never returned: the host waits on a pipe held by a process it cannot see")
 	}
 }
 
@@ -743,21 +882,13 @@ func TestAnIdleStreamTimesOut(t *testing.T) {
 }
 
 func TestTheHandshakeRunsOnEveryProcessBeforeTheOperation(t *testing.T) {
-	logs := &syncBuffer{}
 	text := script(
 		sourceManifest+"\nmanifest stderr handshaking",
 		"changes stderr streaming\n"+batchLine("", `{"after":"0"}`)+"\n"+doneLine,
 		shutdownOK,
 	)
 
-	plugin, err := open(scripted(t, text), testHost(logs), testTuning())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	conn, err := plugin.(lore.SourcePlugin).NewSource(lore.SourceConfig{Instance: "linear"})
-	if err != nil {
-		t.Fatalf("NewSource: %v", err)
-	}
+	conn, logs := connectorWithLogs(t, text, lore.SourceConfig{Instance: "linear"})
 	if _, err := drain(conn, nil); err != nil {
 		t.Fatalf("Changes: %v", err)
 	}

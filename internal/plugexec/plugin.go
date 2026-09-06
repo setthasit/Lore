@@ -55,6 +55,11 @@ type external struct {
 
 func (e external) Manifest() lore.Manifest { return e.manifest }
 
+func (e external) withHost(host lore.Host) external {
+	e.host = host
+	return e
+}
+
 // dial starts the process for one operation and completes its handshake. A
 // process lives for one round — spawn, manifest, the operation, shutdown — so
 // nothing survives it except what the plugin put in the cursor.
@@ -110,7 +115,7 @@ func (p *sourcePlugin) NewSource(cfg lore.SourceConfig) (lore.Connector, error) 
 		return nil, protocolError(p.manifest.Name, opChanges, "a source instance needs an id: it is the cursor key and the document namespace")
 	}
 	return &connector{
-		external: p.external,
+		external: p.withHost(cfg.Host),
 		instance: cfg.Instance,
 		config:   emptyObject(cfg.Config),
 		secrets:  secretsOrEmpty(cfg.Secrets),
@@ -131,7 +136,7 @@ func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, er
 	}
 
 	call := call{
-		external: p.external,
+		external: p.withHost(cfg.Host),
 		instance: cfg.Instance,
 		config:   emptyObject(cfg.Config),
 		secrets:  secretsOrEmpty(cfg.Secrets),
@@ -157,7 +162,7 @@ func (p *codePlugin) NewCode(cfg lore.CodeConfig) (lore.CodeRepo, error) {
 	if cfg.Root == "" {
 		return nil, protocolError(p.manifest.Name, opBlame, "a code instance needs a clone root")
 	}
-	return &codeRepo{external: p.external, root: cfg.Root}, nil
+	return &codeRepo{external: p.withHost(cfg.Host), root: cfg.Root}, nil
 }
 
 // Compile-time proof that each kind produces exactly the interface its manifest

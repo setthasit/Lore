@@ -70,13 +70,16 @@ func (r *codeRepo) HasFileAtHEAD(ctx context.Context, path string) (bool, error)
 	return frame.Present, nil
 }
 
-// resolve turns a clone-relative path into the workspace-absolute path the
-// protocol sends. The host resolves it rather than the plugin so a path that
-// climbs out of the clone is refused here, where the clone root is known,
-// instead of reaching a subprocess that would read whatever it was handed.
+// Paths crossing the protocol are slash-separated whatever the host is.
 func (r *codeRepo) resolve(op, path string) (string, error) {
 	if path == "" {
 		return "", protocolError(r.manifest.Name, op, "no path to read in the clone at %s", r.root)
+	}
+	if strings.ContainsRune(path, '\\') {
+		return "", protocolError(r.manifest.Name, op, "path %q separates components with \\, want /", path)
+	}
+	if strings.HasPrefix(path, "/") || filepath.IsAbs(path) {
+		return "", protocolError(r.manifest.Name, op, "path %q is absolute, want one relative to the clone at %s", path, r.root)
 	}
 
 	absolute := filepath.Join(r.root, filepath.FromSlash(path))

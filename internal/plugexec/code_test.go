@@ -24,6 +24,26 @@ func codeOf(t *testing.T, text, root string) lore.CodeRepo {
 	return repo
 }
 
+func TestACloneLogsUnderTheHostItsConfigSupplied(t *testing.T) {
+	text := script(codeManifest,
+		"log stderr reading history\n"+`log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`,
+		shutdownOK)
+	plugin := mustOpenScript(t, text)
+	host, logs := instanceHost("git")
+
+	repo, err := plugin.(lore.CodePlugin).NewCode(lore.CodeConfig{Root: t.TempDir(), Host: host})
+	if err != nil {
+		t.Fatalf("NewCode: %v", err)
+	}
+	if _, err := repo.Log(context.Background(), "internal/auth/auth.go"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+
+	if out := logs.String(); !strings.Contains(out, `instance=git`) || !strings.Contains(out, "reading history") {
+		t.Errorf("the host NewCode was given logged %q, want the clone's stderr", out)
+	}
+}
+
 func TestBlameReturnsSpansForAWorkspaceAbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	text := script(codeManifest,
@@ -77,6 +97,33 @@ func TestAPathThatClimbsOutOfTheCloneIsRefused(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "climbs out of the clone") {
 			t.Errorf("Log(%q) error = %q, want it to name the escape", path, err)
 		}
+	}
+}
+
+func TestAnAbsolutePathIsRefusedInsteadOfReRootedUnderTheClone(t *testing.T) {
+	root := t.TempDir()
+	text := script(codeManifest,
+		`log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`,
+		shutdownOK)
+	repo := codeOf(t, text, root)
+
+	for name, tt := range map[string]struct{ path, want string }{
+		"posix absolute": {path: "/etc/passwd", want: "is absolute"},
+		"unc share":      {path: "//host/share/secrets.env", want: "is absolute"},
+		"windows drive":  {path: `C:\Windows\win.ini`, want: `separates components with \`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			commits, err := repo.Log(context.Background(), tt.path)
+			if err == nil {
+				t.Fatalf("Log(%q) reached the plugin as %v, want a refusal", tt.path, commits)
+			}
+			if commits != nil {
+				t.Errorf("Log(%q) returned %v, want nothing re-rooted under the clone", tt.path, commits)
+			}
+			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), opLog) {
+				t.Errorf("Log(%q) error = %q, want it to name %s and %q", tt.path, err, opLog, tt.want)
+			}
+		})
 	}
 }
 

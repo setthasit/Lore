@@ -15,10 +15,11 @@
 //	raw <text>      the text verbatim, whether or not it is JSON
 //	bigline <n>     a well-formed frame padded past n bytes
 //	stderr <text>   a diagnostic line on the only channel allowed to carry one
+//	partial <text>  the same with no newline, which only a flush delivers
 //	sleep <ms>      answer late
 //	exit <code>     flush and die, which is how a crash is scripted
 //
-// Placeholders in emit, raw and stderr: $ID, $OP, $NTEXTS, $PATH, $ENV{NAME},
+// Placeholders in emit, raw, stderr and partial: $ID, $OP, $NTEXTS, $PATH, $ENV{NAME},
 // $SECRET{key}, $CURSOR{key}, $CONFIG{key}.
 package main
 
@@ -106,6 +107,8 @@ func run(out *bufio.Writer, s step, req request) {
 		_ = out.Flush()
 	case "stderr":
 		fmt.Fprintln(os.Stderr, expand(s.arg, req))
+	case "partial":
+		fmt.Fprint(os.Stderr, expand(s.arg, req))
 	case "sleep":
 		ms, _ := strconv.Atoi(s.arg)
 		time.Sleep(time.Duration(ms) * time.Millisecond)

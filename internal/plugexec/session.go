@@ -27,7 +27,7 @@ type tuning struct {
 	complete time.Duration
 	idle     time.Duration // changes has no total limit, only an idle one
 	shutdown time.Duration
-	grace    time.Duration // between SIGTERM and SIGKILL
+	grace    time.Duration // between SIGTERM and SIGKILL, and on pipes a descendant still holds
 }
 
 func defaultTuning() tuning {
@@ -54,6 +54,7 @@ type session struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
+	stderr *stderrLog
 
 	// idPrefix is random per process so a plugin cannot pass the correlation
 	// check by hardcoding the ids it saw in an example.
@@ -75,7 +76,10 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 	// payload, so a plugin sees only what its manifest declared and cannot read
 	// another plugin's token out of the process it happens to be started from.
 	cmd.Env = minimalEnv()
-	cmd.Stderr = &stderrLog{log: log, instance: instance}
+	stderr := &stderrLog{log: log, instance: instance}
+	cmd.Stderr = stderr
+	// A grandchild that inherited stderr holds the pipe open after the plugin exits.
+	cmd.WaitDelay = tune.grace
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -96,6 +100,7 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 		cmd:      cmd,
 		stdin:    stdin,
 		stdout:   bufio.NewReaderSize(stdout, 64<<10),
+		stderr:   stderr,
 		idPrefix: strconv.FormatUint(rand.Uint64(), 36),
 	}, nil
 }
@@ -359,7 +364,14 @@ func (s *session) waitWithin(grace time.Duration) error {
 }
 
 func (s *session) wait() error {
-	s.waitOnce.Do(func() { s.waitErr = s.cmd.Wait() })
+	s.waitOnce.Do(func() {
+		s.waitErr = s.cmd.Wait()
+		if errors.Is(s.waitErr, exec.ErrWaitDelay) {
+			s.log.Warn(s.instance + ": exited but left a descendant holding its output pipes; the host stopped waiting for it")
+			s.waitErr = nil
+		}
+		s.stderr.flush()
+	})
 	return s.waitErr
 }
 
@@ -392,14 +404,12 @@ func excerpt(line []byte) string {
 	return strconv.Quote(string(line))
 }
 
-// stderrLog forwards the plugin's only diagnostic channel to the host logger at
-// debug level. It splits on newlines so one plugin log line is one host log
-// line, and caps a partial line so a plugin that never emits a newline cannot
-// grow the host's heap.
 type stderrLog struct {
 	log      *slog.Logger
 	instance string
-	partial  []byte
+
+	mu      sync.Mutex
+	partial []byte
 }
 
 const maxStderrLine = 64 << 10
@@ -407,6 +417,8 @@ const maxStderrLine = 64 << 10
 var newline = []byte{'\n'}
 
 func (w *stderrLog) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for rest := p; len(rest) > 0; {
 		line, tail, found := bytes.Cut(rest, newline)
 		w.partial = append(w.partial, line...)
@@ -422,13 +434,16 @@ func (w *stderrLog) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (w *stderrLog) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.emit()
+}
+
 func (w *stderrLog) emit() {
 	if len(w.partial) == 0 {
 		return
 	}
-	// The instance goes in the message rather than in an attribute because the
-	// registry has already tagged this logger with it, and a duplicated key
-	// reads worse than the prefix the protocol asks for.
 	w.log.Debug(w.instance + ": " + string(w.partial))
 	w.partial = w.partial[:0]
 }
