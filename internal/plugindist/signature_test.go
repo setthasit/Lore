@@ -132,7 +132,7 @@ func TestInstallRefusesABadSignatureBeforeComparingDigests(t *testing.T) {
 	if strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("error %q compared digests before verifying the signature", err)
 	}
-	if _, err := os.Stat(scene.store.Dir("linear", "v0.3.1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); !os.IsNotExist(err) {
 		t.Fatal("a refused install left a cached version behind")
 	}
 }

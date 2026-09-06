@@ -86,17 +86,24 @@ func (s *Store) Root() string {
 	return s.root
 }
 
-// Dir is where one version of one plugin lives.
-func (s *Store) Dir(name, version string) string {
-	return filepath.Join(s.root, pluginsDirName, name, version)
+func (s *Store) Dir(name, version string) (string, error) {
+	if err := checkName(name); err != nil {
+		return "", err
+	}
+	if !isCacheEntryName(version) {
+		return "", internalerror.NewBadRequestError(label(name)+" is pinned to "+version+", which is not a"+
+			" usable version: a version is one directory in the plugin cache, so it must be a single name"+
+			" that neither starts with a dot nor contains a path separator", nil)
+	}
+	return filepath.Join(s.root, pluginsDirName, name, version), nil
 }
 
-// ManifestPath is where the caller caches the manifest the handshake returned.
-// This package never performs the handshake: it does not speak the protocol,
-// and the manifest is always read from the binary rather than from a file in
-// the archive, so a plugin cannot ship a manifest that disagrees with itself.
-func (s *Store) ManifestPath(name, version string) string {
-	return filepath.Join(s.Dir(name, version), manifestFileName)
+func (s *Store) ManifestPath(name, version string) (string, error) {
+	dir, err := s.Dir(name, version)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, manifestFileName), nil
 }
 
 // WriteManifest caches the handshake's answer beside the binary.
@@ -104,7 +111,10 @@ func (s *Store) WriteManifest(name, version string, raw []byte) error {
 	if err := checkName(name); err != nil {
 		return err
 	}
-	path := s.ManifestPath(name, version)
+	path, err := s.ManifestPath(name, version)
+	if err != nil {
+		return err
+	}
 	if err := fsx.WriteAtomic(path, raw, 0o644); err != nil {
 		return internalerror.NewInternalError("cannot cache the manifest at "+path, err)
 	}
@@ -177,7 +187,10 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 	}
 	entry, _ := lock.Entry(name)
 
-	dir := s.Dir(name, entry.Version)
+	dir, err := s.Dir(name, entry.Version)
+	if err != nil {
+		return Report{}, err
+	}
 	binary, err := s.binaryIn(dir)
 	if err != nil {
 		return Report{}, err
@@ -205,7 +218,11 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
 	report.LockedURL, report.LockedDigest = artifact.URL, artifact.Digest
-	if _, err := os.Stat(s.ManifestPath(name, entry.Version)); err == nil {
+	manifest, err := s.ManifestPath(name, entry.Version)
+	if err != nil {
+		return Report{}, err
+	}
+	if _, err := os.Stat(manifest); err == nil {
 		report.Manifest = true
 	}
 	return report, nil
@@ -226,7 +243,7 @@ func (s *Store) binaryIn(dir string) (string, error) {
 	found := ""
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !isCacheFileName(name) {
+		if entry.IsDir() || !isCacheEntryName(name) {
 			continue
 		}
 		if found != "" {
@@ -241,20 +258,23 @@ func (s *Store) binaryIn(dir string) (string, error) {
 	return filepath.Join(dir, found), nil
 }
 
-func isCacheFileName(name string) bool {
+func isCacheEntryName(name string) bool {
 	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`) &&
 		filepath.Base(name) == name && name != manifestFileName
 }
 
 // write stores an unpacked binary and the digest re-checked at every launch.
 func (s *Store) write(name, version, binaryName string, body []byte) (path, digest string, err error) {
-	if !isCacheFileName(binaryName) {
+	if !isCacheEntryName(binaryName) {
 		return "", "", internalerror.NewPreconditionError(label(name)+": the artifact names its binary "+
 			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
 			" must be a single name that neither starts with a dot nor is the cached "+manifestFileName, nil)
 	}
 
-	dir := s.Dir(name, version)
+	dir, err := s.Dir(name, version)
+	if err != nil {
+		return "", "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", internalerror.NewInternalError("cannot create the plugin cache at "+dir, err)
 	}

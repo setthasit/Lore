@@ -201,7 +201,7 @@ func parseURL(name, from string) (Coordinate, error) {
 	for _, suffix := range archiveSuffixes {
 		version = strings.TrimSuffix(version, suffix)
 	}
-	if version == "" || version == "." || version == ".." || version == "/" || strings.ContainsAny(version, `/\`) {
+	if !isCacheEntryName(version) {
 		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
 			" ends in no version — the URL's last path segment names the version, as in"+
 			" https://artifacts.example.com/lore/"+name+"/v2.0.1.tar.gz", nil)

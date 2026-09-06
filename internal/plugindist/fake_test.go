@@ -199,6 +199,16 @@ func readFile(t *testing.T, path string) string {
 	return string(body)
 }
 
+func cacheDir(t *testing.T, store *Store, name, version string) string {
+	t.Helper()
+
+	dir, err := store.Dir(name, version)
+	if err != nil {
+		t.Fatalf("cache directory for %s@%s: %v", name, version, err)
+	}
+	return dir
+}
+
 func lockPath(dir string) string {
 	return filepath.Join(dir, LockFileName)
 }

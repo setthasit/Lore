@@ -145,7 +145,7 @@ func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	if len(lock.Plugins) != 0 {
 		t.Fatalf("a refused install pinned %+v", lock.Plugins)
 	}
-	if _, err := os.Stat(scene.store.Dir("linear", "v0.3.1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); !os.IsNotExist(err) {
 		t.Fatal("a refused install left a cached version behind")
 	}
 }
@@ -234,7 +234,7 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	}
 
 	// Both versions coexist on disk; the lockfile is what decides which runs.
-	if _, err := os.Stat(scene.store.Dir("linear", "v0.3.1")); err != nil {
+	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); err != nil {
 		t.Fatalf("v0.3.1 was removed by an update: %v", err)
 	}
 }
@@ -278,7 +278,7 @@ func TestInstallRefusesAnEmptyChecksumsList(t *testing.T) {
 	if len(lock.Plugins) != 0 {
 		t.Fatalf("a refused install pinned %+v", lock.Plugins)
 	}
-	if _, err := os.Stat(scene.store.Dir("linear", "v0.3.1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); !os.IsNotExist(err) {
 		t.Fatal("a refused install left a cached version behind")
 	}
 }
@@ -593,5 +593,49 @@ func TestGetStopsAnHTTPSRedirectLoop(t *testing.T) {
 	}
 	if served := hops.Load(); served != maxRedirects {
 		t.Fatalf("the loop served %d hops, want it stopped at %d", served, maxRedirects)
+	}
+}
+
+// A URL coordinate reads its version out of the URL's last segment, so a
+// legitimate version is filename-shaped rather than semver, and the cache has
+// to keep taking it.
+func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	body := []byte("#!/bin/sh\necho build-77\n")
+	scene.fake.publish("build-77", map[string][]byte{"build-77.tar.gz": archiveWith(t, "linear", body)})
+
+	coord, err := Resolve(".", config.PluginDecl{
+		Name: "linear", From: scene.fake.downloadURL("build-77", "build-77.tar.gz"),
+	})
+	if err != nil {
+		t.Fatalf("resolve the url coordinate: %v", err)
+	}
+	if coord.Origin != OriginURL || coord.Version != "build-77" {
+		t.Fatalf("coordinate = %s@%s, want a url origin at build-77", coord.Origin, coord.Version)
+	}
+	scene.coord = coord
+
+	lock := &Lock{}
+	result, err := scene.install(t, lock, false)
+	if err != nil {
+		t.Fatalf("install build-77: %v", err)
+	}
+
+	want := filepath.Join(scene.store.Root(), "plugins", "linear", "build-77", "linear")
+	if result.Binary != want {
+		t.Fatalf("binary = %q, want %q", result.Binary, want)
+	}
+	if installed := readFile(t, result.Binary); installed != string(body) {
+		t.Fatalf("installed binary = %q, want the archive's entry", installed)
+	}
+
+	located, err := scene.store.Binary("linear", coord, lock)
+	if err != nil {
+		t.Fatalf("locate build-77: %v", err)
+	}
+	if located != want {
+		t.Fatalf("located %q, want %q", located, want)
 	}
 }

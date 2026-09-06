@@ -79,7 +79,7 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 
 		// A tar entry name is not a filesystem path; its separators are attacker-chosen.
 		name := path.Base(header.Name)
-		if !isCacheFileName(name) {
+		if !isCacheEntryName(name) {
 			continue
 		}
 		files = append(files, archived{name: name, executable: header.FileInfo().Mode()&0o111 != 0, body: body})

