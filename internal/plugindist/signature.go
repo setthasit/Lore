@@ -58,15 +58,10 @@ type verifier struct {
 	hasKeyID bool
 }
 
-// loadVerifier reads a declaration's `pubkey:` and decides the format from the
+// loadVerifier reads the resolved `pubkey:` and decides the format from the
 // file's own shape, so a user never declares which tool signed a release twice.
 func loadVerifier(name, pubkeyPath string) (verifier, error) {
-	path, err := expandHome(name, strings.TrimSpace(pubkeyPath))
-	if err != nil {
-		return verifier{}, err
-	}
-
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(pubkeyPath)
 	if err != nil {
 		return verifier{}, internalerror.NewPreconditionError(label(name)+" declares pubkey: "+pubkeyPath+
 			", which cannot be read", err)

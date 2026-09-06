@@ -221,6 +221,10 @@ plugins:
     pubkey: ./keys/jdoe-lore.pub
 ```
 
+A relative `pubkey:` resolves against the directory `lore.yaml` sits in, like a
+local `from:`, so the key a workspace declares is the same key whichever
+directory `lore` was started from.
+
 The two layers defend different things and neither substitutes for the other:
 
 | Layer | Defends against | Status |

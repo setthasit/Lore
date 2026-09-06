@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/setthasit/Lore/internal/config"
 )
 
 // minisignKey is an Ed25519 keypair in minisign's own file format, generated
@@ -43,14 +45,23 @@ func newMinisignKey(t *testing.T) minisignKey {
 func (k minisignKey) publicKeyFile(t *testing.T) string {
 	t.Helper()
 
+	path := filepath.Join(t.TempDir(), "signer.pub")
+	k.writePublicKey(t, path)
+	return path
+}
+
+func (k minisignKey) writePublicKey(t *testing.T, path string) {
+	t.Helper()
+
 	payload := append(append([]byte(minisignLegacy), k.id[:]...), k.public...)
 	body := "untrusted comment: minisign public key\n" + base64.StdEncoding.EncodeToString(payload) + "\n"
 
-	path := filepath.Join(t.TempDir(), "signer.pub")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("create the key directory: %v", err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write a public key: %v", err)
 	}
-	return path
 }
 
 // sign renders a .minisig. algorithm is the two bytes the format leads with, so
@@ -70,6 +81,12 @@ func (k minisignKey) sign(t *testing.T, algorithm string, signed []byte) []byte 
 		base64.StdEncoding.EncodeToString(global) + "\n")
 }
 
+func (s *scene) requiring(pubkeyPath string) Coordinate {
+	coord := s.coord
+	coord.PubKey = pubkeyPath
+	return coord
+}
+
 func TestInstallVerifiesAMinisignSignature(t *testing.T) {
 	t.Parallel()
 
@@ -78,9 +95,8 @@ func TestInstallVerifiesAMinisignSignature(t *testing.T) {
 	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
 		key.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
 
-	result, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: key.publicKeyFile(t),
-	}, &Lock{})
+	result, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
 	if err != nil {
 		t.Fatalf("install a signed release: %v", err)
 	}
@@ -105,9 +121,8 @@ func TestInstallRefusesABadSignatureBeforeComparingDigests(t *testing.T) {
 	scene.fake.attach("v0.3.1", ChecksumsAsset,
 		[]byte(strings.Repeat("0", 64)+"  "+scene.asset+"\n"))
 
-	_, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: key.publicKeyFile(t),
-	}, &Lock{})
+	_, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
 	if err == nil {
 		t.Fatal("installing an unsigned checksums file succeeded, want a refusal")
 	}
@@ -130,9 +145,8 @@ func TestInstallRefusesASignatureFromAnotherKey(t *testing.T) {
 	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
 		attacker.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
 
-	_, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: declared.publicKeyFile(t),
-	}, &Lock{})
+	_, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(declared.publicKeyFile(t))}, &Lock{})
 	if err == nil {
 		t.Fatal("installing a release signed by another key succeeded, want a refusal")
 	}
@@ -152,9 +166,8 @@ func TestInstallRefusesAPrehashedMinisignSignature(t *testing.T) {
 	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
 		key.sign(t, minisignPrehash, scene.fake.asset("v0.3.1", ChecksumsAsset)))
 
-	_, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: key.publicKeyFile(t),
-	}, &Lock{})
+	_, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
 	if err == nil {
 		t.Fatal("installing a prehashed signature succeeded, want a refusal")
 	}
@@ -173,14 +186,44 @@ func TestInstallRefusesAMissingSignature(t *testing.T) {
 	scene := newScene(t)
 	key := newMinisignKey(t)
 
-	_, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: key.publicKeyFile(t),
-	}, &Lock{})
+	_, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
 	if err == nil {
 		t.Fatal("installing with no signature published succeeded, want a refusal")
 	}
 	if !strings.Contains(err.Error(), "is not published beside it") {
 		t.Fatalf("error %q does not say the signature is missing", err)
+	}
+}
+
+// The key a relative pubkey: names is the one beside lore.yaml, and a
+// same-named key in the directory lore happens to be started from is not it:
+// verifying against that one would trust whoever put it there.
+func TestInstallVerifiesAgainstTheKeyBesideTheConfiguration(t *testing.T) {
+	scene := newScene(t)
+	signer, decoy := newMinisignKey(t), newMinisignKey(t)
+	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
+		signer.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
+
+	const declared = "./keys/signer.pub"
+	configDir, elsewhere := t.TempDir(), t.TempDir()
+	signer.writePublicKey(t, filepath.Join(configDir, declared))
+	decoy.writePublicKey(t, filepath.Join(elsewhere, declared))
+	t.Chdir(elsewhere)
+
+	coord, err := Resolve(configDir, config.PluginDecl{
+		Name: scene.coord.Name, From: scene.coord.From, PubKey: declared,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	result, err := scene.installer.Install(context.Background(), Request{Coordinate: coord}, &Lock{})
+	if err != nil {
+		t.Fatalf("install a release signed by the key beside lore.yaml: %v", err)
+	}
+	if !result.Signed {
+		t.Fatal("a verified signature is not reported")
 	}
 }
 
@@ -192,9 +235,8 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 	checksums := scene.fake.asset("v0.3.1", ChecksumsAsset)
 	scene.fake.attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, checksums))
 
-	result, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: pubkeyPath,
-	}, &Lock{})
+	result, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{})
 	if err != nil {
 		t.Fatalf("install a cosign-signed release: %v", err)
 	}
@@ -204,9 +246,8 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 
 	// The same key over other bytes must not verify.
 	scene.fake.attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, []byte("something else")))
-	if _, err := scene.installer.Install(context.Background(), Request{
-		Coordinate: scene.coord, PubKey: pubkeyPath,
-	}, &Lock{}); err == nil {
+	if _, err := scene.installer.Install(context.Background(),
+		Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{}); err == nil {
 		t.Fatal("a signature over other bytes verified, want a refusal")
 	} else if !strings.Contains(err.Error(), "does not verify") {
 		t.Fatalf("error %q is not a signature refusal", err)

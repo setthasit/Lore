@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/fsx"
 )
 
 // LockFileName is committed beside lore.yaml. The digests live in their own
@@ -82,8 +83,6 @@ func LoadLock(dir string) (*Lock, error) {
 	return &lock, nil
 }
 
-// Save writes the lockfile. It is called once, after every requested install
-// has succeeded, so an aborted install leaves the file on disk untouched.
 func (l *Lock) Save(dir string) error {
 	path := filepath.Join(dir, LockFileName)
 
@@ -91,7 +90,7 @@ func (l *Lock) Save(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := fsx.WriteAtomic(path, []byte(body), fsx.ModeOf(path, 0o644)); err != nil {
 		return internalerror.NewInternalError("cannot write "+path, err)
 	}
 	return nil

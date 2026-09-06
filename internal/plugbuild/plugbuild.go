@@ -209,7 +209,7 @@ func FindGo() (string, error) {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, dir, program string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, program, args...) //nolint:gosec // the program is the go command or the binary just built
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return string(out), err

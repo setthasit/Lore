@@ -135,18 +135,25 @@ func (g *fakeGitHub) writeRelease(w http.ResponseWriter, tag string) {
 func archiveWith(t *testing.T, binaryName string, body []byte) []byte {
 	t.Helper()
 
+	return tarGz(t,
+		tarEntry{name: "LICENSE", mode: 0o644, body: []byte("MIT")},
+		tarEntry{name: binaryName, mode: 0o755, body: body},
+	)
+}
+
+type tarEntry struct {
+	name string
+	mode int64
+	body []byte
+}
+
+func tarGz(t *testing.T, entries ...tarEntry) []byte {
+	t.Helper()
+
 	var buffer bytes.Buffer
 	compressor := gzip.NewWriter(&buffer)
 	writer := tar.NewWriter(compressor)
 
-	entries := []struct {
-		name string
-		mode int64
-		body []byte
-	}{
-		{name: "LICENSE", mode: 0o644, body: []byte("MIT")},
-		{name: binaryName, mode: 0o755, body: body},
-	}
 	for _, entry := range entries {
 		header := &tar.Header{
 			Typeflag: tar.TypeReg, Name: entry.name,

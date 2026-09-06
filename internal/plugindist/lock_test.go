@@ -2,6 +2,7 @@ package plugindist
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -131,5 +132,49 @@ func TestLockNewVersionDropsStaleDigests(t *testing.T) {
 	entry, _ := lock.Entry("linear")
 	if entry.Version != "v0.4.0" {
 		t.Fatalf("version = %q, want v0.4.0", entry.Version)
+	}
+}
+
+func TestLockSaveKeepsTheModeOfAnExistingLockfile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, LockFileName)
+	if err := os.WriteFile(path, []byte("version: 1\n"), 0o664); err != nil {
+		t.Fatalf("seed a lockfile: %v", err)
+	}
+	if err := os.Chmod(path, 0o664); err != nil {
+		t.Fatalf("make the lockfile group-writable past the umask: %v", err)
+	}
+
+	lock := &Lock{}
+	if err := lock.Save(dir); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o664 {
+		t.Errorf("mode = %v, want %v", got, os.FileMode(0o664))
+	}
+}
+
+func TestLockSaveWritesANewLockfileWorldReadable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	lock := &Lock{}
+	if err := lock.Save(dir); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, LockFileName))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("mode = %v, want %v", got, os.FileMode(0o644))
 	}
 }

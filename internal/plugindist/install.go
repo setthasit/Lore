@@ -27,12 +27,11 @@ func NewInstaller(store *Store) *Installer {
 	return &Installer{Store: store, HTTP: &http.Client{Timeout: downloadTimeout}, APIBase: DefaultAPIBase()}
 }
 
-// Request is one plugin to install. PubKey is the declaration's `pubkey:`, and
-// Rewrite is what separates `update` from `install`: update is the only command
-// allowed to replace a locked version, URL or digest.
+// Request is one plugin to install. Rewrite is what separates `update` from
+// `install`: update is the only command allowed to replace a locked version,
+// URL or digest.
 type Request struct {
 	Coordinate Coordinate
-	PubKey     string
 	Rewrite    bool
 }
 
@@ -124,7 +123,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
 	pinned := hasLocked && !req.Rewrite
 
-	artifactURL, checksumsURL, err := ins.locate(ctx, coord, platform, locked, pinned, req.PubKey != "")
+	artifactURL, checksumsURL, err := ins.locate(ctx, coord, platform, locked, pinned, coord.PubKey != "")
 	if err != nil {
 		return Result{}, err
 	}
@@ -137,7 +136,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	}
 
 	fileName := artifactFileName(artifactURL)
-	expected, signed, err := ins.expected(ctx, req, coord, fileName, artifact, checksumsURL)
+	expected, signed, err := ins.expected(ctx, coord, fileName, artifact, checksumsURL)
 	if err != nil {
 		return Result{}, err
 	}
@@ -220,7 +219,6 @@ func (ins *Installer) locate(
 // not a guarantee.
 func (ins *Installer) expected(
 	ctx context.Context,
-	req Request,
 	coord Coordinate,
 	fileName string,
 	artifact []byte,
@@ -235,19 +233,19 @@ func (ins *Installer) expected(
 		}
 	}
 
-	if req.PubKey != "" {
+	if coord.PubKey != "" {
 		signedName, signedURL, material := ChecksumsAsset, checksumsURL, checksums
 		if coord.Origin == OriginURL {
 			signedName, signedURL, material = fileName, coord.URL, artifact
 		}
 
-		verify, err := loadVerifier(coord.Name, req.PubKey)
+		verify, err := loadVerifier(coord.Name, coord.PubKey)
 		if err != nil {
 			return "", false, err
 		}
 		signature, err := fetch.get(ctx, signedURL+verify.signatureSuffix(), maxSignatureSize)
 		if err != nil {
-			return "", false, internalerror.NewPreconditionError(label(coord.Name)+" declares pubkey: "+req.PubKey+
+			return "", false, internalerror.NewPreconditionError(label(coord.Name)+" declares pubkey: "+coord.PubKey+
 				", but "+signedName+verify.signatureSuffix()+" is not published beside it: an unsigned artifact"+
 				" is refused, not accepted unsigned", err)
 		}
@@ -257,7 +255,7 @@ func (ins *Installer) expected(
 		signed = true
 	}
 
-	if len(checksums) == 0 {
+	if checksumsURL == "" {
 		return "", signed, nil
 	}
 	digest, found := checksumFor(checksums, fileName)

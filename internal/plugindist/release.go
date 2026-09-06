@@ -36,6 +36,8 @@ const (
 	maxSignatureSize = 64 << 10
 )
 
+const maxRedirects = 10
+
 func DefaultAPIBase() string {
 	if base := strings.TrimSpace(os.Getenv(APIBaseEnv)); base != "" {
 		return strings.TrimSuffix(base, "/")
@@ -116,10 +118,21 @@ func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, e
 	if err != nil {
 		return nil, internalerror.NewBadRequestError("cannot request "+target, err)
 	}
+	if request.URL.Scheme != "https" {
+		return nil, internalerror.NewBadRequestError("refusing to download "+safeURL(request.URL)+
+			" — plugin downloads stay on https", nil)
+	}
 	request.Header.Set("Accept", "*/*")
 
-	response, err := f.client.Do(request)
+	guarded := *f.client
+	guarded.CheckRedirect = refuseDowngrade
+
+	response, err := guarded.Do(request)
 	if err != nil {
+		var refused *internalerror.Error
+		if errors.As(err, &refused) {
+			return nil, refused
+		}
 		return nil, internalerror.NewPreconditionError("cannot reach "+target, err)
 	}
 	defer func() {
@@ -145,6 +158,28 @@ func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, e
 			strconv.FormatInt(limit>>20, 10)+" MiB this build will download", nil)
 	}
 	return body, nil
+}
+
+// A release asset URL legitimately redirects to a CDN, so the hop is followed
+// — but never onto plaintext.
+func refuseDowngrade(request *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return internalerror.NewPreconditionError("stopped after "+strconv.Itoa(maxRedirects)+
+			" redirects at "+safeURL(request.URL), nil)
+	}
+	if request.URL.Scheme == "https" {
+		return nil
+	}
+	return internalerror.NewPreconditionError("refusing a redirect to "+safeURL(request.URL)+
+		" — plugin downloads stay on https", nil)
+}
+
+// A presigned CDN location carries its credential in the query, and this text
+// reaches a terminal and a log.
+func safeURL(target *url.URL) string {
+	stripped := *target
+	stripped.User, stripped.RawQuery = nil, ""
+	return stripped.String()
 }
 
 // resolveFailure names the coordinate and the step that failed, which together

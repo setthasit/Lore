@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/fsx"
 )
 
 // RootEnv overrides where installed plugins live. It exists so a machine that
@@ -104,7 +105,7 @@ func (s *Store) WriteManifest(name, version string, raw []byte) error {
 		return err
 	}
 	path := s.ManifestPath(name, version)
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	if err := fsx.WriteAtomic(path, raw, 0o644); err != nil {
 		return internalerror.NewInternalError("cannot cache the manifest at "+path, err)
 	}
 	return nil
@@ -225,7 +226,7 @@ func (s *Store) binaryIn(dir string) (string, error) {
 	found := ""
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || name == manifestFileName || strings.HasPrefix(name, ".") {
+		if entry.IsDir() || !isCacheFileName(name) {
 			continue
 		}
 		if found != "" {
@@ -240,27 +241,31 @@ func (s *Store) binaryIn(dir string) (string, error) {
 	return filepath.Join(dir, found), nil
 }
 
+func isCacheFileName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`) &&
+		filepath.Base(name) == name && name != manifestFileName
+}
+
 // write stores an unpacked binary and the digest re-checked at every launch.
-// The binary lands under a temporary name and is renamed, so an interrupted
-// write can never leave a half-written binary that a digest file vouches for.
 func (s *Store) write(name, version, binaryName string, body []byte) (path, digest string, err error) {
+	if !isCacheFileName(binaryName) {
+		return "", "", internalerror.NewPreconditionError(label(name)+": the artifact names its binary "+
+			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
+			" must be a single name that neither starts with a dot nor is the cached "+manifestFileName, nil)
+	}
+
 	dir := s.Dir(name, version)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", internalerror.NewInternalError("cannot create the plugin cache at "+dir, err)
 	}
 
 	path = filepath.Join(dir, binaryName)
-	staged := path + ".partial"
-	if err := os.WriteFile(staged, body, 0o755); err != nil {
-		return "", "", internalerror.NewInternalError("cannot write "+path, err)
-	}
-	if err := os.Rename(staged, path); err != nil {
-		_ = os.Remove(staged)
+	if err := fsx.WriteAtomic(path, body, 0o755); err != nil {
 		return "", "", internalerror.NewInternalError("cannot write "+path, err)
 	}
 
 	digest = digestOf(body)
-	if err := os.WriteFile(filepath.Join(dir, digestFileName), []byte(digest+"\n"), 0o644); err != nil {
+	if err := fsx.WriteAtomic(filepath.Join(dir, digestFileName), []byte(digest+"\n"), 0o644); err != nil {
 		// Without the digest file the binary can never be launched, so the
 		// half-installed version is removed rather than left to fail later.
 		_ = os.RemoveAll(dir)

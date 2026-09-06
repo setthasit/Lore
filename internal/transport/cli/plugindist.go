@@ -217,7 +217,7 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 			if err != nil {
 				return nil, nil, err
 			}
-			requests = append(requests, plugindist.Request{Coordinate: coord, PubKey: decl.PubKey})
+			requests = append(requests, plugindist.Request{Coordinate: coord})
 		}
 		return requests, nil, nil
 	}
@@ -228,20 +228,19 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 		if err != nil {
 			return nil, nil, err
 		}
-		from := decl.From
 		switch {
 		case version == plugindist.LatestVersion:
-			from = coordinateAt(decl.From, version)
+			decl.From = coordinateAt(decl.From, version)
 		case version != "":
 			return nil, nil, internalerror.NewBadRequestError("install pins what lore.yaml declares; to move "+
 				target+" to "+version+" run: lore plugin update "+target+"@"+version, nil)
 		}
 
-		coord, err := plugindist.ResolveInstall(w.dir, target, from)
+		coord, err := plugindist.ResolveInstall(w.dir, decl)
 		if err != nil {
 			return nil, nil, err
 		}
-		return []plugindist.Request{{Coordinate: coord, PubKey: decl.PubKey}}, nil, nil
+		return []plugindist.Request{{Coordinate: coord}}, nil, nil
 	}
 
 	name, err := nameForCoordinate(target)
@@ -253,11 +252,11 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 		from = target + "@" + version
 	}
 
-	coord, err := plugindist.ResolveInstall(w.dir, name, from)
+	decl, declared := w.declaration(name)
+	coord, err := plugindist.ResolveInstall(w.dir, config.PluginDecl{Name: name, From: from, PubKey: decl.PubKey})
 	if err != nil {
 		return nil, nil, err
 	}
-	decl, declared := w.declaration(name)
 	if declared && decl.From != coord.From && version != plugindist.LatestVersion {
 		return nil, nil, internalerror.NewBadRequestError(w.path+" declares "+name+" from "+decl.From+
 			", not "+coord.From+" — edit the declaration, or run: lore plugin update "+name, nil)
@@ -267,7 +266,7 @@ func installRequests(w *pluginWorkspace, args []string) ([]plugindist.Request, [
 	if !declared {
 		edits = append(edits, configEdit{name: name, from: coord.From, add: true})
 	}
-	return []plugindist.Request{{Coordinate: coord, PubKey: decl.PubKey}}, edits, nil
+	return []plugindist.Request{{Coordinate: coord}}, edits, nil
 }
 
 func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
@@ -281,7 +280,7 @@ func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
 	if err != nil {
 		return err
 	}
-	coord, err := plugindist.ResolveInstall(workspace.dir, name, decl.From)
+	coord, err := plugindist.ResolveInstall(workspace.dir, decl)
 	if err != nil {
 		return err
 	}
@@ -312,9 +311,7 @@ func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
 		return err
 	}
 
-	result, err := installer.Install(cmd.Context(), plugindist.Request{
-		Coordinate: pinned, PubKey: decl.PubKey, Rewrite: true,
-	}, workspace.lock)
+	result, err := installer.Install(cmd.Context(), plugindist.Request{Coordinate: pinned, Rewrite: true}, workspace.lock)
 	if err != nil {
 		return err
 	}

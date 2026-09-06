@@ -37,9 +37,6 @@ func isArchive(name string) bool {
 	return false
 }
 
-// archived is one regular file out of an archive. Only its base name is kept:
-// nothing nested is ever written, so an entry named ../../etc/cron.d/x is
-// structurally unable to escape rather than escaping unless a check catches it.
 type archived struct {
 	name       string
 	executable bool
@@ -80,8 +77,9 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 		}
 		budget -= int64(len(body))
 
+		// A tar entry name is not a filesystem path; its separators are attacker-chosen.
 		name := path.Base(header.Name)
-		if name == "." || name == ".." || name == "/" {
+		if !isCacheFileName(name) {
 			continue
 		}
 		files = append(files, archived{name: name, executable: header.FileInfo().Mode()&0o111 != 0, body: body})

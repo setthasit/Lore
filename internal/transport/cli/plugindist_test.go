@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -59,12 +61,30 @@ func newFakeReleases(t *testing.T) *fakeReleases {
 	t.Helper()
 
 	fake := &fakeReleases{t: t, tags: map[string]map[string][]byte{}}
-	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
+	fake.server = httptest.NewTLSServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(fake.server.Close)
+	trustFakeReleases(t, fake.server)
 
 	t.Setenv(plugindist.APIBaseEnv, fake.server.URL)
 	t.Setenv(plugindist.RootEnv, filepath.Join(t.TempDir(), "home"))
 	return fake
+}
+
+// The commands build their own client, so the fake's certificate has to be
+// trusted where that client looks for roots: the default transport.
+func trustFakeReleases(t *testing.T, server *httptest.Server) {
+	t.Helper()
+
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+
+	previous := transport.TLSClientConfig
+	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	t.Cleanup(func() { transport.TLSClientConfig = previous })
 }
 
 func (f *fakeReleases) publish(tag string, body string) {

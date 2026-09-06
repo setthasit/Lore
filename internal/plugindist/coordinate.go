@@ -62,6 +62,7 @@ type Coordinate struct {
 	Name   string
 	Origin Origin
 	From   string // the coordinate as declared, which is what lore.lock records
+	PubKey string // absolute path to the key a signature must verify against; empty requires no signature
 
 	Path string // OriginLocal: the file executed in place, with a leading ~ expanded
 
@@ -75,22 +76,22 @@ type Coordinate struct {
 // pin an exact version here, so a workspace's configuration alone determines
 // which code runs.
 //
-// dir is the directory the declaring lore.yaml sits in: a local path means
-// "beside the configuration that declared it", so a workspace behaves the same
-// whichever directory lore was started from.
+// dir is the directory the declaring lore.yaml sits in: a local from: and a
+// relative pubkey: mean "beside the configuration that declared it", so a
+// workspace behaves the same whichever directory lore was started from.
 func Resolve(dir string, decl config.PluginDecl) (Coordinate, error) {
-	return parseCoordinate(dir, decl.Name, decl.From, false)
+	return parseCoordinate(dir, decl, false)
 }
 
 // ResolveInstall reads a coordinate `lore plugin install` was handed, where
 // @latest is legal: install resolves it and writes the concrete version back
 // into lore.yaml before anything is locked or executed.
-func ResolveInstall(dir, name, from string) (Coordinate, error) {
-	return parseCoordinate(dir, name, from, true)
+func ResolveInstall(dir string, decl config.PluginDecl) (Coordinate, error) {
+	return parseCoordinate(dir, decl, true)
 }
 
-func parseCoordinate(dir, name, from string, allowLatest bool) (Coordinate, error) {
-	name, from = strings.TrimSpace(name), strings.TrimSpace(from)
+func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coordinate, error) {
+	name, from := strings.TrimSpace(decl.Name), strings.TrimSpace(decl.From)
 	if name == "" {
 		return Coordinate{}, internalerror.NewBadRequestError(
 			"a plugin declaration needs a name: the token every `use:` refers to", nil)
@@ -103,13 +104,15 @@ func parseCoordinate(dir, name, from string, allowLatest bool) (Coordinate, erro
 			" (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z, or an https:// artifact URL", nil)
 	}
 
+	var coord Coordinate
+	var err error
 	switch {
 	case isLocalPath(from):
-		return parseLocal(dir, name, from)
+		coord, err = parseLocal(dir, name, from)
 	case strings.HasPrefix(from, gitHubPrefix):
-		return parseGitHub(name, from, allowLatest)
+		coord, err = parseGitHub(name, from, allowLatest)
 	case strings.HasPrefix(from, "https://"):
-		return parseURL(name, from)
+		coord, err = parseURL(name, from)
 	case strings.HasPrefix(from, "http://"):
 		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
 			" is plaintext HTTP, which cannot carry code anyone should run: publish the artifact over https", nil)
@@ -118,6 +121,21 @@ func parseCoordinate(dir, name, from string, allowLatest bool) (Coordinate, erro
 			" is not a coordinate — use a local path (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z,"+
 			" or an https:// artifact URL", nil)
 	}
+	if err != nil {
+		return Coordinate{}, err
+	}
+
+	if decl.PubKey != "" {
+		pubkey := strings.TrimSpace(decl.PubKey)
+		if pubkey == "" {
+			return Coordinate{}, internalerror.NewBadRequestError(label(name)+" declares a blank pubkey: — name"+
+				" the public key a signature must verify against, or remove the line to install unsigned", nil)
+		}
+		if coord.PubKey, err = absolutePath(dir, pubkey, label(name)+" pubkey: "+pubkey); err != nil {
+			return Coordinate{}, err
+		}
+	}
+	return coord, nil
 }
 
 // A local coordinate is recognised by its shape alone, exactly as documented,
@@ -132,22 +150,9 @@ func isLocalPath(from string) bool {
 }
 
 func parseLocal(dir, name, from string) (Coordinate, error) {
-	expanded, err := expandHome(name, from)
+	absolute, err := absolutePath(dir, from, label(name)+" from "+from)
 	if err != nil {
 		return Coordinate{}, err
-	}
-
-	// The path is made absolute rather than merely cleaned. os/exec treats a
-	// name with no separator as a PATH lookup, so a cleaned "./plugin" would
-	// send the host hunting through PATH for something sitting right here.
-	path := expanded
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, path)
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return Coordinate{}, internalerror.NewBadRequestError(label(name)+" from "+from+
-			" cannot be resolved to a path", err)
 	}
 	return Coordinate{Name: name, Origin: OriginLocal, From: from, Path: absolute}, nil
 }
@@ -213,7 +218,11 @@ func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 		return Coordinate{}, internalerror.NewBadRequestError(label(c.Name)+" is fetched from "+c.From+
 			", so its version is part of that coordinate — edit from: in lore.yaml to move it", nil)
 	}
-	return parseCoordinate("", c.Name, gitHubPrefix+c.Owner+"/"+c.Repo+"@"+strings.TrimSpace(version), true)
+	return parseCoordinate("", config.PluginDecl{
+		Name:   c.Name,
+		From:   gitHubPrefix + c.Owner + "/" + c.Repo + "@" + strings.TrimSpace(version),
+		PubKey: c.PubKey,
+	}, true)
 }
 
 // Remote reports whether the coordinate must be fetched, verified and locked.
@@ -285,16 +294,35 @@ func label(name string) string {
 	return "plugins[" + name + "]"
 }
 
+// absolutePath resolves a path a declaration wrote against dir, the directory
+// its lore.yaml sits in. blame names the declaration a refusal points at.
+func absolutePath(dir, raw, blame string) (string, error) {
+	expanded, err := expandHome(raw, blame)
+	if err != nil {
+		return "", err
+	}
+
+	// os/exec reads a separator-free name as a PATH lookup, so a declared path is made absolute, not cleaned.
+	if !filepath.IsAbs(expanded) {
+		expanded = filepath.Join(dir, expanded)
+	}
+	absolute, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", internalerror.NewBadRequestError(blame+" cannot be resolved to a path", err)
+	}
+	return absolute, nil
+}
+
 // Only a leading "~" is expanded, matching how the rest of the configuration
 // treats a path.
-func expandHome(name, raw string) (string, error) {
+func expandHome(raw, blame string) (string, error) {
 	if !strings.HasPrefix(raw, "~/") {
 		return raw, nil
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", internalerror.NewBadRequestError(label(name)+" from "+raw+
+		return "", internalerror.NewBadRequestError(blame+
 			" starts with ~, but this user has no home directory; declare an absolute path", err)
 	}
 	return filepath.Join(home, strings.TrimPrefix(raw, "~/")), nil

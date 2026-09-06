@@ -206,3 +206,45 @@ func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
 		t.Fatalf("the cache root was deleted: %v", err)
 	}
 }
+
+// The store owns .digest and manifest.json in every version directory, so an
+// archive that names its binary after one of them is refused at the sink.
+func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	_, result := scene.installed(t)
+	dir := filepath.Dir(result.Binary)
+
+	for _, binaryName := range []string{digestFileName, manifestFileName, `..\..\evil.exe`, "sub/evil", ".."} {
+		path, digest, err := scene.store.write("linear", "v0.3.1", binaryName, []byte("evil\n"))
+		if err == nil {
+			t.Errorf("writing a binary named %q succeeded, want a refusal", binaryName)
+		} else if !internalerror.IsPrecondition(err) {
+			t.Errorf("name %q: kind = %v, want precondition", binaryName, internalerror.KindOf(err))
+		} else if !strings.Contains(err.Error(), "plugins[linear]") {
+			t.Errorf("error %q does not name the plugin", err)
+		}
+		if path != "" || digest != "" {
+			t.Errorf("name %q reported path %q and digest %q", binaryName, path, digest)
+		}
+	}
+
+	recorded, err := os.ReadFile(filepath.Join(dir, digestFileName))
+	if err != nil {
+		t.Fatalf("read the digest file: %v", err)
+	}
+	if want := digestOf([]byte(stubBinary)) + "\n"; string(recorded) != want {
+		t.Fatalf("digest file = %q, want the digest of the installed binary %q", recorded, want)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the version directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".partial") {
+			t.Errorf("a staged %q survived the refusal", entry.Name())
+		}
+	}
+}

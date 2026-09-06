@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/fsx"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -566,32 +566,7 @@ func splitInlineComment(rest string) (value, comment string) {
 }
 
 func replaceFile(path, content string) error {
-	mode := fs.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-
-	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
-	if err != nil {
-		return internalerror.NewInternalError("cannot write "+path, err)
-	}
-	written := func() error {
-		if _, err := temp.WriteString(content); err != nil {
-			return err
-		}
-		if err := temp.Chmod(mode); err != nil {
-			return err
-		}
-		return temp.Close()
-	}()
-	if written != nil {
-		_ = temp.Close()
-		_ = os.Remove(temp.Name())
-		return internalerror.NewInternalError("cannot write "+path, written)
-	}
-
-	if err := os.Rename(temp.Name(), path); err != nil {
-		_ = os.Remove(temp.Name())
+	if err := fsx.WriteAtomic(path, []byte(content), fsx.ModeOf(path, 0o644)); err != nil {
 		return internalerror.NewInternalError("cannot write "+path, err)
 	}
 	return nil

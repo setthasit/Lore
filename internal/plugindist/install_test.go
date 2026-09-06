@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -62,6 +64,20 @@ func (s *scene) installed(t *testing.T) (*Lock, Result) {
 		t.Fatalf("install: %v", err)
 	}
 	return lock, result
+}
+
+func TestInstallWithNoDeclaredPubKeyIsUnsigned(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	if scene.coord.PubKey != "" {
+		t.Fatalf("the scene declares pubkey: %q", scene.coord.PubKey)
+	}
+
+	_, result := scene.installed(t)
+	if result.Signed {
+		t.Fatal("an install with no declared key reports a verified signature")
+	}
 }
 
 func TestInstallPinsVerifiesAndCaches(t *testing.T) {
@@ -243,6 +259,30 @@ func TestInstallMissingAssetNamesWhatWasLookedForAndWhatExists(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesAnEmptyChecksumsList(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	scene.fake.attach("v0.3.1", ChecksumsAsset, []byte{})
+
+	lock := &Lock{}
+	_, err := scene.install(t, lock, false)
+	if err == nil {
+		t.Fatal("installing against an empty checksums list succeeded, want a refusal")
+	}
+	for _, want := range []string{ChecksumsAsset, scene.asset} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+	if len(lock.Plugins) != 0 {
+		t.Fatalf("a refused install pinned %+v", lock.Plugins)
+	}
+	if _, err := os.Stat(scene.store.Dir("linear", "v0.3.1")); !os.IsNotExist(err) {
+		t.Fatal("a refused install left a cached version behind")
+	}
+}
+
 // An unresolvable coordinate aborts the install and writes nothing: the
 // lockfile that is committed to the repository is left exactly as it was.
 func TestInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
@@ -286,7 +326,7 @@ func TestInstallPinsLatestToAConcreteVersion(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	floating, err := ResolveInstall(".", "linear", "github.com/jdoe/lore-linear@latest")
+	floating, err := ResolveInstall(".", config.PluginDecl{Name: "linear", From: "github.com/jdoe/lore-linear@latest"})
 	if err != nil {
 		t.Fatalf("resolve @latest: %v", err)
 	}
@@ -382,5 +422,176 @@ func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 		t.Fatal("re-installing changed bytes over a pin succeeded, want a refusal")
 	} else if !strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("error %q does not report a digest mismatch", err)
+	}
+}
+
+// A tar entry name is not a path, and `path.Base` splits on / alone: on Windows
+// an entry named ..\..\evil.exe would be joined into a write outside the cache.
+func TestUnpackSkipsArchiveEntriesThatAreNotOneFileName(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	archive := tarGz(t,
+		tarEntry{name: "LICENSE", mode: 0o644, body: []byte("MIT")},
+		tarEntry{name: `..\..\evil.exe`, mode: 0o755, body: []byte("evil\n")},
+	)
+
+	files, err := untar(scene.coord, archive)
+	if err != nil {
+		t.Fatalf("untar: %v", err)
+	}
+	if got := archivedNames(files); len(got) != 1 || got[0] != "LICENSE" {
+		t.Fatalf("entries = %v, want LICENSE alone", got)
+	}
+
+	// The skipped entry was the only executable, so the fallback picks nothing.
+	_, _, err = unpack(scene.coord, scene.store.Platform(), scene.asset, archive)
+	if err == nil {
+		t.Fatal("unpacking an archive whose only executable escapes the cache succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "holds no plugin binary") {
+		t.Fatalf("error %q does not refuse to pick a binary", err)
+	}
+}
+
+// goreleaser archives nest the binary under a directory, and that prefix is
+// stripped rather than refused.
+func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	platform := scene.store.Platform()
+	binaryName := scene.coord.binaryName(platform)
+	archive := tarGz(t,
+		tarEntry{name: "dist/README.md", mode: 0o644, body: []byte("# acme")},
+		tarEntry{name: "dist/" + binaryName, mode: 0o755, body: []byte(stubBinary)},
+	)
+
+	name, body, err := unpack(scene.coord, platform, scene.asset, archive)
+	if err != nil {
+		t.Fatalf("unpack: %v", err)
+	}
+	if name != binaryName {
+		t.Fatalf("binary = %q, want %q", name, binaryName)
+	}
+	if string(body) != stubBinary {
+		t.Fatalf("body = %q, want the nested binary", body)
+	}
+}
+
+// A coordinate is checked for https when it is parsed, but a checksums file, a
+// signature and an API base all reach the network without passing through that
+// check, so the download itself refuses plaintext.
+func TestGetRefusesAPlaintextTarget(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int64
+	plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("evil\n"))
+	}))
+	t.Cleanup(plaintext.Close)
+
+	fetch := fetcher{client: plaintext.Client()}
+	body, err := fetch.get(context.Background(), plaintext.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
+	if err == nil {
+		t.Fatal("downloading over plaintext http succeeded, want a refusal")
+	}
+	if body != nil {
+		t.Fatalf("body = %q, want nothing downloaded", body)
+	}
+	if !strings.Contains(err.Error(), "plugin downloads stay on https") {
+		t.Fatalf("error %q does not refuse the plaintext target", err)
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Fatalf("kind = %v, want bad request", internalerror.KindOf(err))
+	}
+	if served := hits.Load(); served != 0 {
+		t.Fatalf("the plaintext endpoint served %d requests, want none to leave", served)
+	}
+}
+
+func TestGetRefusesARedirectOffHTTPS(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int64
+	plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("evil\n"))
+	}))
+	t.Cleanup(plaintext.Close)
+
+	downgrade := plaintext.URL + "/lore/acme-crm/v2.0.1.tar.gz"
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, downgrade, http.StatusFound)
+	}))
+	t.Cleanup(secure.Close)
+
+	fetch := fetcher{client: secure.Client()}
+	body, err := fetch.get(context.Background(), secure.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
+	if err == nil {
+		t.Fatal("a redirect onto plaintext http was followed, want a refusal")
+	}
+	if body != nil {
+		t.Fatalf("body = %q, want nothing read over plaintext", body)
+	}
+	if !strings.Contains(err.Error(), "refusing a redirect to "+downgrade) {
+		t.Fatalf("error %q does not name the refused hop", err)
+	}
+	if served := hits.Load(); served != 0 {
+		t.Fatalf("the plaintext endpoint served %d requests, want none", served)
+	}
+}
+
+// A release asset URL redirects to a CDN, so refusing redirects outright would
+// break every real install.
+func TestGetFollowsAnHTTPSRedirect(t *testing.T) {
+	t.Parallel()
+
+	const payload = "acme-crm archive\n"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cdn/acme-crm.tar.gz" {
+			_, _ = w.Write([]byte(payload))
+			return
+		}
+		http.Redirect(w, r, "/cdn/acme-crm.tar.gz", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	fetch := fetcher{client: server.Client()}
+	body, err := fetch.get(context.Background(), server.URL+"/releases/download/v2.0.1/acme-crm.tar.gz", maxArtifactBytes)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if string(body) != payload {
+		t.Fatalf("body = %q, want the redirect target's body", body)
+	}
+}
+
+// Installing the redirect policy replaces the default one, and the default is
+// what capped a chain, so an https loop must still be stopped by hop count.
+func TestGetStopsAnHTTPSRedirectLoop(t *testing.T) {
+	t.Parallel()
+
+	var hops atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hops.Add(1)
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	fetch := fetcher{client: server.Client()}
+	_, err := fetch.get(ctx, server.URL+"/loop", maxArtifactBytes)
+	if err == nil {
+		t.Fatal("an https redirect loop was followed to a body, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "stopped after 10 redirects") {
+		t.Fatalf("error %q does not stop the loop on hop count", err)
+	}
+	if served := hops.Load(); served != maxRedirects {
+		t.Fatalf("the loop served %d hops, want it stopped at %d", served, maxRedirects)
 	}
 }

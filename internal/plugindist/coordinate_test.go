@@ -1,6 +1,8 @@
 package plugindist
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,7 +72,7 @@ func TestCoordinateRefusesFloatingVersionInConfig(t *testing.T) {
 
 	// The same coordinate is legal as an install argument, which is the only
 	// place that can pin it back into the file.
-	if _, err := ResolveInstall(".", "linear", "github.com/jdoe/lore-linear@latest"); err != nil {
+	if _, err := ResolveInstall(".", config.PluginDecl{Name: "linear", From: "github.com/jdoe/lore-linear@latest"}); err != nil {
 		t.Fatalf("resolving @latest as an install argument: %v", err)
 	}
 }
@@ -168,7 +170,7 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
 		}
 		// Install derives a name from a repository, so it needs the same rule.
-		if _, err := ResolveInstall(".", name, from); err == nil {
+		if _, err := ResolveInstall(".", config.PluginDecl{Name: name, From: from}); err == nil {
 			t.Errorf("installing under the name %q resolved, want a refusal", name)
 		}
 	}
@@ -178,5 +180,85 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 		if _, err := Resolve(".", config.PluginDecl{Name: name, From: from}); err != nil {
 			t.Errorf("name %q was refused: %v", name, err)
 		}
+	}
+}
+
+func TestCoordinateResolvesPubKeyAgainstTheConfigDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir, absolute := t.TempDir(), filepath.Join(t.TempDir(), "elsewhere.pub")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("read the home directory: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		declared string
+		want     string
+	}{
+		{name: "dot relative", declared: "./keys/jdoe.pub", want: filepath.Join(dir, "keys", "jdoe.pub")},
+		{name: "bare relative", declared: "keys/jdoe.pub", want: filepath.Join(dir, "keys", "jdoe.pub")},
+		{name: "parent relative", declared: "../jdoe.pub", want: filepath.Join(filepath.Dir(dir), "jdoe.pub")},
+		{name: "absolute", declared: absolute, want: absolute},
+		{name: "home relative", declared: "~/keys/jdoe.pub", want: filepath.Join(home, "keys", "jdoe.pub")},
+		{name: "unset means unsigned", declared: "", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			coord, err := Resolve(dir, config.PluginDecl{
+				Name: "linear", From: "github.com/jdoe/lore-linear@v0.3.1", PubKey: tc.declared,
+			})
+			if err != nil {
+				t.Fatalf("resolve pubkey %q: %v", tc.declared, err)
+			}
+			if coord.PubKey != tc.want {
+				t.Fatalf("PubKey = %q, want %q", coord.PubKey, tc.want)
+			}
+		})
+	}
+}
+
+func TestCoordinateRefusesABlankPubKey(t *testing.T) {
+	t.Parallel()
+
+	for _, declared := range []string{" ", "\t", " \n ", "  \t "} {
+		_, err := Resolve(t.TempDir(), config.PluginDecl{
+			Name: "linear", From: "github.com/jdoe/lore-linear@v0.3.1", PubKey: declared,
+		})
+		if err == nil {
+			t.Errorf("pubkey %q resolved, want a refusal", declared)
+			continue
+		}
+		if !internalerror.IsBadRequest(err) {
+			t.Errorf("pubkey %q: kind = %v, want bad request", declared, internalerror.KindOf(err))
+		}
+		if !strings.Contains(err.Error(), "plugins[linear]") {
+			t.Errorf("error %q does not name the declaration", err)
+		}
+	}
+}
+
+// A moved coordinate keeps the key the declaration named: `lore plugin update`
+// pins a new version through AtVersion, and a dropped key would install the
+// new release unsigned.
+func TestCoordinateKeepsPubKeyAcrossAtVersion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	coord, err := Resolve(dir, config.PluginDecl{
+		Name: "linear", From: "github.com/jdoe/lore-linear@v0.3.1", PubKey: "./keys/jdoe.pub",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	moved, err := coord.AtVersion("v0.4.0")
+	if err != nil {
+		t.Fatalf("move the coordinate: %v", err)
+	}
+	if moved.PubKey != coord.PubKey {
+		t.Fatalf("PubKey = %q, want %q", moved.PubKey, coord.PubKey)
 	}
 }
