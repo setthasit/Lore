@@ -259,14 +259,7 @@ privilege of compiled code.
 
 ```go
 type Host struct {
-    // A shared client with the host's request timeout. It carries no retry
-    // policy: retrying and honouring Retry-After is `sdk/httpx`'s job, and a
-    // second retry underneath it would multiply the attempt budget instead of
-    // bounding it.
-    HTTP *http.Client
-
-    Log  *slog.Logger   // already tagged with the instance id
-    Now  func() time.Time
+    Log *slog.Logger // never nil; already tagged with the instance id
 }
 
 type SourceConfig struct {
@@ -287,9 +280,8 @@ type ProviderConfig struct {
 }
 
 type CodeConfig struct {
-    Root   string // workspace-absolute clone root, resolved by the host
-    Remote string // "github:acme/app"; empty when the clone maps onto no source
-    Host   Host
+    Root string // workspace-absolute clone root, resolved by the host
+    Host Host
 }
 
 func (c SourceConfig) Decode(v any) error                    // strict: unknown fields rejected

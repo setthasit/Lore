@@ -161,7 +161,6 @@ func testHost(logs io.Writer) lore.Host {
 	}
 	return lore.Host{
 		Log: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Now: time.Now,
 	}
 }
 
@@ -457,6 +456,7 @@ func TestLineOverTheLimitFailsTheOperationNamingInstanceAndOp(t *testing.T) {
 		Instance:   "big",
 		Capability: lore.CapabilityComplete,
 		Model:      "m",
+		Host:       testHost(nil),
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
@@ -699,6 +699,7 @@ func TestSecretsTravelInThePayloadAndTheEnvironmentIsNotInherited(t *testing.T) 
 		Capability: lore.CapabilityComplete,
 		Model:      "m",
 		Secrets:    map[string]string{"api_key": "sk-payload"},
+		Host:       testHost(nil),
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
@@ -867,7 +868,7 @@ func TestAnIdleStreamTimesOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	conn, err := plugin.(lore.SourcePlugin).NewSource(lore.SourceConfig{Instance: "linear"})
+	conn, err := plugin.(lore.SourcePlugin).NewSource(lore.SourceConfig{Instance: "linear", Host: testHost(nil)})
 	if err != nil {
 		t.Fatalf("NewSource: %v", err)
 	}

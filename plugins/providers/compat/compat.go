@@ -21,14 +21,6 @@ const (
 	defaultEmbeddingsPath = "/v1/embeddings"
 )
 
-// unauthenticatedKey stands in for a credential the operator never named. A
-// local OpenAI-compatible server — vLLM or LM Studio out of the box —
-// authenticates nothing, while the shared client refuses an empty key, so
-// leaving the key unset would make those presets unreachable. A hosted vendor
-// that does require one answers 401 in its own words, which tells the operator
-// more than a guess made here at construction could.
-const unauthenticatedKey = "no-api-key-configured"
-
 // config is the `with:` block. The key naming the environment variable is
 // absent by design: the host resolves it and injects the value.
 type config struct {
@@ -50,8 +42,6 @@ type driver struct {
 
 	chatEndpoint       string
 	embeddingsEndpoint string // empty when the preset serves no embeddings
-
-	defaultModels map[lore.Capability]string
 }
 
 func resolve(cfg config) (driver, error) {
@@ -67,72 +57,36 @@ func resolve(cfg config) (driver, error) {
 			pluginName, strings.Join(presetKeys(), ", "))
 	}
 
+	if cfg.Preset == "" {
+		row = preset{chatPath: defaultChatPath, embeddingsPath: defaultEmbeddingsPath}
+	}
+
 	d := driver{
-		name:          pluginName,
-		preset:        cfg.Preset,
-		defaultModels: row.defaultModels,
-		chatEndpoint: httpx.Endpoint(cfg.BaseURL, row.baseURL,
-			cmp.Or(cfg.ChatPath, row.chatPath, defaultChatPath)),
+		name:         pluginName,
+		preset:       cfg.Preset,
+		chatEndpoint: httpx.Endpoint(cfg.BaseURL, row.baseURL, cmp.Or(cfg.ChatPath, row.chatPath)),
 	}
 	if cfg.Preset != "" {
 		d.name += "/" + cfg.Preset
 	}
-
-	// An override reaches an endpoint the row denies, which is what lets a
-	// vendor that publishes embeddings later be used before this table learns
-	// about it; without one, a row saying "unsupported" stays unsupported.
-	embeddingsPath := cmp.Or(cfg.EmbeddingsPath, row.embeddingsPath)
-	if cfg.Preset == "" {
-		embeddingsPath = cmp.Or(cfg.EmbeddingsPath, defaultEmbeddingsPath)
-	}
-	if embeddingsPath != embeddingsUnsupported {
-		d.embeddingsEndpoint = httpx.Endpoint(cfg.BaseURL, row.baseURL, embeddingsPath)
+	if path := cmp.Or(cfg.EmbeddingsPath, row.embeddingsPath); path != "" {
+		d.embeddingsEndpoint = httpx.Endpoint(cfg.BaseURL, row.baseURL, path)
 	}
 	return d, nil
 }
 
 func (d driver) newCompleter(c lore.ProviderConfig) (lore.Provider, error) {
-	model, err := d.model(c, lore.CapabilityComplete)
-	if err != nil {
-		return nil, err
-	}
-	return openai.NewCompatible(d.name, apiKey(c), model, d.chatEndpoint)
+	return openai.NewCompatible(d.name, c.Secret("api_key"), c.Model, d.chatEndpoint)
 }
 
 func (d driver) newEmbedder(c lore.ProviderConfig) (lore.Provider, error) {
-	if d.embeddingsEndpoint == embeddingsUnsupported {
+	if d.embeddingsEndpoint == "" {
 		return nil, fmt.Errorf("%s: preset %s serves no OpenAI-compatible embeddings endpoint; bind embedder to a provider that does, or set embeddings_path if this vendor has since published one",
 			pluginName, d.preset)
 	}
-
-	model, err := d.model(c, lore.CapabilityEmbed)
-	if err != nil {
-		return nil, err
-	}
 	if c.Dimensions <= 0 {
 		return nil, fmt.Errorf("%s: embedder.dimensions must be set to the vector width of %s: this driver serves any vendor, so its models imply no width",
-			pluginName, model)
+			pluginName, c.Model)
 	}
-	return openai.NewEmbedderAt(d.name, apiKey(c), model, d.embeddingsEndpoint, c.Dimensions)
-}
-
-// model prefers the binding over the row: the operator naming a model has
-// decided, and a preset's default only answers when nobody did.
-func (d driver) model(c lore.ProviderConfig, capability lore.Capability) (string, error) {
-	if c.Model != "" {
-		return c.Model, nil
-	}
-	if model := d.defaultModels[capability]; model != "" {
-		return model, nil
-	}
-	if d.preset == "" {
-		return "", fmt.Errorf("%s: name the %s model in the role binding: no preset was chosen, so there is no default to fall back on",
-			pluginName, capability)
-	}
-	return "", fmt.Errorf("%s: name the %s model in the role binding: preset %s carries no default, because the model is whichever one you serve",
-		pluginName, capability, d.preset)
-}
-
-func apiKey(c lore.ProviderConfig) string {
-	return cmp.Or(c.Secret("api_key"), unauthenticatedKey)
+	return openai.NewEmbedderAt(d.name, c.Secret("api_key"), c.Model, d.embeddingsEndpoint, c.Dimensions)
 }

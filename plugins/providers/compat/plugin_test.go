@@ -184,65 +184,6 @@ func TestOverridesBeatPresetDefaults(t *testing.T) {
 	}
 }
 
-// A binding that names no model gets the row's default, which is the only use
-// the driver makes of it: the manifest never suggests one for nine vendors.
-func TestPresetDefaultModelAnswersAnUnnamedModel(t *testing.T) {
-	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		var got struct {
-			Model string `json:"model"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		if want := "moonshotai/kimi-k2"; got.Model != want {
-			t.Errorf("model = %q, want the openrouter row's default %q", got.Model, want)
-		}
-		httpxtest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
-	})
-
-	provider, err := Plugin().NewProvider(testConfig(lore.CapabilityComplete, "",
-		`{"preset":"openrouter","base_url":"`+ts.URL+`"}`))
-	if err != nil {
-		t.Fatalf("NewProvider: %v", err)
-	}
-	if _, err := provider.(lore.Completer).Complete(context.Background(), testSystem, testUser); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-}
-
-// A self-hosted row carries no default, because the model is whichever one the
-// operator loaded; the error says so rather than inventing a name.
-func TestPluginRefusesUnnamedModelWithoutADefault(t *testing.T) {
-	cases := []struct {
-		name string
-		with string
-		want string
-	}{
-		{
-			name: "self-hosted preset",
-			with: `{"preset":"vllm"}`,
-			want: "openai-compatible: name the complete model in the role binding: preset vllm carries no default, because the model is whichever one you serve",
-		},
-		{
-			name: "no preset at all",
-			with: `{"base_url":"https://llm.internal"}`,
-			want: "openai-compatible: name the complete model in the role binding: no preset was chosen, so there is no default to fall back on",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Plugin().NewProvider(testConfig(lore.CapabilityComplete, "", tc.with))
-			if err == nil {
-				t.Fatal("NewProvider succeeded with no model to build on")
-			}
-			if err.Error() != tc.want {
-				t.Errorf("error = %q, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
 // The width follows the model, and this driver knows nobody's models, so the
 // operator declares it: a wrong width poisons every vector written under it.
 func TestPluginRequiresDeclaredDimensions(t *testing.T) {
@@ -260,13 +201,42 @@ func TestPluginRequiresDeclaredDimensions(t *testing.T) {
 	}
 }
 
-// A local server authenticates nothing, so an unset key must still build.
+// Authorization must be absent, not blank: servers read "Bearer " as malformed, not anonymous.
 func TestPluginBuildsWithoutAnAPIKey(t *testing.T) {
-	cfg := testConfig(lore.CapabilityComplete, "qwen3-8b", `{"preset":"lmstudio"}`)
-	cfg.Secrets = nil
+	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+		if got := r.Header.Values("Authorization"); len(got) != 0 {
+			t.Errorf("Authorization = %q, want the header absent", got)
+		}
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			httpxtest.WriteJSON(w, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"local answer"}}]}`)
+		case "/v1/embeddings":
+			httpxtest.WriteJSON(w, http.StatusOK, `{"data":[{"index":0,"embedding":[0.25,0.5]}]}`)
+		default:
+			t.Errorf("path = %q, want a chat or embeddings route", r.URL.Path)
+		}
+	})
+	with := `{"preset":"lmstudio","base_url":"` + ts.URL + `"}`
 
-	if _, err := Plugin().NewProvider(cfg); err != nil {
+	chat := testConfig(lore.CapabilityComplete, "qwen3-8b", with)
+	chat.Secrets = nil
+	completer, err := Plugin().NewProvider(chat)
+	if err != nil {
 		t.Fatalf("NewProvider without an api key: %v", err)
+	}
+	if _, err := completer.(lore.Completer).Complete(context.Background(), testSystem, testUser); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	embed := testConfig(lore.CapabilityEmbed, "bge-m3", with)
+	embed.Secrets = nil
+	embed.Dimensions = 2
+	embedder, err := Plugin().NewProvider(embed)
+	if err != nil {
+		t.Fatalf("NewProvider without an api key: %v", err)
+	}
+	if _, err := embedder.(lore.Embedder).Embed(context.Background(), []string{"local text"}); err != nil {
+		t.Fatalf("Embed: %v", err)
 	}
 }
 

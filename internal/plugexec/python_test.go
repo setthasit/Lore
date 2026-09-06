@@ -70,6 +70,7 @@ func pythonSource(t *testing.T, binary, config string) lore.Connector {
 	conn, err := source.NewSource(lore.SourceConfig{
 		Instance: "pysource",
 		Config:   []byte(config),
+		Host:     testHost(nil),
 	})
 	if err != nil {
 		t.Fatalf("NewSource: %v", err)

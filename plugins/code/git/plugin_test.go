@@ -7,7 +7,7 @@ import (
 )
 
 func TestPluginNewCode(t *testing.T) {
-	repo, err := Plugin().NewCode(lore.CodeConfig{Root: t.TempDir(), Remote: "github:acme/app"})
+	repo, err := Plugin().NewCode(lore.CodeConfig{Root: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewCode: %v", err)
 	}

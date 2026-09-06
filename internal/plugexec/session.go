@@ -66,17 +66,12 @@ type session struct {
 }
 
 func spawn(binary, instance string, host lore.Host, tune tuning) (*session, error) {
-	log := host.Log
-	if log == nil {
-		log = slog.New(slog.DiscardHandler)
-	}
-
 	cmd := exec.Command(binary)
 	// The child gets no inherited environment: secrets travel in the request
 	// payload, so a plugin sees only what its manifest declared and cannot read
 	// another plugin's token out of the process it happens to be started from.
 	cmd.Env = minimalEnv()
-	stderr := &stderrLog{log: log, instance: instance}
+	stderr := &stderrLog{log: host.Log, instance: instance}
 	cmd.Stderr = stderr
 	// A grandchild that inherited stderr holds the pipe open after the plugin exits.
 	cmd.WaitDelay = tune.grace
@@ -96,7 +91,7 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 	return &session{
 		instance: instance,
 		tuning:   tune,
-		log:      log,
+		log:      host.Log,
 		cmd:      cmd,
 		stdin:    stdin,
 		stdout:   bufio.NewReaderSize(stdout, 64<<10),

@@ -8,21 +8,17 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// embeddingsUnsupported marks a vendor that publishes no OpenAI-compatible
-// embeddings endpoint. It is a marker rather than a plausible-looking path
-// because a guessed path is only discovered when the first index write answers
-// 404, and by then the operator has already committed a vector space.
-const embeddingsUnsupported = ""
-
 // preset is one vendor's published OpenAI-compatible surface. The base URL and
 // the two paths are kept apart because vendors disagree about both halves —
 // Z.AI serves /paas/v4, Groq puts /openai in front of /v1, DeepSeek omits /v1
 // entirely — so an operator moving one vendor behind a gateway overrides the
 // host without retyping that vendor's path layout.
 type preset struct {
-	label          string
-	baseURL        string
-	chatPath       string
+	label    string
+	baseURL  string
+	chatPath string
+	// Unset when the vendor publishes none: a guessed path only 404s on the
+	// first index write, after the operator has committed a vector space.
 	embeddingsPath string
 
 	// defaultModels suggests a model per capability this row serves. A
@@ -40,10 +36,9 @@ var presets = map[string]preset{
 		label: "Z.AI (GLM)",
 		// The China deployment serves the same paths under
 		// https://open.bigmodel.cn/api, which is a base_url override.
-		baseURL:        "https://api.z.ai/api",
-		chatPath:       "/paas/v4/chat/completions",
-		embeddingsPath: embeddingsUnsupported,
-		defaultModels:  map[lore.Capability]string{lore.CapabilityComplete: "glm-4.6"},
+		baseURL:       "https://api.z.ai/api",
+		chatPath:      "/paas/v4/chat/completions",
+		defaultModels: map[lore.Capability]string{lore.CapabilityComplete: "glm-4.6"},
 	},
 	"openrouter": {
 		label:          "OpenRouter",
@@ -56,25 +51,22 @@ var presets = map[string]preset{
 		},
 	},
 	"moonshot": {
-		label:          "Moonshot (Kimi)",
-		baseURL:        "https://api.moonshot.ai",
-		chatPath:       "/v1/chat/completions",
-		embeddingsPath: embeddingsUnsupported,
-		defaultModels:  map[lore.Capability]string{lore.CapabilityComplete: "kimi-k3"},
+		label:         "Moonshot (Kimi)",
+		baseURL:       "https://api.moonshot.ai",
+		chatPath:      "/v1/chat/completions",
+		defaultModels: map[lore.Capability]string{lore.CapabilityComplete: "kimi-k3"},
 	},
 	"deepseek": {
-		label:          "DeepSeek",
-		baseURL:        "https://api.deepseek.com",
-		chatPath:       "/chat/completions",
-		embeddingsPath: embeddingsUnsupported,
-		defaultModels:  map[lore.Capability]string{lore.CapabilityComplete: "deepseek-v4-pro"},
+		label:         "DeepSeek",
+		baseURL:       "https://api.deepseek.com",
+		chatPath:      "/chat/completions",
+		defaultModels: map[lore.Capability]string{lore.CapabilityComplete: "deepseek-v4-pro"},
 	},
 	"groq": {
-		label:          "Groq",
-		baseURL:        "https://api.groq.com/openai",
-		chatPath:       "/v1/chat/completions",
-		embeddingsPath: embeddingsUnsupported,
-		defaultModels:  map[lore.Capability]string{lore.CapabilityComplete: "openai/gpt-oss-120b"},
+		label:         "Groq",
+		baseURL:       "https://api.groq.com/openai",
+		chatPath:      "/v1/chat/completions",
+		defaultModels: map[lore.Capability]string{lore.CapabilityComplete: "openai/gpt-oss-120b"},
 	},
 	"together": {
 		label:          "Together AI",
@@ -129,7 +121,7 @@ func (p preset) summary() string {
 		parts = append(parts, "complete "+model)
 	}
 	switch {
-	case p.embeddingsPath == embeddingsUnsupported:
+	case p.embeddingsPath == "":
 		parts = append(parts, "no embeddings endpoint")
 	case p.defaultModels[lore.CapabilityEmbed] != "":
 		parts = append(parts, "embed "+p.defaultModels[lore.CapabilityEmbed])

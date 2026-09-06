@@ -78,12 +78,9 @@ func TestPresetsResolveDocumentedEndpoints(t *testing.T) {
 			if d.embeddingsEndpoint != tc.embeddings {
 				t.Errorf("embeddings endpoint = %q, want %q", d.embeddingsEndpoint, tc.embeddings)
 			}
-			if got := d.defaultModels[lore.CapabilityComplete]; got != tc.completeModel {
-				t.Errorf("default complete model = %q, want %q", got, tc.completeModel)
-			}
-			if got := d.defaultModels[lore.CapabilityEmbed]; got != tc.embedModel {
-				t.Errorf("default embed model = %q, want %q", got, tc.embedModel)
-			}
+			summary := presets[tc.preset].summary()
+			assertSummarySuggests(t, summary, "complete ", tc.completeModel)
+			assertSummarySuggests(t, summary, "embed ", tc.embedModel)
 
 			// The row's verdict on embeddings is what the operator meets: a
 			// path resolves, or construction refuses and names the preset.
@@ -136,5 +133,26 @@ func TestPresetDocOffersEveryPresetSorted(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("field documentation omits %q", want)
 		}
+	}
+}
+
+func TestEmbeddingsPathReachesAPresetWithoutEmbeddings(t *testing.T) {
+	provider, err := Plugin().NewProvider(testConfig(lore.CapabilityEmbed, "embedding-3",
+		`{"preset":"zai","embeddings_path":"/paas/v4/embeddings"}`))
+	if err != nil {
+		t.Fatalf("embeddings_path override did not reach embeddings: %v", err)
+	}
+	if _, ok := provider.(lore.Embedder); !ok {
+		t.Fatalf("provider %T does not implement lore.Embedder", provider)
+	}
+}
+
+func assertSummarySuggests(t *testing.T, summary, capability, model string) {
+	t.Helper()
+	switch {
+	case model != "" && !strings.Contains(summary, capability+model):
+		t.Errorf("summary %q omits %s%s", summary, capability, model)
+	case model == "" && strings.Contains(summary, capability):
+		t.Errorf("row carries no %s model, but summary %q suggests one", strings.TrimSpace(capability), summary)
 	}
 }

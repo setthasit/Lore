@@ -219,9 +219,8 @@ func (r *Registry) BuildCode(clones []Clone) ([]Code, error) {
 		}
 
 		repo, err := plugin.(lore.CodePlugin).NewCode(lore.CodeConfig{
-			Root:   clone.Path,
-			Remote: clone.Remote,
-			Host:   r.instanceHost(clone.Use),
+			Root: clone.Path,
+			Host: r.instanceHost(clone.Use),
 		})
 		if err != nil {
 			return nil, unbuildable(clone.Field, clone.Use, err)
@@ -334,13 +333,12 @@ func unbuildable(field, use string, err error) error {
 // plugin: neither mode gets a privilege the other lacks.
 func (r *Registry) Host(instance string) lore.Host { return r.instanceHost(instance) }
 
-// A plugin's logger is tagged with the instance so interleaved rounds stay
-// readable, and its clock is injected so time-dependent behavior stays testable.
 func (r *Registry) instanceHost(instance string) lore.Host {
 	host := r.host
-	if host.Log != nil {
-		host.Log = host.Log.With(slog.String("instance", instance))
+	if host.Log == nil {
+		host.Log = slog.New(slog.DiscardHandler)
 	}
+	host.Log = host.Log.With(slog.String("instance", instance))
 	return host
 }
 

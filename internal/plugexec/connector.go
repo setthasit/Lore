@@ -109,10 +109,8 @@ func (c *connector) MatchesRemote(remote string) bool {
 		}
 	})
 	if err != nil {
-		if c.host.Log != nil {
-			c.host.Log.Debug("plugin could not answer whether it ingests a clone's remote",
-				"remote", remote, "error", err)
-		}
+		c.host.Log.Debug("plugin could not answer whether it ingests a clone's remote",
+			"remote", remote, "error", err)
 		return false
 	}
 	return frame.Matches

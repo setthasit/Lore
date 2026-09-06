@@ -17,7 +17,7 @@ func codeOf(t *testing.T, text, root string) lore.CodeRepo {
 	if !ok {
 		t.Fatalf("a code manifest produced %T, want a lore.CodePlugin", plugin)
 	}
-	repo, err := code.NewCode(lore.CodeConfig{Root: root, Remote: "github:acme/app"})
+	repo, err := code.NewCode(lore.CodeConfig{Root: root, Host: testHost(nil)})
 	if err != nil {
 		t.Fatalf("NewCode: %v", err)
 	}

@@ -5,22 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"time"
 )
 
-// Host is what the engine lends a plugin: a retrying HTTP client, a logger, and
-// a clock. Everything else a plugin needs arrives as configuration, because a
-// plugin that could reach further could reach the store.
 type Host struct {
-	// HTTP retries what a server reports as temporary and honours Retry-After.
-	HTTP *http.Client
-
-	// Log is already tagged with the instance id.
+	// Log is never nil.
 	Log *slog.Logger
-
-	// Now is injectable so a plugin's time-dependent behavior stays testable.
-	Now func() time.Time
 }
 
 // SourceConfig is everything a source instance is built from. Instance is the
@@ -69,13 +58,10 @@ func (c ProviderConfig) Decode(v any) error { return decodeStrict(c.Instance, c.
 
 func (c ProviderConfig) Secret(key string) string { return c.Secrets[key] }
 
-// CodeConfig binds a code plugin to one clone. Root is workspace-absolute — the
-// host resolves it before construction — and there are no secrets, because a
-// local clone needs no credentials.
+// CodeConfig binds a code plugin to one clone. Root is workspace-absolute.
 type CodeConfig struct {
-	Root   string
-	Remote string // "github:acme/app"; empty when the clone maps onto no source
-	Host   Host
+	Root string
+	Host Host
 }
 
 func decodeStrict(instance string, raw json.RawMessage, v any) error {

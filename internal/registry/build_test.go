@@ -317,3 +317,24 @@ func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 		t.Errorf("roots = %v, want each clone's own path", roots)
 	}
 }
+
+func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
+	logged := false
+	r := newRegistry(t, codePlugin{
+		manifest: lore.Manifest{
+			Name: "git", Kind: lore.KindCode, APIVersion: lore.APIVersion, Summary: "one local clone",
+		},
+		build: func(c lore.CodeConfig) (lore.CodeRepo, error) {
+			c.Host.Log.Info("opening a clone")
+			logged = true
+			return stubRepo{}, nil
+		},
+	})
+
+	if _, err := r.BuildCode([]Clone{{Path: "/w/app", Use: "git", Field: "repos[0]"}}); err != nil {
+		t.Fatalf("BuildCode: %v", err)
+	}
+	if !logged {
+		t.Fatal("the plugin never logged, so nothing proved its logger usable")
+	}
+}

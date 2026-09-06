@@ -40,6 +40,7 @@ func completerOf(t *testing.T, text string) lore.Completer {
 		Instance:   "scripted-llm",
 		Capability: lore.CapabilityComplete,
 		Model:      "m",
+		Host:       testHost(nil),
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
@@ -244,6 +245,7 @@ func TestACapabilityTheManifestWithheldIsRefused(t *testing.T) {
 		Instance:   "vec",
 		Capability: lore.CapabilityComplete,
 		Model:      "m",
+		Host:       testHost(nil),
 	})
 	if err == nil {
 		t.Fatal("built a completer from a plugin that declares only embed")

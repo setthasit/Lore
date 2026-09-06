@@ -5,20 +5,13 @@
 package app
 
 import (
-	"net/http"
 	"os"
-	"time"
 
 	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/transport/cli"
 	"github.com/setthasit/Lore/sdk"
 )
-
-// hostHTTPTimeout bounds one request a plugin makes through the shared client.
-// It is generous because a plugin's own client may be stricter, and a source
-// paginating a large project is legitimately slow.
-const hostHTTPTimeout = 2 * time.Minute
 
 // Option configures the binary being assembled.
 type Option func(*options)
@@ -50,14 +43,6 @@ func Run(opts ...Option) int {
 	return cli.Main(reg)
 }
 
-// Host is what every plugin this binary runs is lent. The client carries no
-// retry policy of its own: retrying and honouring Retry-After is sdk/httpx's
-// job, and layering a second retry underneath it would multiply the attempt
-// budget instead of bounding it.
 func Host() lore.Host {
-	return lore.Host{
-		HTTP: &http.Client{Timeout: hostHTTPTimeout},
-		Log:  di.DiagnosticLogger(),
-		Now:  time.Now,
-	}
+	return lore.Host{Log: di.DiagnosticLogger()}
 }

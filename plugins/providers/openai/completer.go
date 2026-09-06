@@ -45,27 +45,23 @@ func WithHTTPClient(client *http.Client) Option {
 
 // New builds a client for model at baseURL; empty baseURL means DefaultBaseURL.
 func New(apiKey, model, baseURL string, opts ...Option) (*Client, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("%s: api key is empty", providerName)
+	}
 	return NewCompatible(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
 }
 
 // NewCompatible builds a client for another provider serving this same protocol
 // at endpoint, naming it provider in errors.
 func NewCompatible(provider, apiKey, model, endpoint string, opts ...Option) (*Client, error) {
-	if apiKey == "" {
-		return nil, fmt.Errorf("%s: api key is empty", provider)
-	}
 	if model == "" {
 		return nil, fmt.Errorf("%s: model is empty", provider)
 	}
 
-	header := http.Header{}
-	header.Set("content-type", "application/json")
-	header.Set("authorization", "Bearer "+apiKey)
-
 	c := &Client{
 		model:    model,
 		endpoint: endpoint,
-		header:   header,
+		header:   requestHeader(apiKey),
 		call: httpx.Client{
 			HTTP:   &http.Client{Timeout: lore.CompleteTimeout},
 			Op:     provider + ": chat completions",
@@ -76,6 +72,14 @@ func NewCompatible(provider, apiKey, model, endpoint string, opts ...Option) (*C
 		opt(c)
 	}
 	return c, nil
+}
+
+func requestHeader(apiKey string) http.Header {
+	header := http.Header{"Content-Type": {"application/json"}}
+	if apiKey != "" {
+		header.Set("Authorization", "Bearer "+apiKey)
+	}
+	return header
 }
 
 func (c *Client) Complete(ctx context.Context, system, user string) (string, error) {

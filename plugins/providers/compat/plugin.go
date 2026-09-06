@@ -38,16 +38,14 @@ func (plugin) Manifest() lore.Manifest {
 				Prompt: "OpenAI-compatible base URL",
 			},
 			{
-				Name:    "chat_path",
-				Type:    lore.FieldString,
-				Default: defaultChatPath,
-				Doc:     "overrides the preset's chat completions path, for a vendor that serves the protocol somewhere else",
+				Name: "chat_path",
+				Type: lore.FieldString,
+				Doc:  "overrides the preset's chat completions path, for a vendor that serves the protocol somewhere else",
 			},
 			{
-				Name:    "embeddings_path",
-				Type:    lore.FieldString,
-				Default: defaultEmbeddingsPath,
-				Doc:     "overrides the preset's embeddings path, and reaches embeddings on a preset whose row declares none",
+				Name: "embeddings_path",
+				Type: lore.FieldString,
+				Doc:  "overrides the preset's embeddings path, and reaches embeddings on a preset whose row declares none",
 			},
 		},
 		Secrets: []lore.Secret{

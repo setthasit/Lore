@@ -48,17 +48,15 @@ func WithEmbedderHTTPClient(client *http.Client) EmbedderOption {
 
 // NewEmbedder builds an Embedder for model at baseURL; empty baseURL means DefaultBaseURL.
 func NewEmbedder(apiKey, model, baseURL string, dims int, opts ...EmbedderOption) (*Embedder, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("%s: api key is empty", providerName)
+	}
 	return NewEmbedderAt(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, embeddingsPath), dims, opts...)
 }
 
 // NewEmbedderAt builds an Embedder for another provider serving this same
-// protocol at endpoint, naming it provider in errors. It is the embeddings
-// counterpart of NewCompatible: a gateway may put the embeddings route
-// anywhere, so the whole endpoint is the caller's to decide.
+// protocol at endpoint, naming it provider in errors.
 func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int, opts ...EmbedderOption) (*Embedder, error) {
-	if apiKey == "" {
-		return nil, fmt.Errorf("%s: api key is empty", provider)
-	}
 	if model == "" {
 		return nil, fmt.Errorf("%s: model is empty", provider)
 	}
@@ -72,11 +70,8 @@ func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int, opts ...E
 		model:    model,
 		dims:     dims,
 		endpoint: endpoint,
-		header: http.Header{
-			"Content-Type":  {"application/json"},
-			"Authorization": {"Bearer " + apiKey},
-		},
-		client: &http.Client{Timeout: embedTimeout},
+		header:   requestHeader(apiKey),
+		client:   &http.Client{Timeout: embedTimeout},
 	}
 	for _, opt := range opts {
 		opt(e)
