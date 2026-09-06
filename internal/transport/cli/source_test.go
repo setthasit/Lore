@@ -109,52 +109,6 @@ embedder:
 	assertPromptsAskForNamesOnly(t, res.stdout)
 }
 
-// A sequence indented differently is still one sequence, and an item spliced at
-// the wrong indentation would read as a nested one.
-func TestSourceAddAppendsIntoAMultiItemSequenceAtItsOwnIndent(t *testing.T) {
-	const multi = `workspace: myproject
-sources:
-    - use: forge
-      with:
-        token_env: LORE_FORGE_TOKEN
-        repos: [acme/app]
-    - id: forge-infra
-      use: forge
-      with:
-        token_env: LORE_FORGE_TOKEN
-        repos: [acme/infra]
-repos: []
-`
-	path := writeConfigFile(t, multi)
-
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	after := readConfigFile(t, path)
-	assertOriginalLinesKept(t, multi, after)
-	const item = `    - use: tracker
-      with:
-        token_env: LORE_TRACKER_TOKEN
-        base_url: https://tracker.example
-        projects:
-          - PROJ
-          - INFRA
-`
-	if !strings.Contains(after, item) {
-		t.Errorf("file =\n%s\nwant it to hold, at the sequence's own indent\n%s", after, item)
-	}
-	if !strings.Contains(after, item+"repos: []\n") {
-		t.Errorf("file =\n%s\nwant the item appended as the block's last one", after)
-	}
-
-	cfg := decodeConfigFile(t, after)
-	if len(cfg.Sources) != 3 || cfg.Sources[2].Ident() != "tracker" {
-		t.Errorf("sources = %+v, want three instances with the new one last", cfg.Sources)
-	}
-}
-
 func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
@@ -237,66 +191,6 @@ func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 	}
 	if after := readConfigFile(t, path); after != seeded {
 		t.Errorf("file = %q, want it untouched after the refusal", after)
-	}
-}
-
-func TestSourceAddCreatesTheSourcesSection(t *testing.T) {
-	const askOnly = `workspace: askonly
-
-# sources:
-#   - use: forge
-repos: []
-`
-	path := writeConfigFile(t, askOnly)
-
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	after := readConfigFile(t, path)
-	assertOriginalLinesKept(t, askOnly, after)
-	if !strings.HasPrefix(after, askOnly) {
-		t.Errorf("file =\n%s\nwant the new section appended after everything that was there", after)
-	}
-	if !strings.HasSuffix(after, "sources:\n  - use: tracker\n    with:\n"+
-		"      token_env: LORE_TRACKER_TOKEN\n"+
-		"      base_url: https://tracker.example\n"+
-		"      projects:\n        - PROJ\n        - INFRA\n") {
-		t.Errorf("file =\n%s\nwant a sources: block created at the end", after)
-	}
-	if len(decodeConfigFile(t, after).Sources) != 1 {
-		t.Errorf("file =\n%s\nwant exactly the new instance", after)
-	}
-}
-
-// `sources: []` says "no instances" in a shape nothing can be appended to, so
-// the key is reopened rather than the command refusing a valid configuration.
-func TestSourceAddReopensAnEmptyFlowSequence(t *testing.T) {
-	const empty = `workspace: askonly
-sources: []                                # nothing yet
-repos: []
-`
-	path := writeConfigFile(t, empty)
-
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	const want = `workspace: askonly
-sources: # nothing yet
-  - use: tracker
-    with:
-      token_env: LORE_TRACKER_TOKEN
-      base_url: https://tracker.example
-      projects:
-        - PROJ
-        - INFRA
-repos: []
-`
-	if after := readConfigFile(t, path); after != want {
-		t.Errorf("file =\n%s\nwant\n%s", after, want)
 	}
 }
 

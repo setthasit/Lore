@@ -3,12 +3,10 @@ package cli
 import (
 	"io"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -17,8 +15,6 @@ import (
 	"github.com/setthasit/Lore/internal/urlx"
 )
 
-// pluginsKey is the top-level key an external plugin is declared under, and the
-// only thing this file knows about the shape of a configuration.
 const pluginsKey = "plugins"
 
 // trustNotice is printed before anything is downloaded. An external plugin runs
@@ -325,7 +321,10 @@ func runPluginRemove(cmd *cobra.Command, name, configPath string) error {
 	if _, err := workspace.mustDeclare(name); err != nil {
 		return err
 	}
-	if used := instancesUsing(workspace.config, name); len(used) > 0 {
+	if _, err := config.FindBlock(workspace.content, pluginsKey); err != nil {
+		return err
+	}
+	if used := workspace.config.InstancesUsing(name); len(used) > 0 {
 		return internalerror.NewPreconditionError(pluginLabel(name)+" is still used by "+strings.Join(used, ", ")+
 			" — remove those first, or the next `lore sync` has nothing to build them from", nil)
 	}
@@ -496,28 +495,6 @@ func nameForCoordinate(target string) (string, error) {
 	return strings.TrimPrefix(segments[1], "lore-"), nil
 }
 
-// instancesUsing reports the configured instances that would be left without a
-// plugin, so a removal never knowingly writes a configuration that fails to load.
-func instancesUsing(cfg *config.Config, name string) []string {
-	used := []string(nil)
-	for section, instances := range map[string][]config.Instance{
-		"sources": cfg.Sources, "providers": cfg.Providers,
-	} {
-		for _, instance := range instances {
-			if instance.Use == name {
-				used = append(used, section+"["+instance.Ident()+"]")
-			}
-		}
-	}
-	for _, repo := range cfg.Repos {
-		if repo.Use == name {
-			used = append(used, "repos["+repo.Path+"]")
-		}
-	}
-	slices.Sort(used)
-	return used
-}
-
 func pluginLabel(name string) string {
 	return pluginsKey + "[" + name + "]"
 }
@@ -550,190 +527,39 @@ func (e configEdit) apply(content string) (string, error) {
 	}
 }
 
-// pluginDecl is where one declaration sits in the text of a configuration.
-type pluginDecl struct {
-	name     string
-	start    int // 1-based first line of the sequence item
-	end      int // 1-based last line of the sequence item
-	fromLine int // 1-based line carrying from:, zero when the key is absent
-}
-
-// pluginBlock is the plugins: key as it appears in the file. The nodes are read
-// for their line numbers only: everything else is a splice into text the
-// commands are not allowed to reflow.
-type pluginBlock struct {
-	found   bool
-	keyLine int
-	inline  bool // the key carries a value on its own line, as in `plugins: []`
-	items   []pluginDecl
-}
-
-func readPluginBlock(content string) (pluginBlock, error) {
-	var root yaml.Node
-	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
-		return pluginBlock{}, internalerror.NewBadRequestError("cannot parse the configuration", err)
-	}
-	if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
-		return pluginBlock{}, nil
-	}
-
-	document := root.Content[0]
-	for at := 0; at+1 < len(document.Content); at += 2 {
-		if document.Content[at].Value != pluginsKey {
-			continue
-		}
-
-		key, value := document.Content[at], document.Content[at+1]
-		block := pluginBlock{found: true, keyLine: key.Line, inline: value.Line == key.Line}
-		for _, item := range value.Content {
-			block.items = append(block.items, readPluginDecl(item))
-		}
-		return block, nil
-	}
-	return pluginBlock{}, nil
-}
-
-func readPluginDecl(item *yaml.Node) pluginDecl {
-	decl := pluginDecl{start: item.Line, end: maxLine(item)}
-	for at := 0; at+1 < len(item.Content); at += 2 {
-		switch item.Content[at].Value {
-		case "name":
-			decl.name = item.Content[at+1].Value
-		case "from":
-			decl.fromLine = item.Content[at+1].Line
-		}
-	}
-	return decl
-}
-
-// maxLine is the last line a node occupies, which for a declaration of scalars
-// is the line of its last value.
-func maxLine(node *yaml.Node) int {
-	last := node.Line
-	for _, child := range node.Content {
-		if line := maxLine(child); line > last {
-			last = line
-		}
-	}
-	return last
-}
-
-func (b pluginBlock) find(name string) (pluginDecl, bool) {
-	for _, item := range b.items {
-		if item.name == name {
-			return item, true
-		}
-	}
-	return pluginDecl{}, false
-}
-
-// setPluginFrom rewrites one declaration's from: value in place, preserving its
-// indentation and any comment after it.
 func setPluginFrom(content, name, from string) (string, error) {
-	block, err := readPluginBlock(content)
+	block, err := config.FindBlock(content, pluginsKey)
 	if err != nil {
 		return "", err
 	}
-	decl, found := block.find(name)
-	if !found || decl.fromLine == 0 {
+
+	updated, rewritten := "", false
+	if decl, declared := block.Find(name); declared {
+		updated, rewritten = block.SetField(decl, "from", from)
+	}
+	if !rewritten {
 		return "", internalerror.NewPreconditionError("cannot pin "+pluginLabel(name)+
 			": its from: is not a line this command can rewrite — edit the declaration by hand", nil)
 	}
-
-	lines := strings.SplitAfter(content, "\n")
-	line := strings.TrimRight(lines[decl.fromLine-1], "\r\n")
-	at := strings.Index(line, "from:")
-	if at < 0 {
-		return "", internalerror.NewPreconditionError("cannot pin "+pluginLabel(name)+
-			": its from: is not a line this command can rewrite — edit the declaration by hand", nil)
-	}
-
-	_, comment := splitInlineComment(line[at+len("from:"):])
-	replaced := line[:at] + "from: " + from
-	if comment != "" {
-		replaced += " " + comment
-	}
-	lines[decl.fromLine-1] = replaced + "\n"
-	return strings.Join(lines, ""), nil
+	return updated, nil
 }
 
-// removePluginDecl deletes the declaration's own lines and nothing else: a
-// comment below it introduces whatever follows, so it stays.
 func removePluginDecl(content, name string) (string, error) {
-	block, err := readPluginBlock(content)
+	block, err := config.FindBlock(content, pluginsKey)
 	if err != nil {
 		return "", err
 	}
-	decl, found := block.find(name)
-	if !found {
+	decl, declared := block.Find(name)
+	if !declared {
 		return "", internalerror.NewNotFoundError("the configuration declares no "+pluginLabel(name), nil)
 	}
-
-	// The key goes with its last item: `plugins:` on its own is a null value
-	// the decoder reads as no plugins, but it is a leftover nobody wrote.
-	dropKey := len(block.items) == 1
-
-	var kept strings.Builder
-	for at, line := range strings.SplitAfter(content, "\n") {
-		number := at + 1
-		if number >= decl.start && number <= decl.end {
-			continue
-		}
-		if dropKey && number == block.keyLine {
-			continue
-		}
-		kept.WriteString(line)
-	}
-	return kept.String(), nil
+	return block.Remove(decl), nil
 }
 
-// appendPluginDecl adds a declaration under plugins:, creating the block when
-// the file has none.
 func appendPluginDecl(content, name, from string) (string, error) {
-	block, err := readPluginBlock(content)
+	block, err := config.FindBlock(content, pluginsKey)
 	if err != nil {
 		return "", err
 	}
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-
-	if !block.found {
-		return content + pluginsKey + ":\n" + declItemText(sequenceIndent, name, from), nil
-	}
-	if block.inline {
-		return "", internalerror.NewPreconditionError(pluginsKey+": in the configuration carries an inline"+
-			" value, so a declaration cannot be appended to it — rewrite it as a block sequence of items,"+
-			" or add the declaration by hand", nil)
-	}
-
-	lines := strings.SplitAfter(content, "\n")
-	after, indent := block.keyLine, sequenceIndent
-	if len(block.items) > 0 {
-		last := block.items[len(block.items)-1]
-		after, indent = last.end, declIndent(lines[last.start-1])
-	}
-
-	var updated strings.Builder
-	for at, line := range lines {
-		updated.WriteString(line)
-		if at+1 == after {
-			updated.WriteString(declItemText(indent, name, from))
-		}
-	}
-	return updated.String(), nil
-}
-
-// declItemText renders a declaration as one sequence item at the block's own
-// indentation, name first: a declaration is read by the name every `use:`
-// refers to, so that is the line the reader's eye lands on.
-func declItemText(indent, name, from string) string {
-	return indent + "- name: " + name + "\n" + indent + "  from: " + from + "\n"
-}
-
-// declIndent is the indentation an existing item sits at, which a new one has
-// to match: YAML reads an item indented differently from its siblings as a
-// nested sequence.
-func declIndent(line string) string {
-	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	return block.AppendItem([]config.Field{{Key: "name", Value: name}, {Key: "from", Value: from}})
 }

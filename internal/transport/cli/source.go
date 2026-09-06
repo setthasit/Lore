@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -20,13 +19,7 @@ import (
 
 var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// sourcesKey is the top-level key a new instance is appended under, and the only
-// thing this file knows about the shape of a configuration.
-const sourcesKey = "sources:"
-
-// sequenceIndent is where an item goes in a block this command creates itself.
-// An existing block's own indentation is read from it instead.
-const sequenceIndent = "  "
+const sourcesKey = "sources"
 
 func newSourceCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	source := &cobra.Command{
@@ -84,7 +77,11 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
-	updated, err := insertSource(original, draft)
+	block, err := config.FindBlock(original, sourcesKey)
+	if err != nil {
+		return err
+	}
+	updated, err := block.AppendItem(draft.fields())
 	if err != nil {
 		return err
 	}
@@ -129,7 +126,7 @@ func sourceToAdd(args []string, reg *registry.Registry) (lore.Manifest, error) {
 type sourceDraft struct {
 	id        string
 	use       string
-	entries   []withEntry
+	entries   []config.Field
 	variables []string
 }
 
@@ -138,14 +135,6 @@ func (d sourceDraft) ident() string {
 		return d.id
 	}
 	return d.use
-}
-
-// withEntry is one rendered key of a `with:` block. The block is built as an
-// ordered list rather than a map because a map would sort the keys and lose the
-// order the manifest declared them in.
-type withEntry struct {
-	key   string
-	value any // string, int, bool or []string
 }
 
 // promptSource asks for everything the manifest declares and nothing else: a
@@ -165,7 +154,7 @@ func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceD
 		if err != nil {
 			return draft, err
 		}
-		draft.entries = append(draft.entries, withEntry{key: secret.ConfigField, value: name})
+		draft.entries = append(draft.entries, config.Field{Key: secret.ConfigField, Value: name})
 		draft.variables = append(draft.variables, name)
 	}
 	for _, declared := range m.Fields {
@@ -174,7 +163,7 @@ func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceD
 			return draft, err
 		}
 		if set {
-			draft.entries = append(draft.entries, withEntry{key: declared.Name, value: value})
+			draft.entries = append(draft.entries, config.Field{Key: declared.Name, Value: value})
 		}
 	}
 	return draft, nil
@@ -365,168 +354,14 @@ func (p *prompter) requiredList(field, question string) ([]string, error) {
 	return items, nil
 }
 
-// encodeBlock renders the draft as one sequence item at the block's own
-// indentation, id first: an instance is read by its identity, so the identity
-// belongs on the line the reader's eye lands on.
-func encodeBlock(indent string, draft sourceDraft) (string, error) {
-	var block strings.Builder
-	if draft.id != "" {
-		block.WriteString(indent + "- id: " + draft.id + "\n")
-		block.WriteString(indent + "  use: " + draft.use + "\n")
-	} else {
-		block.WriteString(indent + "- use: " + draft.use + "\n")
+func (d sourceDraft) fields() []config.Field {
+	fields := make([]config.Field, 0, 3)
+	if d.id != "" {
+		fields = append(fields, config.Field{Key: "id", Value: d.id})
 	}
-	if len(draft.entries) == 0 {
-		return block.String(), nil
+	fields = append(fields, config.Field{Key: "use", Value: d.use})
+	if len(d.entries) == 0 {
+		return fields
 	}
-
-	// The keys sit two levels in from the item's dash, which is where `with:`
-	// itself sits once the dash is counted as indentation.
-	body := indent + "    "
-	block.WriteString(indent + "  with:\n")
-	for _, entry := range draft.entries {
-		items, isList := entry.value.([]string)
-		if !isList {
-			value, err := encodeScalar(entry.key, entry.value)
-			if err != nil {
-				return "", err
-			}
-			block.WriteString(body + entry.key + ": " + value + "\n")
-			continue
-		}
-		block.WriteString(body + entry.key + ":\n")
-		for _, item := range items {
-			value, err := encodeScalar(entry.key, item)
-			if err != nil {
-				return "", err
-			}
-			block.WriteString(body + "  - " + value + "\n")
-		}
-	}
-	return block.String(), nil
-}
-
-// encodeScalar quotes an answer the way YAML needs it, because an answer that
-// happens to hold a colon or a hash would otherwise change the document's shape.
-func encodeScalar(key string, value any) (string, error) {
-	encoded, err := yaml.Marshal(value)
-	if err != nil {
-		return "", internalerror.NewInternalError("cannot encode the answer for "+key, err)
-	}
-	scalar := strings.TrimSuffix(string(encoded), "\n")
-	if strings.Contains(scalar, "\n") {
-		// A long answer is folded across lines by the encoder, which would break
-		// the splice; a double-quoted scalar says the same thing on one line.
-		if text, isText := value.(string); isText {
-			return strconv.Quote(text), nil
-		}
-		return "", internalerror.NewInternalError("cannot encode the answer for "+key+" on one line", nil)
-	}
-	return scalar, nil
-}
-
-// insertSource appends the instance to the sources: block as text. lore.yaml is
-// hand-written: a YAML round trip would reflow it and drop its comments.
-func insertSource(content string, draft sourceDraft) (string, error) {
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-
-	block := findSourcesBlock(content)
-	if block.found && !block.spliceable && !block.flowEmpty {
-		return "", internalerror.NewPreconditionError(sourcesKey+" in the configuration carries an inline"+
-			" value, so an instance cannot be appended to it — rewrite it as a block sequence of items,"+
-			" or add the instance by hand", nil)
-	}
-
-	item, err := encodeBlock(block.indent, draft)
-	if err != nil {
-		return "", err
-	}
-	switch {
-	case !block.found:
-		return content + sourcesKey + "\n" + item, nil
-	case block.flowEmpty:
-		// `sources: []` says "no instances" in a shape nothing can be appended
-		// to, so the key is reopened as a block before the item goes under it.
-		reopened := content[:block.keyEnd]
-		if block.comment != "" {
-			reopened += " " + block.comment
-		}
-		return reopened + "\n" + item + content[block.lineEnd:], nil
-	default:
-		return content[:block.end] + item + content[block.end:], nil
-	}
-}
-
-// sourcesBlock is where a new item goes and how it must be written to fit.
-type sourcesBlock struct {
-	found      bool
-	spliceable bool   // the key carries no inline value, so items can be appended
-	flowEmpty  bool   // `sources: []`: the key must be reopened before an item fits
-	comment    string // a trailing comment on the key's line, preserved when it is reopened
-	keyEnd     int    // just past the key itself
-	lineEnd    int    // just past the key's line
-	end        int    // where the new item is spliced in
-	indent     string // the indentation the block's items sit at
-}
-
-// findSourcesBlock walks the file rather than parsing it, because the offsets it
-// reports are into text nobody is allowed to rewrite. A trailing comment is
-// harmless above a block child; any other inline value is not.
-//
-// The block ends at its last content line, so trailing blank lines and comments
-// stay below the new item: a comment there introduces what follows it.
-func findSourcesBlock(content string) sourcesBlock {
-	block := sourcesBlock{indent: sequenceIndent}
-
-	offset, itemFound := 0, false
-	for _, line := range strings.SplitAfter(content, "\n") {
-		start := offset
-		offset += len(line)
-		body := strings.TrimRight(line, " \t\r\n")
-
-		if !block.found {
-			rest, isKey := strings.CutPrefix(body, sourcesKey)
-			if !isKey {
-				continue
-			}
-			value, comment := splitInlineComment(rest)
-			block.found, block.comment = true, comment
-			block.spliceable, block.flowEmpty = value == "", value == "[]"
-			block.keyEnd, block.lineEnd, block.end = start+len(sourcesKey), offset, offset
-			continue
-		}
-
-		trimmed := strings.TrimSpace(body)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if !strings.HasPrefix(body, " ") && !strings.HasPrefix(body, "\t") {
-			break // a sibling key at the top level: the block ended above it.
-		}
-		block.end = offset
-		if indent, isItem := itemIndent(body); isItem && !itemFound {
-			block.indent, itemFound = indent, true
-		}
-	}
-	return block
-}
-
-// itemIndent reports the indentation of a sequence item, which is what a new
-// item has to match: YAML reads an item indented differently from its siblings
-// as a nested sequence.
-func itemIndent(body string) (string, bool) {
-	indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]
-	rest := body[len(indent):]
-	return indent, rest == "-" || strings.HasPrefix(rest, "- ")
-}
-
-// A hash anywhere in an inline value is either a comment or something this
-// command must refuse, so splitting on the first one is enough.
-func splitInlineComment(rest string) (value, comment string) {
-	if at := strings.Index(rest, "#"); at >= 0 {
-		return strings.TrimSpace(rest[:at]), strings.TrimSpace(rest[at:])
-	}
-	return strings.TrimSpace(rest), ""
+	return append(fields, config.Field{Key: "with", Value: d.entries})
 }

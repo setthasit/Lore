@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -104,6 +105,26 @@ func (i Instance) Ident() string {
 		return i.ID
 	}
 	return i.Use
+}
+
+func (c *Config) InstancesUsing(plugin string) []string {
+	used := []string(nil)
+	for section, instances := range map[string][]Instance{
+		"sources": c.Sources, "providers": c.Providers,
+	} {
+		for _, instance := range instances {
+			if instance.Use == plugin {
+				used = append(used, section+"["+instance.Ident()+"]")
+			}
+		}
+	}
+	for _, repo := range c.Repos {
+		if repo.Use == plugin {
+			used = append(used, "repos["+repo.Path+"]")
+		}
+	}
+	slices.Sort(used)
+	return used
 }
 
 // WithValues decodes the captured `with:` block into generic values, which is
