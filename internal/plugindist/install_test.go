@@ -479,10 +479,7 @@ func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	}
 }
 
-// A coordinate is checked for https when it is parsed, but a checksums file, a
-// signature and an API base all reach the network without passing through that
-// check, so the download itself refuses plaintext.
-func TestGetRefusesAPlaintextTarget(t *testing.T) {
+func TestBoundedGetRefusesAPlaintextTarget(t *testing.T) {
 	t.Parallel()
 
 	var hits atomic.Int64
@@ -492,15 +489,15 @@ func TestGetRefusesAPlaintextTarget(t *testing.T) {
 	}))
 	t.Cleanup(plaintext.Close)
 
-	fetch := fetcher{client: plaintext.Client()}
-	body, err := fetch.get(context.Background(), plaintext.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
+	body, err := BoundedGet(context.Background(), plaintext.Client(),
+		plaintext.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
 	if err == nil {
 		t.Fatal("downloading over plaintext http succeeded, want a refusal")
 	}
 	if body != nil {
 		t.Fatalf("body = %q, want nothing downloaded", body)
 	}
-	if !strings.Contains(err.Error(), "plugin downloads stay on https") {
+	if !strings.Contains(err.Error(), "plugin traffic stays on https") {
 		t.Fatalf("error %q does not refuse the plaintext target", err)
 	}
 	if !internalerror.IsBadRequest(err) {
@@ -511,7 +508,7 @@ func TestGetRefusesAPlaintextTarget(t *testing.T) {
 	}
 }
 
-func TestGetRefusesARedirectOffHTTPS(t *testing.T) {
+func TestBoundedGetRefusesARedirectOffHTTPS(t *testing.T) {
 	t.Parallel()
 
 	var hits atomic.Int64
@@ -527,8 +524,8 @@ func TestGetRefusesARedirectOffHTTPS(t *testing.T) {
 	}))
 	t.Cleanup(secure.Close)
 
-	fetch := fetcher{client: secure.Client()}
-	body, err := fetch.get(context.Background(), secure.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
+	body, err := BoundedGet(context.Background(), secure.Client(),
+		secure.URL+"/lore/acme-crm/v2.0.1.tar.gz", maxArtifactBytes)
 	if err == nil {
 		t.Fatal("a redirect onto plaintext http was followed, want a refusal")
 	}
@@ -545,7 +542,7 @@ func TestGetRefusesARedirectOffHTTPS(t *testing.T) {
 
 // A release asset URL redirects to a CDN, so refusing redirects outright would
 // break every real install.
-func TestGetFollowsAnHTTPSRedirect(t *testing.T) {
+func TestBoundedGetFollowsAnHTTPSRedirect(t *testing.T) {
 	t.Parallel()
 
 	const payload = "acme-crm archive\n"
@@ -558,10 +555,10 @@ func TestGetFollowsAnHTTPSRedirect(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	fetch := fetcher{client: server.Client()}
-	body, err := fetch.get(context.Background(), server.URL+"/releases/download/v2.0.1/acme-crm.tar.gz", maxArtifactBytes)
+	body, err := BoundedGet(context.Background(), server.Client(),
+		server.URL+"/releases/download/v2.0.1/acme-crm.tar.gz", maxArtifactBytes)
 	if err != nil {
-		t.Fatalf("get: %v", err)
+		t.Fatalf("BoundedGet: %v", err)
 	}
 	if string(body) != payload {
 		t.Fatalf("body = %q, want the redirect target's body", body)
@@ -570,7 +567,7 @@ func TestGetFollowsAnHTTPSRedirect(t *testing.T) {
 
 // Installing the redirect policy replaces the default one, and the default is
 // what capped a chain, so an https loop must still be stopped by hop count.
-func TestGetStopsAnHTTPSRedirectLoop(t *testing.T) {
+func TestBoundedGetStopsAnHTTPSRedirectLoop(t *testing.T) {
 	t.Parallel()
 
 	var hops atomic.Int64
@@ -583,8 +580,7 @@ func TestGetStopsAnHTTPSRedirectLoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	fetch := fetcher{client: server.Client()}
-	_, err := fetch.get(ctx, server.URL+"/loop", maxArtifactBytes)
+	_, err := BoundedGet(ctx, server.Client(), server.URL+"/loop", maxArtifactBytes)
 	if err == nil {
 		t.Fatal("an https redirect loop was followed to a body, want a refusal")
 	}
@@ -673,7 +669,11 @@ const (
 )
 
 func credentialed(target string) string {
-	return strings.Replace(target, "https://", "https://"+fakeUser+":"+fakeToken+"@", 1) + "?" + fakeQuery
+	scheme, rest, found := strings.Cut(target, "://")
+	if !found {
+		return target
+	}
+	return scheme + "://" + fakeUser + ":" + fakeToken + "@" + rest + "?" + fakeQuery
 }
 
 func assertRedacted(t *testing.T, err error, keep string) {
@@ -695,37 +695,66 @@ func TestBoundedGetRefusalsDoNotEchoURLCredentials(t *testing.T) {
 
 	const limit = 1 << 20
 
-	cases := map[string]struct {
-		status int
-		size   int
-		down   bool
-	}{
-		"unreachable":             {down: true},
-		"nothing published":       {status: http.StatusNotFound},
-		"a status that is not ok": {status: http.StatusBadGateway},
-		"larger than the cap":     {status: http.StatusOK, size: limit + 1},
+	respond := func(t *testing.T, status, size int) *httptest.Server {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(strings.Repeat("a", size)))
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
+	index := func(server *httptest.Server) string { return server.URL + "/index.json" }
+
+	cases := map[string]func(t *testing.T) (client *http.Client, target, keep string){
+		"unreachable": func(t *testing.T) (*http.Client, string, string) {
+			server := respond(t, http.StatusOK, 0)
+			server.Close()
+			return server.Client(), credentialed(index(server)), index(server)
+		},
+		"nothing published": func(t *testing.T) (*http.Client, string, string) {
+			server := respond(t, http.StatusNotFound, 0)
+			return server.Client(), credentialed(index(server)), index(server)
+		},
+		"a status that is not ok": func(t *testing.T) (*http.Client, string, string) {
+			server := respond(t, http.StatusBadGateway, 0)
+			return server.Client(), credentialed(index(server)), index(server)
+		},
+		"larger than the cap": func(t *testing.T) (*http.Client, string, string) {
+			server := respond(t, http.StatusOK, limit+1)
+			return server.Client(), credentialed(index(server)), index(server)
+		},
+		"a plaintext target": func(t *testing.T) (*http.Client, string, string) {
+			plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the plaintext endpoint was reached, want the refusal before any request")
+			}))
+			t.Cleanup(plaintext.Close)
+			return plaintext.Client(), credentialed(index(plaintext)), index(plaintext)
+		},
+		"a redirect onto plaintext": func(t *testing.T) (*http.Client, string, string) {
+			plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the plaintext hop was followed, want it refused")
+			}))
+			t.Cleanup(plaintext.Close)
+
+			downgrade := credentialed(index(plaintext))
+			secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, downgrade, http.StatusFound)
+			}))
+			t.Cleanup(secure.Close)
+			return secure.Client(), index(secure), index(plaintext)
+		},
 	}
 
-	for name, c := range cases {
+	for name, scene := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(c.status)
-				_, _ = w.Write([]byte(strings.Repeat("a", c.size)))
-			}))
-			client, target := server.Client(), credentialed(server.URL+"/index.json")
-			if c.down {
-				server.Close()
-			} else {
-				t.Cleanup(server.Close)
-			}
-
+			client, target, keep := scene(t)
 			body, err := BoundedGet(context.Background(), client, target, limit)
 			if err == nil {
 				t.Fatalf("BoundedGet() returned %d bytes, want a refusal", len(body))
 			}
-			assertRedacted(t, err, server.URL+"/index.json")
+			assertRedacted(t, err, keep)
 		})
 	}
 }

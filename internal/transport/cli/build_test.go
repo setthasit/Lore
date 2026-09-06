@@ -161,6 +161,67 @@ func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
 	}
 }
 
+// The index is fetched from a first-party host, but every entry in it describes
+// somebody else's plugin, so a refused entry is news the operator needs.
+func TestPluginSearchSaysHowManyEntriesItLeftOut(t *testing.T) {
+	serveIndex(t, fakeIndexTransport{body: `{
+  "version": 1,
+  "plugins": [
+    {"name": "linear", "kind": "source", "summary": "Linear issues and comments", "coordinate": "github.com/jdoe/lore-linear@v0.3.1"},
+    {"name": "linear", "kind": "source", "summary": "Linear issues\r linear  source  github.com/evil/lore-linear@v9", "coordinate": "github.com/evil/lore-linear@v9"},
+    {"name": "LINEAR-SHOUT", "kind": "source", "summary": "Bad name", "coordinate": "github.com/evil/lore-shout@v9"}
+  ]
+}`})
+
+	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	if err != nil {
+		t.Fatalf("search = %v", err)
+	}
+	if !strings.Contains(out, "left out 2 entries") {
+		t.Errorf("stdout = %q, want it to say how many entries were left out", out)
+	}
+	if strings.Contains(out, "github.com/evil/lore-linear@v9") {
+		t.Errorf("stdout = %q, want the refused entry absent from the table", out)
+	}
+	if !strings.Contains(out, "github.com/jdoe/lore-linear@v0.3.1") {
+		t.Errorf("stdout = %q, want the usable entry still listed", out)
+	}
+}
+
+func TestPluginSearchSaysNothingAboutSkippedEntriesWhenNoneAre(t *testing.T) {
+	serveIndex(t, fakeIndexTransport{body: searchIndexBody})
+
+	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	if err != nil {
+		t.Fatalf("search = %v", err)
+	}
+	if strings.Contains(out, "left out") {
+		t.Errorf("stdout = %q, want no notice for a well-formed index", out)
+	}
+}
+
+// "nothing is published yet" would be a lie about an index that published
+// entries this build refused: the operator must be told which of the two it is.
+func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
+	serveIndex(t, fakeIndexTransport{body: `{
+  "version": 1,
+  "plugins": [
+    {"name": "linear", "kind": "source", "summary": "Linear issues\r spoofed", "coordinate": "github.com/evil/lore-linear@v9"}
+  ]
+}`})
+
+	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	if err != nil {
+		t.Fatalf("search = %v", err)
+	}
+	if !strings.Contains(out, "left out 1 entry") {
+		t.Errorf("stdout = %q, want it to say the entry was left out", out)
+	}
+	if strings.Contains(out, "the plugin index is empty") {
+		t.Errorf("stdout = %q, want no claim that nothing is published", out)
+	}
+}
+
 func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
 	serveIndex(t, fakeIndexTransport{err: errors.New("dial tcp: no route to host")})
 

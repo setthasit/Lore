@@ -56,16 +56,19 @@ type Result struct {
 	Warning string
 }
 
-func (ins *Installer) fetcher() fetcher {
-	client := ins.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: downloadTimeout}
+func (ins *Installer) client() *http.Client {
+	if ins.HTTP != nil {
+		return ins.HTTP
 	}
+	return &http.Client{Timeout: downloadTimeout}
+}
+
+func (ins *Installer) fetcher() fetcher {
 	base := ins.APIBase
 	if base == "" {
 		base = DefaultAPIBase()
 	}
-	return fetcher{client: client, apiBase: base}
+	return fetcher{client: ins.client(), apiBase: base}
 }
 
 // Pin turns @latest into the version it resolves to now. It is separate from
@@ -129,8 +132,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	}
 	result.ArtifactURL = artifactURL
 
-	fetch := ins.fetcher()
-	artifact, err := fetch.get(ctx, artifactURL, maxArtifactBytes)
+	artifact, err := BoundedGet(ctx, ins.client(), artifactURL, maxArtifactBytes)
 	if err != nil {
 		return Result{}, resolveFailure(coord, "downloading "+safeTarget(artifactURL), err)
 	}
@@ -224,11 +226,11 @@ func (ins *Installer) expected(
 	artifact []byte,
 	checksumsURL string,
 ) (digest string, signed bool, err error) {
-	fetch := ins.fetcher()
+	client := ins.client()
 
 	checksums := []byte(nil)
 	if checksumsURL != "" {
-		if checksums, err = fetch.get(ctx, checksumsURL, MaxMetadataBytes); err != nil {
+		if checksums, err = BoundedGet(ctx, client, checksumsURL, MaxMetadataBytes); err != nil {
 			return "", false, resolveFailure(coord, "downloading "+safeTarget(checksumsURL), err)
 		}
 	}
@@ -243,7 +245,7 @@ func (ins *Installer) expected(
 		if err != nil {
 			return "", false, err
 		}
-		signature, err := fetch.get(ctx, signedURL+verify.signatureSuffix(), maxSignatureSize)
+		signature, err := BoundedGet(ctx, client, signedURL+verify.signatureSuffix(), maxSignatureSize)
 		if err != nil {
 			return "", false, internalerror.NewPreconditionError(label(coord.Name)+" declares pubkey: "+coord.PubKey+
 				", but "+signedName+verify.signatureSuffix()+" is not published beside it: an unsigned artifact"+

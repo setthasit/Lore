@@ -57,8 +57,6 @@ type release struct {
 	} `json:"assets"`
 }
 
-// fetcher is the only thing in this package that touches the network, and it
-// holds an injected client so a test fakes it whole.
 type fetcher struct {
 	client  *http.Client
 	apiBase string
@@ -75,7 +73,7 @@ func (f fetcher) latestRelease(ctx context.Context, c Coordinate) (release, erro
 func (f fetcher) release(ctx context.Context, c Coordinate, endpoint, what string) (release, error) {
 	target := f.apiBase + "/repos/" + url.PathEscape(c.Owner) + "/" + url.PathEscape(c.Repo) + endpoint
 
-	body, err := f.get(ctx, target, MaxMetadataBytes)
+	body, err := BoundedGet(ctx, f.client, target, MaxMetadataBytes)
 	if err != nil {
 		return release{}, resolveFailure(c, "reading "+what+" of github.com/"+c.Owner+"/"+c.Repo, err)
 	}
@@ -114,31 +112,22 @@ func (r release) assetNames() []string {
 	return names
 }
 
-func (f fetcher) get(ctx context.Context, target string, limit int64) ([]byte, error) {
-	parsed, err := url.Parse(target)
-	if err != nil {
-		return nil, internalerror.NewBadRequestError("cannot request that URL", err)
-	}
-	if parsed.Scheme != "https" {
-		return nil, internalerror.NewBadRequestError("refusing to download "+urlx.Redact(parsed)+
-			" — plugin downloads stay on https", nil)
-	}
-
-	guarded := *f.client
-	guarded.CheckRedirect = refuseDowngrade
-
-	return BoundedGet(ctx, &guarded, target, limit)
-}
-
 func BoundedGet(ctx context.Context, client *http.Client, target string, limit int64) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, internalerror.NewBadRequestError("cannot request that URL", err)
 	}
-	request.Header.Set("Accept", "*/*")
 	safe := urlx.Redact(request.URL)
+	if request.URL.Scheme != "https" {
+		return nil, internalerror.NewBadRequestError("refusing to fetch "+safe+
+			" — plugin traffic stays on https", nil)
+	}
+	request.Header.Set("Accept", "*/*")
 
-	response, err := client.Do(request)
+	guarded := *client
+	guarded.CheckRedirect = refuseDowngrade
+
+	response, err := guarded.Do(request)
 	if err != nil {
 		var refused *internalerror.Error
 		if errors.As(err, &refused) {
@@ -167,8 +156,6 @@ func BoundedGet(ctx context.Context, client *http.Client, target string, limit i
 	return body, nil
 }
 
-// A release asset URL legitimately redirects to a CDN, so the hop is followed
-// — but never onto plaintext.
 func refuseDowngrade(request *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return internalerror.NewPreconditionError("stopped after "+strconv.Itoa(maxRedirects)+
@@ -178,7 +165,7 @@ func refuseDowngrade(request *http.Request, via []*http.Request) error {
 		return nil
 	}
 	return internalerror.NewPreconditionError("refusing a redirect to "+urlx.Redact(request.URL)+
-		" — plugin downloads stay on https", nil)
+		" — plugin traffic stays on https", nil)
 }
 
 func safeTarget(raw string) string {

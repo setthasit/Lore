@@ -87,12 +87,19 @@ func newPluginSearchCommand() *cobra.Command {
 }
 
 func runPluginSearch(cmd *cobra.Command, query string) error {
-	entries, err := pluginIndex.Fetch(cmd.Context())
+	entries, skipped, err := pluginIndex.Fetch(cmd.Context())
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
+	if skipped > 0 {
+		printfln(out, "left out %s the index publishes but this build refuses to show: an unprintable, over-long or "+
+			"malformed entry can disguise the coordinate you would copy from it", plural(skipped, "entry", "entries"))
+		if len(entries) == 0 {
+			return nil
+		}
+	}
 	if len(entries) == 0 {
 		printfln(out, "the plugin index is empty — nothing is published yet; `lore plugin list` shows what this build already has")
 		return nil

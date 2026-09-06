@@ -93,7 +93,7 @@ func checkModule(raw, module string) error {
 		return badCoordinate(raw, "it names no module")
 	case strings.ContainsAny(module, " \t\"'"):
 		return badCoordinate(raw, "the module path contains whitespace or quotes")
-	case module[0] == '.' || module[0] == '~':
+	case module[0] == '.' || module[0] == '~' || module[0] == '-':
 		return badCoordinate(raw, "a module path begins with a host, not "+module[:1]+
 			" — write github.com/owner/repo")
 	case !strings.Contains(module, "/"):

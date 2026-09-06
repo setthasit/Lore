@@ -96,6 +96,8 @@ func TestParseCoordinateRejectsUnbuildableSpecs(t *testing.T) {
 		"~user/x":            "begins with a host",
 		".hidden/x@v1.0.0":   "begins with a host",
 		"~user/x@v1.0.0":     "begins with a host",
+		"-C/x@v1.0.0":        "begins with a host",
+		"--flag/x@v1.0.0":    "begins with a host",
 	}
 
 	for raw, want := range cases {
