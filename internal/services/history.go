@@ -98,7 +98,7 @@ func fileHistoryOf(ctx context.Context, repo CodeRepo, file string) (fileHistory
 		return fileHistory{}, err
 	}
 
-	log, err := repo.Git.Log(ctx, file)
+	log, err := repo.Repo.Log(ctx, file)
 	if err != nil {
 		return fileHistory{}, internalerror.NewInternalError(
 			fmt.Sprintf("reading the history of %s in %s failed", file, repo.name()), err)

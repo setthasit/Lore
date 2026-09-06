@@ -169,7 +169,7 @@ func newWhyFixture(t *testing.T) whyFixture {
 	emb := mock_lore.NewMockEmbedder(ctrl)
 	git := mock_lore.NewMockCodeRepo(ctrl)
 	cfg := services.QueryConfig{TopK: whyTopK, WalkDepth: whyWalkDepth}
-	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
+	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Repo: git}}
 
 	return whyFixture{
 		store: store,
@@ -595,8 +595,8 @@ func TestWhyBlamesTheCloneTheRequestNames(t *testing.T) {
 	named := mock_lore.NewMockCodeRepo(ctrl)
 	// The first clone is given no expectations: naming the second must not blame it.
 	repos := []services.CodeRepo{
-		{Path: whyPath, Remote: whyRemote, Git: mock_lore.NewMockCodeRepo(ctrl)},
-		{Path: otherPath, Git: named},
+		{Path: whyPath, Remote: whyRemote, Repo: mock_lore.NewMockCodeRepo(ctrl)},
+		{Path: otherPath, Repo: named},
 	}
 	svc := services.NewWhyService(
 		mock_repositories.NewMockIndexStore(ctrl),
@@ -623,7 +623,7 @@ func TestWhyKeepsTheReposItWasConstructedWith(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	git := mock_lore.NewMockCodeRepo(ctrl)
-	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
+	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Repo: git}}
 	svc := services.NewWhyService(
 		mock_repositories.NewMockIndexStore(ctrl),
 		mock_lore.NewMockEmbedder(ctrl),

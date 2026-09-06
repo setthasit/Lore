@@ -15,11 +15,10 @@ const askOnlyRefusal = "no repositories registered — code anchoring disabled f
 // The width the index stores commit SHAs at, so a shortened SHA still resolves.
 const shortSHAChars = 12
 
-// Remote is the "github:acme/lore" name mapping the clone onto a source repo.
 type CodeRepo struct {
 	Path   string
-	Remote string
-	Git    lore.CodeRepo
+	Remote string // "github:acme/lore", the source repo this clone maps onto
+	Repo   lore.CodeRepo
 }
 
 func (r CodeRepo) name() string {
@@ -73,7 +72,7 @@ func unsyncedCommitGap(sha string) string {
 }
 
 func requireTrackedFile(ctx context.Context, repo CodeRepo, file string) error {
-	tracked, err := repo.Git.HasFileAtHEAD(ctx, file)
+	tracked, err := repo.Repo.HasFileAtHEAD(ctx, file)
 	if err != nil {
 		return internalerror.NewInternalError(
 			fmt.Sprintf("looking up %s in %s failed", file, repo.name()), err)

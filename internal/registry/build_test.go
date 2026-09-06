@@ -254,6 +254,25 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 	}
 }
 
+func TestPrepareReportsTheSameFirstBadKeyOnEveryRun(t *testing.T) {
+	r := newRegistry(t, stubSource{manifest: sourceManifest("acme")})
+
+	const want = `sources[acme].with.alpha is not a key plugin "acme" accepts`
+	for range 32 {
+		_, err := r.BuildSources([]Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+			"zeta":  1,
+			"mid":   1,
+			"alpha": 1,
+		}}})
+		if err == nil {
+			t.Fatal("BuildSources: want an error")
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 func TestCheckURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -339,9 +358,7 @@ func TestPrepareRejectsAnUnsetSecretVariable(t *testing.T) {
 func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 	var roots []string
 	r := newRegistry(t, codePlugin{
-		manifest: lore.Manifest{
-			Name: "git", Kind: lore.KindCode, APIVersion: lore.APIVersion, Summary: "one local clone",
-		},
+		manifest: codeManifest("git"),
 		build: func(c lore.CodeConfig) (lore.CodeRepo, error) {
 			roots = append(roots, c.Root)
 			return stubRepo{}, nil
@@ -366,9 +383,7 @@ func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
 	logged := false
 	r := newRegistry(t, codePlugin{
-		manifest: lore.Manifest{
-			Name: "git", Kind: lore.KindCode, APIVersion: lore.APIVersion, Summary: "one local clone",
-		},
+		manifest: codeManifest("git"),
 		build: func(c lore.CodeConfig) (lore.CodeRepo, error) {
 			c.Host.Log.Info("opening a clone")
 			logged = true

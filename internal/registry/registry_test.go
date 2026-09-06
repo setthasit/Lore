@@ -94,6 +94,15 @@ func sourceManifest(name string) lore.Manifest {
 	}
 }
 
+func codeManifest(name string) lore.Manifest {
+	return lore.Manifest{
+		Name:       name,
+		Kind:       lore.KindCode,
+		APIVersion: lore.APIVersion,
+		Summary:    "one local clone",
+	}
+}
+
 func newRegistry(t *testing.T, plugins ...lore.Plugin) *Registry {
 	t.Helper()
 
@@ -216,6 +225,56 @@ func TestRegisterRejectsAProviderThatServesNothing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "declares neither embed nor complete") {
 		t.Errorf("error %q does not say the provider serves nothing", err)
+	}
+}
+
+func TestRegisterAcceptsRepoRemotesOnlyFromASource(t *testing.T) {
+	provider := providerManifest("acme", lore.Capabilities{Embed: true, RepoRemotes: true})
+	code := codeManifest("acme")
+	code.Capabilities = lore.Capabilities{RepoRemotes: true}
+	source := sourceManifest("acme")
+	source.Capabilities = lore.Capabilities{RepoRemotes: true}
+
+	tests := []struct {
+		name   string
+		plugin lore.Plugin
+		want   string
+	}{
+		{
+			name:   "a provider declaring it",
+			plugin: stubProvider{manifest: provider},
+			want:   `provider plugin "acme" declares repo_remotes, which only a source can serve`,
+		},
+		{
+			name:   "a code plugin declaring it",
+			plugin: stubCode{manifest: code},
+			want:   `code plugin "acme" declares repo_remotes, which only a source can serve`,
+		},
+		{
+			name:   "a source declaring it",
+			plugin: stubSource{manifest: source},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := New(lore.Host{}).Register(tt.plugin)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("Register: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Register: want an error")
+			}
+			if err.Error() != tt.want {
+				t.Errorf("error = %q, want %q", err, tt.want)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindInternal {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindInternal)
+			}
+		})
 	}
 }
 
@@ -361,9 +420,7 @@ func TestBuildSourcesNamesWhatThisBuildHasWhenUseDoesNotResolve(t *testing.T) {
 }
 
 func TestBuildSourcesRejectsAKindMismatch(t *testing.T) {
-	r := newRegistry(t, stubCode{manifest: lore.Manifest{
-		Name: "git", Kind: lore.KindCode, APIVersion: lore.APIVersion, Summary: "one local clone",
-	}})
+	r := newRegistry(t, stubCode{manifest: codeManifest("git")})
 
 	_, err := r.BuildSources([]Instance{{Use: "git", Field: "sources[git]"}})
 	if err == nil {

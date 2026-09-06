@@ -56,10 +56,12 @@ var PluginModule = fx.Module("plugins", fx.Provide(
 	newExternals,
 	newWorkspaceRegistry,
 	newSources,
+	newProviderInstances,
 	newEmbedding,
 	newEmbedder,
 	newVectorSpace,
 	newCompleter,
+	newClones,
 	newCodeRepos,
 	newStartupWarnings,
 ))
@@ -188,19 +190,14 @@ type embedding struct {
 	provider lore.Embedder
 }
 
-func newEmbedding(cfg *config.Config, reg *registry.Registry) (embedding, error) {
-	instances, err := providerInstances(cfg)
-	if err != nil {
-		return embedding{}, err
-	}
-
+func newEmbedding(cfg *config.Config, reg *registry.Registry, providers providerInstances) (embedding, error) {
 	built, err := reg.BuildProvider(registry.Binding{
 		Provider:   cfg.Embedder.Provider,
 		Model:      cfg.Embedder.Model,
 		Dimensions: cfg.Embedder.Dimensions,
 		Capability: lore.CapabilityEmbed,
 		Field:      "embedder",
-	}, instances)
+	}, providers)
 	if err != nil {
 		return embedding{}, err
 	}
@@ -215,14 +212,9 @@ func newVectorSpace(e embedding) services.VectorSpace {
 
 // A workspace with no llm: block resolves to a nil Completer: only synthesis
 // then fails, and it says why.
-func newCompleter(cfg *config.Config, reg *registry.Registry) (lore.Completer, error) {
+func newCompleter(cfg *config.Config, reg *registry.Registry, providers providerInstances) (lore.Completer, error) {
 	if cfg.LLM == nil {
 		return nil, nil
-	}
-
-	instances, err := providerInstances(cfg)
-	if err != nil {
-		return nil, err
 	}
 
 	built, err := reg.BuildProvider(registry.Binding{
@@ -231,40 +223,37 @@ func newCompleter(cfg *config.Config, reg *registry.Registry) (lore.Completer, e
 		Dimensions: cfg.LLM.Dimensions,
 		Capability: lore.CapabilityComplete,
 		Field:      "llm",
-	}, instances)
+	}, providers)
 	if err != nil {
 		return nil, err
 	}
 	return built.Value.(lore.Completer), nil
 }
 
-func newCodeRepos(cfg *config.Config, reg *registry.Registry) ([]services.CodeRepo, error) {
-	built, err := reg.BuildCode(clones(cfg))
+func newCodeRepos(reg *registry.Registry, declared clones) ([]services.CodeRepo, error) {
+	built, err := reg.BuildCode(declared)
 	if err != nil {
 		return nil, err
 	}
 
 	repos := make([]services.CodeRepo, 0, len(built))
 	for _, code := range built {
-		repos = append(repos, services.CodeRepo{Path: code.Path, Remote: code.Remote, Git: code.Repo})
+		repos = append(repos, services.CodeRepo{Path: code.Path, Remote: code.Remote, Repo: code.Repo})
 	}
 	return repos, nil
 }
 
-// newStartupWarnings collects everything worth telling the operator that is not
-// worth refusing to start over. The unmatched-clone half asks the built
-// connectors which remotes they ingest rather than switching on a forge name,
-// so a third-party forge plugin keeps that warning working by implementing
-// lore.RemoteMatcher.
-func newStartupWarnings(cfg *config.Config, sources []lore.Connector, ext externals) registry.Warnings {
-	return append(ext.warnings, registry.UnmatchedRemotes(clones(cfg), sources)...)
+func newStartupWarnings(sources []lore.Connector, ext externals, declared clones) registry.Warnings {
+	return append(ext.warnings, registry.UnmatchedRemotes(declared, sources)...)
 }
 
 func sourceInstances(cfg *config.Config) ([]registry.Instance, error) {
 	return instances(cfg.Sources, "sources")
 }
 
-func providerInstances(cfg *config.Config) ([]registry.Instance, error) {
+type providerInstances []registry.Instance
+
+func newProviderInstances(cfg *config.Config) (providerInstances, error) {
 	return instances(cfg.Providers, "providers")
 }
 
@@ -287,8 +276,10 @@ func instances(declared []config.Instance, block string) ([]registry.Instance, e
 	return out, nil
 }
 
-func clones(cfg *config.Config) []registry.Clone {
-	out := make([]registry.Clone, 0, len(cfg.Repos))
+type clones []registry.Clone
+
+func newClones(cfg *config.Config) clones {
+	out := make(clones, 0, len(cfg.Repos))
 	for i, repo := range cfg.Repos {
 		out = append(out, registry.Clone{
 			Path:   repo.Path,

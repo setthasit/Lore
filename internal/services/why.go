@@ -129,7 +129,7 @@ func (s codeSpan) blame(ctx context.Context) ([]blamedCommit, error) {
 		return nil, err
 	}
 
-	spans, err := s.repo.Git.Blame(ctx, s.file, s.start, s.end)
+	spans, err := s.repo.Repo.Blame(ctx, s.file, s.start, s.end)
 	if err != nil {
 		return nil, internalerror.NewInternalError(fmt.Sprintf("blaming %s failed", s), err)
 	}

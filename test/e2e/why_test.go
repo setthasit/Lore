@@ -143,7 +143,7 @@ func newCodeCorpus(t *testing.T) codeCorpus {
 		"Say what the writer's queue field holds")
 
 	return codeCorpus{
-		repos:    []services.CodeRepo{{Path: c.root, Remote: whyRemote, Git: git.New(c.root)}},
+		repos:    []services.CodeRepo{{Path: c.root, Remote: whyRemote, Repo: git.New(c.root)}},
 		fixtures: materialiseCorpus(t, map[string]string{"ANCHOR_SHA": anchor, "FOLLOWUP_SHA": followUp}),
 		anchor:   anchor,
 		followUp: followUp,

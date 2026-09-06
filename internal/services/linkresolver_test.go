@@ -62,7 +62,7 @@ func newLinkMocks(t *testing.T) linkMocks {
 }
 
 func (m linkMocks) resolver() services.LinkResolver {
-	return services.NewLinkResolver(m.store, []services.CodeRepo{{Path: linkClone, Git: m.git}})
+	return services.NewLinkResolver(m.store, []services.CodeRepo{{Path: linkClone, Repo: m.git}})
 }
 
 func (m linkMocks) expectLog(shas ...string) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"slices"
@@ -88,7 +89,7 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 		Instance: id,
 		Config:   cfg,
 		Secrets:  secrets,
-		Host:     r.instanceHost(id),
+		Host:     r.Host(id),
 	})
 	if err != nil {
 		return nil, unbuildable(in.Field, in.Use, err)
@@ -162,11 +163,10 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (Provider, err
 		Dimensions: b.Dimensions,
 		Config:     cfg,
 		Secrets:    secrets,
-		Host:       r.instanceHost(id),
+		Host:       r.Host(id),
 	})
 	if err != nil {
-		return Provider{}, internalerror.NewBadRequestError(fmt.Sprintf(
-			"cannot configure %s from provider %q: %s", b.Field, id, err.Error()), err)
+		return Provider{}, unbuildable(b.Field, id, err)
 	}
 	if err := assertCapability(b, id, manifest, built); err != nil {
 		return Provider{}, err
@@ -214,7 +214,7 @@ func (r *Registry) BuildCode(clones []Clone) ([]Code, error) {
 
 		repo, err := plugin.(lore.CodePlugin).NewCode(lore.CodeConfig{
 			Root: clone.Path,
-			Host: r.instanceHost(clone.Use),
+			Host: r.Host(clone.Use),
 		})
 		if err != nil {
 			return nil, unbuildable(clone.Field, clone.Use, err)
@@ -322,12 +322,7 @@ func unbuildable(field, use string, err error) error {
 		"cannot configure %s from plugin %q: %s", field, use, err.Error()), err)
 }
 
-// Host is what a plugin this registry builds is lent, tagged for one instance.
-// It is exported so the wiring can hand the identical Host to an external
-// plugin: neither mode gets a privilege the other lacks.
-func (r *Registry) Host(instance string) lore.Host { return r.instanceHost(instance) }
-
-func (r *Registry) instanceHost(instance string) lore.Host {
+func (r *Registry) Host(instance string) lore.Host {
 	host := r.host
 	if host.Log == nil {
 		host.Log = slog.New(slog.DiscardHandler)
@@ -367,7 +362,7 @@ func checkKeys(manifest lore.Manifest, in Instance) error {
 		secretFields[s.ConfigField] = struct{}{}
 	}
 
-	for _, key := range sortedKeys(in.With) {
+	for _, key := range slices.Sorted(maps.Keys(in.With)) {
 		if _, ok := secretFields[key]; ok {
 			continue
 		}
@@ -414,17 +409,6 @@ func accepted(manifest lore.Manifest) string {
 	}
 	slices.Sort(keys)
 	return strings.Join(keys, ", ")
-}
-
-// Keys are visited in a fixed order so a configuration with two mistakes always
-// reports the same one first.
-func sortedKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
 }
 
 func checkType(field string, declared lore.Field, value any) error {

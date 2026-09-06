@@ -473,6 +473,67 @@ llm:
 	}
 }
 
+// The binding names an instance id that no plugin answers to, so each role
+// resolves only if the decoded providers: block reached it.
+func TestWorkspaceBindsOneDeclaredProviderInstanceToBothRoles(t *testing.T) {
+	const instance = "house-abacus"
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+providers:
+  - id: `+instance+`
+    use: `+dualPlugin+`
+embedder:
+  provider: `+instance+`
+  model: `+embedderModel+`
+llm:
+  provider: `+instance+`
+  model: `+completerModel+`
+`)
+
+	var (
+		embedder  lore.Embedder
+		completer lore.Completer
+	)
+	if err := startWorkspace(t, path, &embedder, &completer); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if got := embedder.Dimensions(); got != dualWidth {
+		t.Errorf("Dimensions = %d, want %d, the width the bound instance reports", got, dualWidth)
+	}
+
+	got, err := completer.Complete(context.Background(), "system", "user")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != dualReply {
+		t.Errorf("Complete = %q, want %q, the answer the bound instance gives", got, dualReply)
+	}
+}
+
+func TestWorkspaceResolvesWithNoProvidersReposOrLLM(t *testing.T) {
+	t.Setenv(sourceTokenEnv, "token-example")
+
+	path := writeConfig(t, `sources:
+  - use: `+sourcePlugin+`
+    with:
+      seams: ["pigeon:acme/app"]
+`+embedderBlock)
+
+	var (
+		repos     []services.CodeRepo
+		warnings  registry.Warnings
+		completer lore.Completer
+	)
+	if err := startWorkspace(t, path, &repos, &warnings, &completer); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+	if len(repos) != 0 || len(warnings) != 0 || completer != nil {
+		t.Errorf("repos = %v, warnings = %v, llm = %v; want none of them", repos, warnings, completer)
+	}
+}
+
 // A clone whose remote no source ingests still answers blame, so it is reported
 // as a warning the transports print, never as a failure to resolve.
 func TestWorkspaceWarnsOnlyAboutACloneNoSourceClaims(t *testing.T) {

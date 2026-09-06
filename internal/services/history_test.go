@@ -119,7 +119,7 @@ func newHistFixture(t *testing.T) histFixture {
 	ctrl := gomock.NewController(t)
 	store := mock_repositories.NewMockIndexStore(ctrl)
 	git := mock_lore.NewMockCodeRepo(ctrl)
-	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Git: git}}
+	repos := []services.CodeRepo{{Path: whyPath, Remote: whyRemote, Repo: git}}
 
 	return histFixture{store: store, git: git, svc: services.NewHistoryService(store, repos)}
 }
@@ -543,7 +543,6 @@ func TestHistoryOfValidationOrder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Every repo here carries a nil Git: none of these refusals may reach a clone.
 			svc := services.NewHistoryService(nil, tt.repos)
 
 			bundle, err := svc.HistoryOf(context.Background(), tt.req)

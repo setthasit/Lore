@@ -46,9 +46,16 @@ var refTargetTypes = map[lore.RefKind][]lore.DocType{
 	lore.RefKindTicketKey: {lore.DocTypeTicket, lore.DocTypeIssue},
 }
 
-// Held once rather than rebuilt per batch: every ingested reference is checked
-// against it.
 var knownRefKinds = lore.RefKinds()
+
+var refKindVocabulary = func() string {
+	names := make([]string, len(knownRefKinds))
+	for i, kind := range knownRefKinds {
+		names[i] = string(kind)
+	}
+
+	return strings.Join(names, ", ")
+}()
 
 // A dropped reference is a missing edge and therefore a wrong answer, and the
 // plugin author has nothing to debug once it is gone, so an unrecognised kind
@@ -61,19 +68,10 @@ func assertKnownRefKinds(refs []entities.PendingRef) error {
 
 		return internalerror.NewBadRequestError(fmt.Sprintf(
 			"document %q carries a reference of unknown kind %q; the reference vocabulary is closed and holds %s",
-			ref.SourceDoc, ref.Ref.Kind, refKindVocabulary()), nil)
+			ref.SourceDoc, ref.Ref.Kind, refKindVocabulary), nil)
 	}
 
 	return nil
-}
-
-func refKindVocabulary() string {
-	names := make([]string, len(knownRefKinds))
-	for i, kind := range knownRefKinds {
-		names[i] = string(kind)
-	}
-
-	return strings.Join(names, ", ")
 }
 
 var supersedePhrases = []string{"supersede", "replaces", "replaced by"}
@@ -221,12 +219,12 @@ func (l *linkResolver) pathCommits(
 
 // A clone git cannot read leaves the path pending for a later round, never failing the sync.
 func (l *linkResolver) commitsTouching(ctx context.Context, repo CodeRepo, path string) ([]entities.DocumentMeta, error) {
-	tracked, err := repo.Git.HasFileAtHEAD(ctx, path)
+	tracked, err := repo.Repo.HasFileAtHEAD(ctx, path)
 	if err != nil || !tracked {
 		return nil, nil
 	}
 
-	history, err := repo.Git.Log(ctx, path)
+	history, err := repo.Repo.Log(ctx, path)
 	if err != nil {
 		return nil, nil
 	}

@@ -194,7 +194,7 @@ func TestLinkResolverAnchorsAPathToEveryCommitThatTouchedIt(t *testing.T) {
 	}
 	xrefIngest(t, store, page, xrefCommitDoc(added, addSubject), xrefCommitDoc(fixed, fixSubject))
 
-	repos := []services.CodeRepo{{Path: clone.root, Remote: "github:" + xrefSlug, Git: git.New(clone.root)}}
+	repos := []services.CodeRepo{{Path: clone.root, Remote: "github:" + xrefSlug, Repo: git.New(clone.root)}}
 	if err := services.NewLinkResolver(store, repos).Link(ctx, []lore.Document{page}); err != nil {
 		t.Fatalf("Link: %v", err)
 	}

@@ -221,25 +221,20 @@ func validateKind(m lore.Manifest, p lore.Plugin) error {
 
 func validateCapabilities(m lore.Manifest) error {
 	caps := m.Capabilities
-	switch m.Kind {
-	case lore.KindProvider:
-		if caps.RepoRemotes {
-			return internalerror.NewInternalError(fmt.Sprintf(
-				"provider plugin %q declares repo_remotes, which only a source can serve", m.Name), nil)
-		}
+	if caps.RepoRemotes && m.Kind != lore.KindSource {
+		return internalerror.NewInternalError(fmt.Sprintf(
+			"%s plugin %q declares repo_remotes, which only a source can serve", m.Kind, m.Name), nil)
+	}
+	if m.Kind == lore.KindProvider {
 		if !caps.Embed && !caps.Complete {
 			return internalerror.NewInternalError(fmt.Sprintf(
 				"provider plugin %q declares neither embed nor complete, so no role could bind to it", m.Name), nil)
 		}
-	default:
-		if caps.Embed || caps.Complete {
-			return internalerror.NewInternalError(fmt.Sprintf(
-				"%s plugin %q declares a model capability, which only a provider can serve", m.Kind, m.Name), nil)
-		}
-		if caps.RepoRemotes && m.Kind != lore.KindSource {
-			return internalerror.NewInternalError(fmt.Sprintf(
-				"%s plugin %q declares repo_remotes, which only a source can serve", m.Kind, m.Name), nil)
-		}
+		return nil
+	}
+	if caps.Embed || caps.Complete {
+		return internalerror.NewInternalError(fmt.Sprintf(
+			"%s plugin %q declares a model capability, which only a provider can serve", m.Kind, m.Name), nil)
 	}
 	return nil
 }
