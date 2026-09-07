@@ -8,11 +8,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugbuild"
 )
 
-// pluginIndex is the index `lore plugin search` reads. It is a package variable
-// so a test can serve a fixture rather than reaching the real index, whose
-// contents change without this repository changing.
-var pluginIndex = plugbuild.Index{}
-
 func newBuildCommand() *cobra.Command {
 	var (
 		with   []string
@@ -72,7 +67,7 @@ func runBuild(cmd *cobra.Command, with []string, output string) error {
 	return nil
 }
 
-func newPluginSearchCommand() *cobra.Command {
+func newPluginSearchCommand(index plugbuild.Index) *cobra.Command {
 	return &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the plugin index",
@@ -81,13 +76,13 @@ func newPluginSearchCommand() *cobra.Command {
 			"disk; there is no ranking, so results keep the index's own order.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginSearch(cmd, args[0])
+			return runPluginSearch(cmd, index, args[0])
 		},
 	}
 }
 
-func runPluginSearch(cmd *cobra.Command, query string) error {
-	entries, skipped, err := pluginIndex.Fetch(cmd.Context())
+func runPluginSearch(cmd *cobra.Command, index plugbuild.Index, query string) error {
+	entries, skipped, err := index.Fetch(cmd.Context())
 	if err != nil {
 		return err
 	}

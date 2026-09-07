@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugbuild"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/urlx"
@@ -27,7 +28,7 @@ func newPluginCommand(configPath *string, reg *registry.Registry) *cobra.Command
 		newPluginUpdateCommand(configPath),
 		newPluginRemoveCommand(configPath),
 		newPluginVerifyCommand(configPath, reg),
-		newPluginSearchCommand(),
+		newPluginSearchCommand(plugbuild.Index{}),
 	)
 	return plugin
 }

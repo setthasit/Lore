@@ -69,7 +69,7 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
@@ -214,8 +214,8 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if got := report(&stderr, c.err); got != c.code {
-				t.Errorf("report = %d, want %d", got, c.code)
+			if got := Report(&stderr, c.err); got != c.code {
+				t.Errorf("Report = %d, want %d", got, c.code)
 			}
 			if c.err == nil {
 				if stderr.Len() != 0 {
@@ -235,8 +235,8 @@ func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
 	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", errUnclassified))
 
 	var stderr bytes.Buffer
-	if got := report(&stderr, wrapped); got != exitPrecondition {
-		t.Errorf("report = %d, want %d", got, exitPrecondition)
+	if got := Report(&stderr, wrapped); got != exitPrecondition {
+		t.Errorf("Report = %d, want %d", got, exitPrecondition)
 	}
 	if got := stderr.String(); got != "lore: another process holds the sync lock\n" {
 		t.Errorf("stderr = %q, want the classified message alone", got)

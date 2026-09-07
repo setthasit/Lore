@@ -51,7 +51,7 @@ func runResolving(t *testing.T, ctx context.Context, cfg *config.Config, args ..
 	root.SetArgs(args)
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stderr = errOut.String()
 	return res

@@ -219,7 +219,7 @@ func runPluginDist(t *testing.T, args ...string) result {
 
 	res := result{}
 	if err := root.ExecuteContext(context.Background()); err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
@@ -345,10 +345,8 @@ func TestPluginInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	}
 }
 
-// report walks the cause chain for an unclassified error and for KindInternal,
-// so a refusal that keeps a *url.Error cause, which carries the raw URL, is
-// only safe while the supply chain classifies every one of them as something
-// else. The dead server is what puts that cause in the chain.
+// Report prints the cause chain for unclassified and KindInternal errors, and a
+// *url.Error cause carries the raw URL: this refusal must stay classified.
 func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
 	fake := newFakeReleases(t)
 	base := fake.server.URL

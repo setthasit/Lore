@@ -76,7 +76,7 @@ func Main(reg *registry.Registry) int {
 	defer stop()
 
 	if err := newRootCommand(fxResolver(reg), reg).ExecuteContext(ctx); err != nil {
-		return report(os.Stderr, err)
+		return Report(os.Stderr, err)
 	}
 	return exitOK
 }

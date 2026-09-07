@@ -41,12 +41,11 @@ const searchIndexBody = `{
   ]
 }`
 
-func serveIndex(t *testing.T, transport http.RoundTripper) {
-	t.Helper()
-
-	restore := pluginIndex
-	pluginIndex = plugbuild.Index{HTTP: &http.Client{Transport: transport}, URL: "https://example.test/index.json"}
-	t.Cleanup(func() { pluginIndex = restore })
+func searchCommand(transport http.RoundTripper) *cobra.Command {
+	return newPluginSearchCommand(plugbuild.Index{
+		HTTP: &http.Client{Transport: transport},
+		URL:  "https://example.test/index.json",
+	})
 }
 
 func runCommand(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
@@ -72,7 +71,7 @@ func TestBuildCommandAsksForAnExplicitPackage(t *testing.T) {
 	if got := internalerror.MessageOf(err); !strings.Contains(got, "=acmecrm") {
 		t.Errorf("error = %q, want the =<package> suffix spelled out", got)
 	}
-	if code := report(io.Discard, err); code != exitBadRequest {
+	if code := Report(io.Discard, err); code != exitBadRequest {
 		t.Errorf("exit = %d, want %d", code, exitBadRequest)
 	}
 }
@@ -90,15 +89,13 @@ func TestBuildCommandWithoutAToolchainSaysWhyItNeedsOne(t *testing.T) {
 			t.Errorf("error = %q, want it to mention %q", message, want)
 		}
 	}
-	if code := report(io.Discard, err); code != exitPrecondition {
+	if code := Report(io.Discard, err); code != exitPrecondition {
 		t.Errorf("exit = %d, want %d", code, exitPrecondition)
 	}
 }
 
 func TestPluginSearchPrintsEveryColumnAMatchNeeds(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: searchIndexBody})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "linear")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -117,14 +114,12 @@ func TestPluginSearchPrintsEveryColumnAMatchNeeds(t *testing.T) {
 // A user knows one of three things about the plugin they want: what it is
 // called, what it does, or what it has to be. All three are matched.
 func TestPluginSearchMatchesNameSummaryAndKind(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: searchIndexBody})
-
 	for query, want := range map[string]string{
 		"LINEAR":     "linear",   // name, case folded
 		"embeddings": "together", // summary
 		"provider":   "together", // kind
 	} {
-		out, err := runCommand(t, newPluginSearchCommand(), query)
+		out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), query)
 		if err != nil {
 			t.Errorf("search %q = %v", query, err)
 			continue
@@ -136,9 +131,7 @@ func TestPluginSearchMatchesNameSummaryAndKind(t *testing.T) {
 }
 
 func TestPluginSearchReportsNoMatch(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: searchIndexBody})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "jira")
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "jira")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -150,9 +143,7 @@ func TestPluginSearchReportsNoMatch(t *testing.T) {
 // An empty index is the honest state of a young ecosystem, and printing nothing
 // would read as a broken command.
 func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: `{"version": 1, "plugins": []}`})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{"version": 1, "plugins": []}`}), "linear")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -164,16 +155,14 @@ func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
 // The index is fetched from a first-party host, but every entry in it describes
 // somebody else's plugin, so a refused entry is news the operator needs.
 func TestPluginSearchSaysHowManyEntriesItLeftOut(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: `{
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{
   "version": 1,
   "plugins": [
     {"name": "linear", "kind": "source", "summary": "Linear issues and comments", "coordinate": "github.com/jdoe/lore-linear@v0.3.1"},
     {"name": "linear", "kind": "source", "summary": "Linear issues\r linear  source  github.com/evil/lore-linear@v9", "coordinate": "github.com/evil/lore-linear@v9"},
     {"name": "LINEAR-SHOUT", "kind": "source", "summary": "Bad name", "coordinate": "github.com/evil/lore-shout@v9"}
   ]
-}`})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+}`}), "linear")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -189,9 +178,7 @@ func TestPluginSearchSaysHowManyEntriesItLeftOut(t *testing.T) {
 }
 
 func TestPluginSearchSaysNothingAboutSkippedEntriesWhenNoneAre(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: searchIndexBody})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "linear")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -203,14 +190,12 @@ func TestPluginSearchSaysNothingAboutSkippedEntriesWhenNoneAre(t *testing.T) {
 // "nothing is published yet" would be a lie about an index that published
 // entries this build refused: the operator must be told which of the two it is.
 func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{body: `{
+	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{
   "version": 1,
   "plugins": [
     {"name": "linear", "kind": "source", "summary": "Linear issues\r spoofed", "coordinate": "github.com/evil/lore-linear@v9"}
   ]
-}`})
-
-	out, err := runCommand(t, newPluginSearchCommand(), "linear")
+}`}), "linear")
 	if err != nil {
 		t.Fatalf("search = %v", err)
 	}
@@ -223,9 +208,7 @@ func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
 }
 
 func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
-	serveIndex(t, fakeIndexTransport{err: errors.New("dial tcp: no route to host")})
-
-	_, err := runCommand(t, newPluginSearchCommand(), "linear")
+	_, err := runCommand(t, searchCommand(fakeIndexTransport{err: errors.New("dial tcp: no route to host")}), "linear")
 	if err == nil {
 		t.Fatal("search succeeded with no network")
 	}
@@ -233,7 +216,7 @@ func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
 	if !strings.Contains(message, "unreachable") || !strings.Contains(message, "https://example.test/index.json") {
 		t.Errorf("error = %q, want it to name the unreachable index", message)
 	}
-	if code := report(io.Discard, err); code != exitPrecondition {
+	if code := Report(io.Discard, err); code != exitPrecondition {
 		t.Errorf("exit = %d, want %d", code, exitPrecondition)
 	}
 }

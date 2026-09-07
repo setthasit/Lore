@@ -153,7 +153,7 @@ func runPlugins(t *testing.T, reg *registry.Registry, stdin string, args ...stri
 
 	res := pluginResult{}
 	if err := root.ExecuteContext(context.Background()); err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
