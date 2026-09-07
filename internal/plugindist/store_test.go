@@ -11,8 +11,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
-// Tampering with a cached binary after installation is caught too: the digest
-// recorded at install is re-checked at every launch, not only at download.
 func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
 	t.Parallel()
 
@@ -37,8 +35,6 @@ func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
 	}
 }
 
-// A declared plugin with no lock entry for the running os/arch is a startup
-// error, not a silent download: nothing in the engine fetches code.
 func TestPluginBinaryWithoutALockEntryFailsAtStartup(t *testing.T) {
 	t.Parallel()
 
@@ -58,8 +54,6 @@ func TestPluginBinaryWithoutALockEntryFailsAtStartup(t *testing.T) {
 	}
 }
 
-// The refusal is the whole interaction a user gets when a fresh clone has not
-// installed its plugins, so it has to name the command that fixes it.
 func TestPluginBinaryNotInstalledNamesTheInstallCommand(t *testing.T) {
 	t.Parallel()
 
@@ -108,15 +102,11 @@ func TestPluginRemoveDeletesEveryCachedVersion(t *testing.T) {
 		t.Fatal("the plugin cache survived a removal")
 	}
 
-	// Removing what is not there is not an error: `lore plugin remove` runs
-	// against a declaration that was never installed too.
 	if versions, err = scene.store.Remove("linear"); err != nil || versions != 0 {
 		t.Fatalf("second remove: %d versions, %v", versions, err)
 	}
 }
 
-// A local plugin that has been deleted must say so rather than reporting a path
-// the host would then fail to execute.
 func TestPluginBinaryLocalMissingFileIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -144,10 +134,6 @@ func TestPluginStoreRootIsOverridable(t *testing.T) {
 	}
 }
 
-// The store is reached with a command-line argument as well as with a resolved
-// coordinate, and it is the component holding the delete: `lore plugin remove`
-// must refuse a name that leaves the cache rather than take the workspace
-// indexes sitting beside it.
 func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
 	t.Parallel()
 
@@ -177,8 +163,6 @@ func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
 	}
 }
 
-// The store owns .digest in every version directory, so an archive that names
-// its binary after it is refused at the sink.
 func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	t.Parallel()
 
@@ -219,9 +203,6 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	}
 }
 
-// lore.lock is generated and reviewed by skimming, so the version it records is
-// attacker-reachable input: a version that climbs out of the cache resolves to
-// a binary the workspace never agreed to run.
 func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	t.Parallel()
 
@@ -237,8 +218,7 @@ func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planted, "lore-linear"), body, 0o600); err != nil {
 		t.Fatalf("plant the binary: %v", err)
 	}
-	// The digest beside the planted binary is the digest of that binary, so the
-	// re-check at launch would pass: nothing but the version's shape refuses it.
+	// The planted digest matches the planted binary, so only the version's shape can refuse it.
 	if err := os.WriteFile(filepath.Join(planted, digestFileName), []byte(digestOf(body)+"\n"), 0o600); err != nil {
 		t.Fatalf("plant the digest: %v", err)
 	}
@@ -267,8 +247,6 @@ func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	}
 }
 
-// Dir is the one place a version becomes a path, so every sink refuses the same
-// versions and none of them creates anything on the way to the refusal.
 func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
 	t.Parallel()
 
@@ -302,8 +280,6 @@ func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
 	}
 }
 
-// write is the one sink that never validates the name itself, so the name has
-// to be refused where the path is built rather than by its callers' habits.
 func TestStoreRefusesANameThatIsNotOneDirectoryName(t *testing.T) {
 	t.Parallel()
 

@@ -10,8 +10,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// stubSource is a source plugin whose manifest the tests vary freely: the point
-// of every case below is what the registry refuses, not what a real source does.
 type stubSource struct {
 	manifest lore.Manifest
 	build    func(lore.SourceConfig) (lore.Connector, error)
@@ -34,8 +32,6 @@ func (stubConnector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch,
 	return func(func(lore.Batch, error) bool) {}
 }
 
-// matchingConnector answers remote questions, as a source declaring
-// RepoRemotes must.
 type matchingConnector struct {
 	stubConnector
 	remote string
@@ -69,7 +65,6 @@ func (s stubCode) Manifest() lore.Manifest { return s.manifest }
 
 func (stubCode) NewCode(lore.CodeConfig) (lore.CodeRepo, error) { return stubRepo{}, nil }
 
-// codePlugin lets a test observe the CodeConfig the registry assembled.
 type codePlugin struct {
 	manifest lore.Manifest
 	build    func(lore.CodeConfig) (lore.CodeRepo, error)
@@ -341,8 +336,6 @@ func TestBuildSourcesNamesEveryInstanceAfterItsID(t *testing.T) {
 	if len(connectors) != 2 {
 		t.Fatalf("built %d connectors, want 2", len(connectors))
 	}
-	// The id defaults to the plugin name, so a single-instance workspace reads
-	// `use: jira` and gets the instance id "jira".
 	if got := connectors[0].Name(); got != "jira" {
 		t.Errorf("first instance is named %q, want %q", got, "jira")
 	}
@@ -368,7 +361,6 @@ func TestBuildSourcesRejectsAConnectorThatRenamesItself(t *testing.T) {
 	}
 }
 
-// A colon in an instance id would make every DocID it produces unparseable.
 func TestBuildSourcesRejectsAnInstanceIDThatWouldCorruptDocumentIdentity(t *testing.T) {
 	r := newRegistry(t, stubSource{manifest: sourceManifest("jira")})
 

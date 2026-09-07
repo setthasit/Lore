@@ -10,15 +10,10 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Plugin is the official OpenAI provider plugin.
 func Plugin() lore.ProviderPlugin { return plugin{} }
 
 type plugin struct{}
 
-// modelDims is the vector width each embedding model produces. It lives with
-// the driver that knows it: the host composes the vector-space identity from
-// the width a provider reports, so a width decided anywhere else would be a
-// guess about someone else's models.
 var modelDims = map[string]int{
 	"text-embedding-3-small": 1536,
 	"text-embedding-3-large": 3072,
@@ -32,8 +27,7 @@ func (plugin) Manifest() lore.Manifest {
 		APIVersion:   lore.APIVersion,
 		Summary:      "OpenAI embeddings and chat completions",
 		Capabilities: lore.Capabilities{Embed: true, Complete: true},
-		// The embedding suggestion is deliberately one whose width this driver
-		// knows, so a scaffold copied unchanged produces a usable vector space.
+		// The embedding suggestion must be a model modelDims knows; this driver refuses any other.
 		DefaultModels: map[lore.Capability]string{
 			lore.CapabilityEmbed:    "text-embedding-3-small",
 			lore.CapabilityComplete: "gpt-4o-mini",
@@ -58,10 +52,6 @@ func (plugin) Manifest() lore.Manifest {
 	}
 }
 
-// NewProvider builds only the half it was asked for: an embedding model and a
-// chat model are separate connections configured from different bindings, so
-// building both would demand configuration for a role nobody asked this
-// instance to play.
 func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	var cfg struct {
 		BaseURL string `json:"base_url"`
@@ -84,9 +74,6 @@ func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	}
 }
 
-// embedDimensions takes the width from the model rather than from the operator,
-// and refuses a declared width instead of picking one of two answers that
-// disagree: the wrong width poisons every vector written under it.
 func embedDimensions(c lore.ProviderConfig) (int, error) {
 	if c.Dimensions != 0 {
 		return 0, errors.New("openai: embedder.dimensions must not be set for this provider: the vector width follows from embedder.model")

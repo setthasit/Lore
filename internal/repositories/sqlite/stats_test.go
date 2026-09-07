@@ -29,15 +29,13 @@ func TestStatsEmptyStoreIsZeros(t *testing.T) {
 }
 
 func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
-	// A fixed clock makes the cursor stamp and the lease timestamps assertable.
 	stamp := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
 	s := openTestStore(t, WithClock(func() time.Time { return stamp }))
 	ctx := context.Background()
 
 	seedSearchCorpus(t, s)
 
-	// A second chunk under one document keeps the three counts distinct, so a
-	// transposed positional scan in Stats cannot pass.
+	// A second chunk under one document keeps the three counts distinct, so a transposed positional scan cannot pass.
 	split := searchCorpus[0]
 	first := entities.Chunk{
 		DocID:     split.id,

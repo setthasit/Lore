@@ -6,8 +6,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Provider asserts that every capability the manifest declares builds into the
-// SDK interface the host asserts it against.
 func Provider(t *testing.T, p lore.ProviderPlugin, configFor func(lore.Capability) lore.ProviderConfig) {
 	t.Helper()
 

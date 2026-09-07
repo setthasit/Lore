@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	// Not a credential; the fixture API only asserts it arrived in Authorization.
 	fixtureToken = "ghp_e2e_fixture_token"
 
 	fixtureRepo = "acme/lore"
@@ -42,7 +41,6 @@ var prDocID = lore.NewDocID(githubSource, lore.DocTypePR, fixtureRepo+"/pull/42"
 
 const fakeDims = 8
 
-// The host composes the vector-space identity; the fake embedder only reports a width.
 var fakeSpace = services.NewVectorSpace("fake", "bag-of-words", fakeDims)
 
 type fakeEmbedder struct{}
@@ -106,7 +104,6 @@ const (
 	restSHAChars = 7
 )
 
-// Every call a full github round makes against the fixture API.
 var githubFixtureOps = []string{"LoreCommits", "LorePullRequests", "LoreIssues", restCommitOp}
 
 type fixtureAPI struct {

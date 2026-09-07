@@ -1,4 +1,3 @@
-// Package anthropic completes text with the Anthropic messages API over net/http.
 package anthropic
 
 import (
@@ -21,8 +20,7 @@ const (
 	messagesPath = "/v1/messages"
 	apiVersion   = "2023-06-01"
 
-	// The API rejects a request without max_tokens, so it is a ceiling set far
-	// above the longest synthesis answer rather than a tuning knob.
+	// The API rejects a request that omits max_tokens.
 	maxTokens = 4096
 )
 

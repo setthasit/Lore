@@ -33,8 +33,7 @@ const (
 
 const queryScoreEpsilon = 1e-6
 
-// Fixtures predate the recency horizon, so the unanchored time prior clamps to
-// the same factor for every document and ordering follows relevance alone.
+// Fixtures predate the recency horizon, so the time prior clamps to the same factor for every document.
 const queryRecencyPrior = 0.8
 
 var (

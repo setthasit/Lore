@@ -1,4 +1,3 @@
-// Package openai completes text with the OpenAI chat completions API and embeds text with the OpenAI embeddings API, both over net/http.
 package openai
 
 import (
@@ -19,9 +18,6 @@ const DefaultBaseURL = "https://api.openai.com"
 const (
 	chatPath = "/v1/chat/completions"
 
-	// providerName prefixes this driver's own errors. A caller reaching another
-	// vendor over the same protocol passes its own name instead, so an error
-	// never blames OpenAI for a gateway's answer.
 	providerName = "openai"
 )
 
@@ -51,8 +47,7 @@ func New(apiKey, model, baseURL string, opts ...Option) (*Client, error) {
 	return NewCompatible(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, chatPath), opts...)
 }
 
-// NewCompatible builds a client for another provider serving this same protocol
-// at endpoint, naming it provider in errors.
+// endpoint is the vendor's full chat completions URL; provider prefixes this client's errors.
 func NewCompatible(provider, apiKey, model, endpoint string, opts ...Option) (*Client, error) {
 	if model == "" {
 		return nil, fmt.Errorf("%s: model is empty", provider)

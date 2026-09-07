@@ -17,10 +17,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The path-to-commit anchor is the one link the resolver cannot draw without a
-// real repository behind it, so this test needs the git code plugin. The engine
-// must not know a plugin by name, which leaves it here: test/e2e composes the
-// plugins with the services exactly as the binary does.
 const (
 	xrefDims = 3
 	xrefSlug = "acme/lore"
@@ -78,8 +74,7 @@ func xrefPending(t *testing.T, s *sqlite.Store) []entities.PendingRef {
 	return refs
 }
 
-// The store answers in whatever order its query plan produces, so both sides of
-// a comparison are ordered by the identity of an edge before they are compared.
+// The store answers in whatever order its query plan produces, so both sides are ordered by edge identity first.
 func xrefEdgeOrder(a, b entities.Edge) int {
 	return cmp.Or(cmp.Compare(a.Src, b.Src), cmp.Compare(a.Dst, b.Dst), cmp.Compare(a.Kind, b.Kind))
 }

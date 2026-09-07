@@ -16,8 +16,7 @@ const (
 	fixtureEmail = "fixture@example.invalid"
 )
 
-// testRepo scripts a throwaway clone with a pinned identity, timestamp and branch
-// so assertions on author and time hold on a machine with no git configuration.
+// The clone pins identity, timestamp and branch, so assertions on author and time hold on a machine with no git configuration.
 type testRepo struct {
 	t    *testing.T
 	root string

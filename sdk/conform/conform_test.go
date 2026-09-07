@@ -13,8 +13,6 @@ import (
 	"github.com/setthasit/Lore/sdk/conform"
 )
 
-// stub is a connector whose whole behaviour is one function, so a test can be
-// exactly as wrong as the rule it is about.
 type stub struct {
 	name   string
 	stream func(cursor lore.Cursor) ([]lore.Batch, error)
@@ -51,8 +49,6 @@ func doc(index int) lore.Document {
 	}
 }
 
-// conformant streams four documents in two batches and honours its cursor,
-// which is the behaviour every case below breaks in exactly one way.
 func conformant(cursor lore.Cursor) ([]lore.Batch, error) {
 	after := 0
 	if raw, ok := cursor["after"]; ok {
@@ -90,8 +86,6 @@ func TestCheckPassesAConformantConnector(t *testing.T) {
 	}
 }
 
-// A host verifying a stranger's binary knows neither its document count nor the
-// shape of its stream, so both fixture facts are optional.
 func TestCheckWithoutFixtureFactsStillCertifies(t *testing.T) {
 	for _, f := range conform.Check(newStub(conformant), conform.Fixture{}) {
 		t.Errorf("%s: %s", f.Check, f.Detail)
@@ -214,8 +208,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 }
 
 func TestReplayableTypesAreAllowedBackIntoTheStream(t *testing.T) {
-	// A record whose timestamp ties with the cursor is re-yielded rather than
-	// risked, which is a declared property and not a duplicate.
+	// A record whose timestamp ties with the cursor is re-yielded rather than risked, which is a declared property.
 	replays := func(cursor lore.Cursor) ([]lore.Batch, error) {
 		batches, _ := conformant(cursor)
 		if len(cursor) > 0 {

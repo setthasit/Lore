@@ -8,20 +8,16 @@ import (
 
 const pluginName = "openai-compatible"
 
-// Plugin is the official driver for vendors serving the OpenAI protocols.
 func Plugin() lore.ProviderPlugin { return plugin{} }
 
 type plugin struct{}
 
 func (plugin) Manifest() lore.Manifest {
 	return lore.Manifest{
-		Name:       pluginName,
-		Kind:       lore.KindProvider,
-		APIVersion: lore.APIVersion,
-		Summary:    "Embeddings and chat completions from any vendor speaking the OpenAI protocols",
-		// Both halves are declared because the driver as a whole serves both.
-		// A preset whose vendor publishes no embeddings endpoint refuses at
-		// construction instead, where the error can name that preset.
+		Name:         pluginName,
+		Kind:         lore.KindProvider,
+		APIVersion:   lore.APIVersion,
+		Summary:      "Embeddings and chat completions from any vendor speaking the OpenAI protocols",
 		Capabilities: lore.Capabilities{Embed: true, Complete: true},
 		Fields: []lore.Field{
 			{
@@ -51,22 +47,12 @@ func (plugin) Manifest() lore.Manifest {
 			{
 				Key:         "api_key",
 				ConfigField: "api_key_env",
-				// No DefaultEnv: every vendor names its own variable, so a
-				// suggestion here would be wrong for eight of the nine.
-				Doc: "vendor API key, sent as a bearer token; a local server that authenticates nothing needs none",
+				Doc:         "vendor API key, sent as a bearer token; a local server that authenticates nothing needs none",
 			},
 		},
-		// DefaultModels stays nil. It is documentation the host shows in
-		// scaffolds and prompts, never applied, and one driver over nine
-		// vendors has no single model to suggest — each row's default is in the
-		// preset field's Doc, where the operator reads it while choosing one.
 	}
 }
 
-// NewProvider builds only the half it was asked for: an embedding model and a
-// chat model are separate connections configured from different bindings, so
-// building both would demand configuration for a role nobody asked this
-// instance to play.
 func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	var cfg config
 	if err := c.Decode(&cfg); err != nil {

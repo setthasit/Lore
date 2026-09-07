@@ -339,8 +339,7 @@ func TestHistoryOfPagesTheCommitsOlderThanTheCursor(t *testing.T) {
 	}
 }
 
-// The bundle must carry its own next cursor: the oldest SHA of the window, which
-// Anchor.Code.BlamedSHAs keeps last because the log runs newest first.
+// The next cursor is the window's oldest SHA, which Anchor.Code.BlamedSHAs keeps last because the log runs newest first.
 func TestHistoryOfPagesContiguouslyFromTheAnchorSHAs(t *testing.T) {
 	t.Parallel()
 

@@ -182,8 +182,6 @@ func TestAWidthNobodyDeclaredIsRefusedWithoutEmbedding(t *testing.T) {
 }
 
 func TestEmbeddingNoTextsCostsNoProcess(t *testing.T) {
-	// The script has no embed group at all, so a spawned process would die with
-	// a non-zero exit and this would be a crash rather than a no-op.
 	text := script(providerManifest, shutdownOK)
 
 	embedder, err := embedderOf(t, text, lore.ProviderConfig{Instance: "vec", Model: "m", Dimensions: 2})
@@ -212,8 +210,6 @@ func TestCompleteReturnsTheAnswer(t *testing.T) {
 }
 
 func TestAnEmptyCompletionIsAnError(t *testing.T) {
-	// An empty completion is indistinguishable from a dropped request, so it is
-	// reported as internal rather than answered with nothing.
 	for name, frame := range map[string]string{
 		"empty":           `complete emit {"v":1,"id":"$ID","ok":true,"text":""}`,
 		"whitespace-only": `complete emit {"v":1,"id":"$ID","ok":true,"text":"  \t\n "}`,

@@ -10,10 +10,8 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Every type an out-of-process plugin exchanges with the host. A field added to
-// one of these without a tag would travel under its Go name, which is a silent
-// protocol break: the plugin would send `RepoRef` and the host would read
-// `repo_ref` as empty. This test is the reason that cannot happen unnoticed.
+// Every type an out-of-process plugin exchanges with the host. A field added without a tag
+// travels under its Go name, which is a silent protocol break.
 func wireTypes() []any {
 	return []any{
 		lore.Document{},
@@ -58,9 +56,7 @@ func TestEveryWireFieldCarriesASnakeCaseTag(t *testing.T) {
 	}
 }
 
-// The protocol requires RFC 3339 with a timezone offset, and requires both
-// document timestamps to be present: a batch that arrives without them cannot be
-// ordered against anything already in the index.
+// The protocol requires RFC 3339 with an offset and both document timestamps present: a batch without them cannot be ordered.
 func TestDocumentRoundTripsThroughTheWireFormat(t *testing.T) {
 	created := time.Date(2026, time.August, 30, 14, 2, 11, 0, time.UTC)
 	updated := time.Date(2026, time.September, 1, 7, 45, 3, 0, time.FixedZone("CEST", 2*60*60))
@@ -87,8 +83,7 @@ func TestDocumentRoundTripsThroughTheWireFormat(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	// The key is always present even when the value is empty, so a plugin author
-	// reading the wire form sees every field the host expects.
+	// The key is present even when the value is empty, so a plugin author sees every field the host expects.
 	for _, key := range []string{
 		`"id":`, `"source":`, `"type":`, `"repo_ref":`, `"title":`, `"body":`,
 		`"author":`, `"url":`, `"created_at":`, `"updated_at":`, `"refs":`,
@@ -115,8 +110,7 @@ func TestDocumentRoundTripsThroughTheWireFormat(t *testing.T) {
 	}
 }
 
-// A batch whose documents are empty still carries its cursor: the batch is the
-// checkpoint unit, so a cursor-less frame checkpoints nothing.
+// A batch is the checkpoint unit, so even one with no documents carries its cursor.
 func TestEmptyBatchStillEncodesItsCursor(t *testing.T) {
 	raw, err := json.Marshal(lore.Batch{Cursor: lore.Cursor{"updated_after": "2026-09-01T00:00:00Z"}})
 	if err != nil {

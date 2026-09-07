@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	// An obviously fake credential: these tests must never need a real one.
 	fakeKey    = "fake-compat-key"
 	testSystem = "You cite sources."
 	testUser   = "Why was the cache added?"
@@ -50,8 +49,6 @@ func TestPluginRefusesUndeclaredCapability(t *testing.T) {
 	}
 }
 
-// Neither key set is the one configuration this driver cannot guess its way
-// out of, so the error has to offer both ways out.
 func TestPluginRefusesWithoutPresetOrBaseURL(t *testing.T) {
 	_, err := Plugin().NewProvider(testConfig(lore.CapabilityComplete, "some-model", `{}`))
 	if err == nil {
@@ -136,8 +133,6 @@ func TestOverridesBeatPresetDefaults(t *testing.T) {
 	}
 }
 
-// The width follows the model, and this driver knows nobody's models, so the
-// operator declares it: a wrong width poisons every vector written under it.
 func TestPluginRequiresDeclaredDimensions(t *testing.T) {
 	cfg := testConfig(lore.CapabilityEmbed, "bge-m3", `{"preset":"vllm"}`)
 	cfg.Dimensions = 0
@@ -191,8 +186,6 @@ func TestPluginBuildsWithoutAnAPIKey(t *testing.T) {
 	}
 }
 
-// End to end over the real protocol: configuration alone reaches a vendor, on
-// the driver's default path and on an overridden one.
 func TestCompleteAgainstAnOpenAICompatibleServer(t *testing.T) {
 	cases := []struct {
 		name string
@@ -261,8 +254,6 @@ func TestCompleteAgainstAnOpenAICompatibleServer(t *testing.T) {
 	}
 }
 
-// The preset reaches the errors an operator sees, because a workspace may hold
-// several instances of this one plugin.
 func TestErrorsNameThePresetBehindTheInstance(t *testing.T) {
 	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 		httpxtest.WriteJSON(w, http.StatusUnauthorized, `{"error":{"code":"1002","message":"invalid api key: `+fakeKey+`"}}`)

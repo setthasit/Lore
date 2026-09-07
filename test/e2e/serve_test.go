@@ -43,9 +43,6 @@ const exitBadRequest = 2
 
 const fixtureTokenEnv = "LORE_E2E_GITHUB_TOKEN"
 
-// The variable the served workspace's openai instance reads its key from. The
-// value never leaves the process: the scheduler tick is far out and no test
-// here runs a round against the real API.
 const embedderKeyEnv = "LORE_E2E_OPENAI_KEY"
 
 type servedWorkspace struct {
@@ -377,10 +374,8 @@ func freeWildcardAddr(t *testing.T) string {
 	return addr
 }
 
-// The real embedder is 1536 wide, so serve gets an index of its own: the fixture one at
-// fakeDims fails the width check. The scheduler tick is far out; a round would hit GitHub.
-// The openai instance is declared rather than left to its defaults so the key comes from
-// a variable this test owns, and never from a real OPENAI_API_KEY the developer exported.
+// The real embedder is 1536 wide, so serve gets an index of its own: the fixture width fails the check.
+// The openai key comes from a variable this test owns, never from a real OPENAI_API_KEY.
 func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) {
 	t.Helper()
 
@@ -415,10 +410,7 @@ func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) 
 	return configPath, indexPath
 }
 
-// The command is assembled the way cmd/lore assembles it, official plugins and all:
-// what a serve refusal has to hold for is the real binary, not a hand-wired subset.
-// It runs on its own goroutine so that a `serve` which binds instead of refusing
-// fails this test rather than blocking it until the whole package times out.
+// It runs on its own goroutine so a `serve` that binds instead of refusing fails this test rather than blocking it.
 func runLore(t *testing.T, args ...string) (exitCode int, stderr string) {
 	t.Helper()
 
@@ -437,7 +429,7 @@ func runLore(t *testing.T, args ...string) (exitCode int, stderr string) {
 	case exitCode = <-returned:
 		os.Args, os.Stderr = realArgs, realStderr
 	case <-time.After(commandTimeout):
-		// Left swapped on purpose: the command is still reading them.
+		// Not restored here: the command is still reading them.
 		t.Fatalf("`lore %s` has not returned after %s", strings.Join(args, " "), commandTimeout)
 	}
 

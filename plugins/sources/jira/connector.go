@@ -67,8 +67,6 @@ func withBackoff(base time.Duration) Option {
 
 // NewConnector builds a connector for a Jira Cloud site ("https://acme.atlassian.net").
 // An empty projects list ingests every project the credentials can browse.
-// The instance id is this connector's identity: two Jira sites are two instances,
-// and neither may write into the other's document namespace.
 func NewConnector(instance, baseURL, email, token string, projects []string, opts ...Option) *Connector {
 	root := strings.TrimSuffix(baseURL, "/")
 	c := &Connector{

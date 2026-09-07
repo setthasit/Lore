@@ -70,7 +70,6 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// An interrupt cancels the command's context rather than killing the process.
 func Main(reg *registry.Registry) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

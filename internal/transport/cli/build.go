@@ -45,8 +45,7 @@ func runBuild(cmd *cobra.Command, with []string, output string) error {
 		coordinates = append(coordinates, coordinate)
 	}
 
-	// The steps go to stderr and the report to stdout: a build is minutes of
-	// progress a script does not want, followed by one artifact it does.
+	// Progress goes to stderr so a script piping stdout gets only the report.
 	result, err := plugbuild.Build(cmd.Context(), plugbuild.Request{
 		Coordinates: coordinates,
 		Output:      output,

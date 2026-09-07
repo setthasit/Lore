@@ -42,9 +42,6 @@ func lockPath(dir string) string {
 	return filepath.Join(dir, LockFileName)
 }
 
-// urlArtifact is one artifact published at a URL, which has no release
-// metadata to fake. It records the paths it was asked for, so a test can see a
-// fetch that should not have happened.
 type urlArtifact struct {
 	coord     Coordinate
 	installer *Installer

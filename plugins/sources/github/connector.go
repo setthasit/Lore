@@ -16,9 +16,7 @@ import (
 )
 
 const (
-	// forgeName is the identity of the forge, not of this connector: it is what
-	// `repos[].remote` in lore.yaml is written against, so it stays fixed while
-	// the instance id — which prefixes document identity — is operator-chosen.
+	// forgeName is what `repos[].remote` in lore.yaml is written against; the instance id owns document identity.
 	forgeName = "github"
 
 	// defaultBatchSize closes a batch on the next unit boundary, so it may overshoot.
@@ -70,9 +68,7 @@ func withBackoff(base time.Duration) Option {
 	return func(c *Connector) { c.client.baseBackoff = base }
 }
 
-// NewConnector builds a connector for repos ("owner/name" each) under the source
-// instance id, which prefixes every document identity it produces. An empty
-// baseURL means github.com; GitHub Enterprise Server passes its REST root,
+// An empty baseURL means github.com; GitHub Enterprise Server passes its REST root,
 // "https://host/api/v3".
 func NewConnector(instance, token string, repos []string, baseURL string, opts ...Option) *Connector {
 	c := &Connector{
@@ -89,9 +85,6 @@ func NewConnector(instance, token string, repos []string, baseURL string, opts .
 
 func (c *Connector) Name() string { return c.instance }
 
-// MatchesRemote answers whether a registered local clone belongs to a repository
-// this instance ingests, which is what keeps the startup warning about an
-// unmatched clone working without the engine knowing a forge by name.
 func (c *Connector) MatchesRemote(remote string) bool {
 	forge, path, ok := lore.SplitRemote(remote)
 	if !ok || forge != forgeName {
@@ -415,8 +408,6 @@ func (c *Connector) issueUnit(ctx context.Context, r repo, n *issueNode) (unit, 
 	return unit{key: unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID}, docs: docs}, nil
 }
 
-// The instance id carries document identity while RepoRef carries the forge
-// name, because a clone's remote in lore.yaml names the forge, not the instance.
 func (c *Connector) newDocument(t lore.DocType, r repo, externalID string) lore.Document {
 	return lore.Document{
 		ID:      lore.NewDocID(c.instance, t, externalID),
@@ -426,7 +417,6 @@ func (c *Connector) newDocument(t lore.DocType, r repo, externalID string) lore.
 	}
 }
 
-// Either timestamp fills from the other when the source left one empty.
 func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	switch {
 	case updated.IsZero():
@@ -480,7 +470,6 @@ func addTextRefs(s *refs.Set, r repo, text string) {
 	s.AddCommitSHAs(text)
 }
 
-// A malformed watermark is an error rather than a silent full re-backfill.
 func readCursor(c lore.Cursor, r repo) (unitKey, error) {
 	raw := c[r.slug+cursorUpdatedSuffix]
 	if raw == "" {

@@ -23,8 +23,6 @@ const (
 	testDims       = 4
 )
 
-// testServer answers embeddings calls and records what arrived, checking the
-// parts of the request every test expects to be identical.
 type testServer struct {
 	*httptest.Server
 
@@ -32,8 +30,7 @@ type testServer struct {
 	inputs [][]string
 }
 
-// newTestServer starts a server whose handler is called with the 1-based attempt
-// number, so tests can script a different answer per attempt.
+// The handler is called with the 1-based attempt number, so a test can script a different answer per attempt.
 func newTestServer(t *testing.T, handler func(w http.ResponseWriter, attempt int, req embedRequest)) *testServer {
 	t.Helper()
 
@@ -91,8 +88,7 @@ func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *httpxt
 	return e, rec
 }
 
-// vectorFor is the daemon's deterministic answer for a text, distinct per text
-// so misordered results are detectable.
+// Distinct per text, so a misordered response is detectable.
 func vectorFor(text string, dims int) []float32 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(text))

@@ -73,8 +73,6 @@ server:
     client_ca: ./certs/ca.pem
 `
 
-// minimal is a configuration every rule accepts, so a test that asserts one
-// refusal only has to spell the key it is breaking.
 const minimal = `
 workspace: myproject
 sources:
@@ -420,9 +418,6 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// Decode is what the commands that rewrite a configuration read it with, so it
-// must accept a file Load would reject for being incomplete, and must still
-// reject a key no field claims.
 func TestDecode(t *testing.T) {
 	t.Run("an empty document is a configuration of nothing", func(t *testing.T) {
 		cfg, err := Decode(strings.NewReader(""))
@@ -858,7 +853,6 @@ func idents(instances []Instance) []string {
 	return got
 }
 
-// indent nests a sequence fixture under a top-level key.
 func indent(body string) string {
 	var out strings.Builder
 	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {

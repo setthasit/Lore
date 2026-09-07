@@ -22,9 +22,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
-// minisignKey is an Ed25519 keypair in minisign's own file format, generated
-// per test: a fixture key checked into the repository would be a signing key
-// checked into the repository.
 type minisignKey struct {
 	public  ed25519.PublicKey
 	private ed25519.PrivateKey
@@ -68,8 +65,7 @@ func (k minisignKey) writePublicKey(t *testing.T, path string) {
 	}
 }
 
-// sign renders a .minisig. algorithm is the two bytes the format leads with, so
-// a test can publish the prehashed variant this build refuses.
+// sign renders a .minisig; algorithm is the two-byte tag the format leads with.
 func (k minisignKey) sign(t *testing.T, algorithm string, signed []byte) []byte {
 	t.Helper()
 
@@ -109,17 +105,12 @@ func TestInstallVerifiesAMinisignSignature(t *testing.T) {
 	}
 }
 
-// The signature is checked before any digest is compared, so a release whose
-// checksums file is signed by nobody is refused for that and not for the digest
-// it happens to disagree about.
 func TestInstallRefusesABadSignatureBeforeComparingDigests(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
 	key := newMinisignKey(t)
 
-	// The checksums file is rewritten after it was signed: both the signature
-	// and the digest it records are now wrong.
 	signature := key.sign(t, minisignLegacy, scene.fake.Asset("v0.3.1", ChecksumsAsset))
 	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix, signature)
 	scene.fake.Attach("v0.3.1", ChecksumsAsset,
@@ -159,9 +150,7 @@ func TestInstallRefusesASignatureFromAnotherKey(t *testing.T) {
 	}
 }
 
-// A prehashed minisign signature hashes with BLAKE2b, which is not in the
-// standard library. It is refused by name: a signature layer that silently does
-// nothing is worse than none, because the user believes it is there.
+// A prehashed minisign signature hashes with BLAKE2b, which the standard library has no implementation of.
 func TestInstallRefusesAPrehashedMinisignSignature(t *testing.T) {
 	t.Parallel()
 
@@ -182,8 +171,6 @@ func TestInstallRefusesAPrehashedMinisignSignature(t *testing.T) {
 	}
 }
 
-// A declared signature that is not published is refused rather than accepted
-// unsigned: opting in must not be able to fail open.
 func TestInstallRefusesAMissingSignature(t *testing.T) {
 	t.Parallel()
 
@@ -200,9 +187,6 @@ func TestInstallRefusesAMissingSignature(t *testing.T) {
 	}
 }
 
-// The key a relative pubkey: names is the one beside lore.yaml, and a
-// same-named key in the directory lore happens to be started from is not it:
-// verifying against that one would trust whoever put it there.
 func TestInstallVerifiesAgainstTheKeyBesideTheConfiguration(t *testing.T) {
 	scene := newScene(t)
 	signer, decoy := newMinisignKey(t), newMinisignKey(t)
@@ -248,7 +232,6 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 		t.Fatal("a verified signature is not reported")
 	}
 
-	// The same key over other bytes must not verify.
 	scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, []byte("something else")))
 	if _, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{}); err == nil {
@@ -284,8 +267,7 @@ func cosignPublicKeyFile(t *testing.T, public crypto.PublicKey) string {
 	return path
 }
 
-// The digest per curve is spelled out here rather than read from the code under
-// test: cosign's choice is what a release is signed with.
+// The digest per curve is spelled out here rather than read from the code under test: it is cosign's choice.
 func cosignSign(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte {
 	t.Helper()
 
@@ -311,8 +293,6 @@ func cosignSign(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte {
 	return []byte(base64.StdEncoding.EncodeToString(signature) + "\n")
 }
 
-// cosign signs with the digest the curve's size implies, so a P-384 release is
-// signed over SHA-384: checking it against SHA-256 rejects a valid signature.
 func TestInstallVerifiesACosignSignatureOnTheLargerCurves(t *testing.T) {
 	t.Parallel()
 
@@ -337,8 +317,6 @@ func TestInstallVerifiesACosignSignatureOnTheLargerCurves(t *testing.T) {
 	}
 }
 
-// A key this build cannot verify with is refused while the key is read, so no
-// .sig request is made for it.
 func TestInstallRefusesAnUnusableKeyBeforeFetchingASignature(t *testing.T) {
 	t.Parallel()
 

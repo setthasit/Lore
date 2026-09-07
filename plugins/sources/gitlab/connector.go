@@ -18,13 +18,9 @@ import (
 )
 
 const (
-	// forgeName names the forge, not this source instance: Document.RepoRef is
-	// written "gitlab:group/project" because repos[].remote in lore.yaml is
-	// written against the forge, while the rest of a document's identity comes
-	// from the instance id, which an operator may rename freely.
+	// forgeName is what `repos[].remote` in lore.yaml is written against; the instance id owns document identity.
 	forgeName = "gitlab"
 
-	// DefaultBaseURL is the instance root used when the workspace names none.
 	DefaultBaseURL = "https://gitlab.com"
 
 	// defaultBatchSize closes a batch on the next unit boundary, so it may overshoot.
@@ -77,10 +73,8 @@ func withBackoff(base time.Duration) Option {
 	return func(c *Connector) { c.client.baseBackoff = base }
 }
 
-// NewConnector builds a connector for projects, each a namespaced path
-// ("group/project" or "group/subgroup/project"), under the instance id every
-// document and cursor entry is keyed on. An empty baseURL means gitlab.com; a
-// self-managed instance passes its root, "https://gitlab.acme.dev".
+// Each project is a namespaced path ("group/subgroup/project"). An empty baseURL means
+// gitlab.com; a self-managed instance passes its root, "https://gitlab.acme.dev".
 func NewConnector(instance, token string, projects []string, baseURL string, opts ...Option) *Connector {
 	root := httpx.Endpoint(baseURL, DefaultBaseURL, "")
 	c := &Connector{
@@ -98,9 +92,6 @@ func NewConnector(instance, token string, projects []string, baseURL string, opt
 
 func (c *Connector) Name() string { return c.instance }
 
-// MatchesRemote answers whether a registered local clone belongs to a project
-// this instance ingests, which is what keeps the startup warning about an
-// unmatched clone working without the engine knowing GitLab by name.
 func (c *Connector) MatchesRemote(remote string) bool {
 	forge, path, ok := lore.SplitRemote(remote)
 	if !ok || forge != forgeName {
@@ -159,8 +150,7 @@ func (c *Connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 	}
 }
 
-// project is a namespaced path. encoded is the same path in the URL-encoded form
-// every /projects/:id endpoint expects.
+// encoded is path in the URL-encoded form every /projects/:id endpoint expects.
 type project struct {
 	path    string
 	encoded string
@@ -176,10 +166,8 @@ func parseProject(s string) (project, error) {
 
 func (p project) ref() string { return forgeName + ":" + p.path }
 
-// A bare "#123" or "!123" means nothing outside its project, so it is qualified.
-// The sigil is dropped: the index keys merge requests and issues by number under
-// one namespace, and a GitLab reference cannot say which of the two it hit any
-// more precisely than the resolver already does.
+// A bare "#123" or "!123" means nothing outside its project. The sigil is dropped: the
+// index keys merge requests and issues by number under one namespace.
 func (p project) numberRef(number int) string {
 	return p.path + "#" + strconv.Itoa(number)
 }
@@ -235,8 +223,6 @@ func (u *unit) emitAfter(from unitKey) bool {
 	return u.key.after(from)
 }
 
-// Every collection is filtered server-side by the watermark, so the walk reads
-// only what may have changed and sorts the three streams back together.
 func (c *Connector) projectUnits(ctx context.Context, p project, from unitKey) ([]unit, error) {
 	var since string
 	if !from.updatedAt.IsZero() {
@@ -356,8 +342,6 @@ func (c *Connector) mergeRequestUnit(ctx context.Context, p project, n *mergeReq
 	return unit{key: unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID}, docs: docs}, nil
 }
 
-// parent is the merge request a note hangs off: its external id anchors the
-// note's own, and its page is where the note's anchor lives.
 type parent struct {
 	external string
 	url      string
@@ -366,9 +350,7 @@ type parent struct {
 
 func (t parent) noteURL(id int64) string { return t.url + noteFragment(id) }
 
-// A resolvable thread is the closest GitLab has to a review: its opening note
-// states the position, the replies argue it. A standalone comment opens nothing,
-// so it stays a plain review comment.
+// A resolvable thread is the closest GitLab has to a review; a standalone comment stays a plain comment.
 func (c *Connector) discussionDocs(p project, mr parent, d *discussion) []lore.Document {
 	notes := authored(d.Notes)
 	if len(notes) == 0 {
@@ -386,8 +368,7 @@ func (c *Connector) discussionDocs(p project, mr parent, d *discussion) []lore.D
 	return docs
 }
 
-// System notes record label, milestone and assignee churn rather than reasoning,
-// and GitLab emits one per change: indexing them would bury the argument.
+// GitLab emits a system note per label, milestone and assignee change; none carry reasoning.
 func authored(notes []note) []*note {
 	out := make([]*note, 0, len(notes))
 	for i := range notes {
@@ -515,7 +496,6 @@ func addTextRefs(s *refs.Set, p project, text string) {
 	s.AddCommitSHAs(text)
 }
 
-// Either timestamp fills from the other when the source left one empty.
 func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	switch {
 	case updated.IsZero():
@@ -526,7 +506,6 @@ func timestamps(created, updated time.Time) (time.Time, time.Time) {
 	return created, updated
 }
 
-// A malformed watermark is an error rather than a silent full re-backfill.
 func readCursor(c lore.Cursor, p project) (unitKey, error) {
 	raw := c[p.path+cursorUpdatedSuffix]
 	if raw == "" {

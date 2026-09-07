@@ -11,8 +11,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugbuild"
 )
 
-// fakeIndexTransport serves the plugin index from memory: a search test that
-// reached the real index would assert whatever the ecosystem holds today.
 type fakeIndexTransport struct {
 	body string
 	err  error
@@ -81,15 +79,13 @@ func TestPluginSearchPrintsEveryColumnAMatchNeeds(t *testing.T) {
 	}
 }
 
-// A user knows one of three things about the plugin they want: what it is
-// called, what it does, or what it has to be. All three are matched.
 func TestPluginSearchMatchesNameSummaryAndKind(t *testing.T) {
 	fakeIndex(t, fakeIndexTransport{body: searchIndexBody})
 
 	for query, want := range map[string]string{
-		"LINEAR":     "linear",   // name, case folded
-		"embeddings": "together", // summary
-		"provider":   "together", // kind
+		"LINEAR":     "linear",
+		"embeddings": "together",
+		"provider":   "together",
 	} {
 		res := run(t, nil, "plugin", "search", query)
 		if res.exitCode != exitOK {
@@ -114,8 +110,6 @@ func TestPluginSearchReportsNoMatch(t *testing.T) {
 	}
 }
 
-// An empty index is the honest state of a young ecosystem, and printing nothing
-// would read as a broken command.
 func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
 	fakeIndex(t, fakeIndexTransport{body: `{"version": 1, "plugins": []}`})
 
@@ -128,8 +122,6 @@ func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
 	}
 }
 
-// The index is fetched from a first-party host, but every entry in it describes
-// somebody else's plugin, so a refused entry is news the operator needs.
 func TestPluginSearchSaysHowManyEntriesItLeftOut(t *testing.T) {
 	fakeIndex(t, fakeIndexTransport{body: `{
   "version": 1,
@@ -167,8 +159,6 @@ func TestPluginSearchSaysNothingAboutSkippedEntriesWhenNoneAre(t *testing.T) {
 	}
 }
 
-// "nothing is published yet" would be a lie about an index that published
-// entries this build refused: the operator must be told which of the two it is.
 func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
 	fakeIndex(t, fakeIndexTransport{body: `{
   "version": 1,

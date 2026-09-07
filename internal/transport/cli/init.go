@@ -16,13 +16,8 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// commentColumn is where a trailing comment starts. The scaffold is read far
-// more often than it is generated, so its comments line up in one column the
-// way a hand-written file's would.
 const commentColumn = 43
 
-// The tuning blocks describe the engine's own behavior rather than any plugin's,
-// so they are the one part of the scaffold no manifest can generate.
 const (
 	queryBlock = `# query:                                   # optional tuning
 #   event_window: 30d                      # ± window for event resolution
@@ -51,8 +46,6 @@ func newInitCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 }
 
 func runInit(cmd *cobra.Command, configPath string, reg *registry.Registry) error {
-	// The plan is resolved before the file exists, so a build that cannot
-	// produce a loadable scaffold refuses instead of leaving an empty file.
 	plan, err := newScaffold(reg, workspaceName(configPath))
 	if err != nil {
 		return err
@@ -98,10 +91,6 @@ func workspaceName(configPath string) string {
 	return name
 }
 
-// scaffold is the plugin set a fresh workspace is written for. Which plugins
-// those are is the composition root's choice, expressed as registration order
-// and read back through Starter: preferring one by name here would put a
-// plugin's name back into the engine.
 type scaffold struct {
 	workspace string
 	source    lore.Manifest
@@ -123,8 +112,6 @@ func newScaffold(reg *registry.Registry, workspace string) (*scaffold, error) {
 	}
 
 	plan := &scaffold{workspace: workspace, source: source, embedder: embedder}
-	// Synthesis is optional, so a build with no completion provider still
-	// scaffolds; it just has no stanza to suggest commenting back in.
 	plan.llm, plan.hasLLM = reg.Starter(lore.KindProvider, lore.CapabilityComplete)
 	return plan, nil
 }
@@ -146,9 +133,8 @@ func (s *scaffold) render() string {
 	out.WriteString("# Local clones, for blame and file history only. Zero repos is a valid\n")
 	out.WriteString("# ask-only workspace.\n")
 	out.WriteString("repos: []\n")
-	out.WriteString("# repos:\n")
-	out.WriteString("#   - path: ~/dev/" + s.workspace + "\n")
-	out.WriteString("#     remote: " + s.source.Name + ":acme/" + s.workspace + "\n\n")
+	out.WriteString(s.repoExample())
+	out.WriteString("\n")
 
 	out.WriteString(queryBlock)
 	out.WriteString("\n")
@@ -168,6 +154,15 @@ func (s *scaffold) sourceItem() string {
 		item += "    with:\n" + body
 	}
 	return item
+}
+
+func (s *scaffold) repoExample() string {
+	if !s.source.Capabilities.RepoRemotes {
+		return ""
+	}
+	return "# repos:\n" +
+		"#   - path: ~/dev/" + s.workspace + "\n" +
+		"#     remote: " + s.source.Name + ":acme/" + s.workspace + "\n"
 }
 
 func (s *scaffold) embedderBlock() string {
@@ -197,10 +192,6 @@ func (s *scaffold) variables() []string {
 	return names
 }
 
-// withBlock renders a plugin's `with:` block from its manifest: a secret becomes
-// the key naming its variable, a required field a placeholder to fill in, and an
-// optional field a commented line. Writing the optional keys out is what lets an
-// operator see everything a plugin accepts without looking the plugin up.
 func withBlock(m lore.Manifest, indent string) string {
 	var out strings.Builder
 	for _, secret := range m.Secrets {
@@ -216,8 +207,6 @@ func withBlock(m lore.Manifest, indent string) string {
 	return out.String()
 }
 
-// placeholder is a value of the field's type that parses but says nothing, so a
-// scaffold loads while the workspace is still being filled in.
 func placeholder(f lore.Field) string {
 	switch f.Type {
 	case lore.FieldStringList:
@@ -237,8 +226,7 @@ func placeholder(f lore.Field) string {
 	}
 }
 
-// A key with no value at all decodes as null, which a plugin's decoder then
-// reports as a type error rather than as the blank it is.
+// A key with no value decodes as null, which a plugin's decoder reports as a type error, not a blank.
 func scalar(value string) string {
 	if value == "" {
 		return `""`
@@ -264,8 +252,8 @@ func defaultVariables(m lore.Manifest) []string {
 	return names
 }
 
-func scaffoldLine(indent, body, comment string) string {
-	text := indent + body
+func scaffoldLine(prefix, body, comment string) string {
+	text := prefix + body
 	if comment == "" {
 		return text + "\n"
 	}

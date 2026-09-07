@@ -23,9 +23,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// scriptedBinary is built once for the package: every test gets its own copy of
-// it next to its own script, because a plugin gets no argv and no environment
-// and so can be told what to do only by a file beside itself.
 var scriptedBinary string
 
 func TestMain(m *testing.M) {
@@ -42,9 +39,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// A leaked plugin process is invisible to an assertion: the child stays
-	// alive, the test still passes, and only a host that runs for days notices.
-	// This makes the runtime report it instead, for every test in the package.
+	// GODEBUG=execwait=2 makes the Go runtime crash on a started exec.Cmd that is never Waited.
 	if err := os.Setenv("GODEBUG", "execwait=2"); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot arm the process-leak detector:", err)
 		os.Exit(1)
@@ -66,9 +61,6 @@ func newReader(text string) *bufio.Reader {
 	return bufio.NewReaderSize(strings.NewReader(text), outputChunkBytes)
 }
 
-// The manifest lines every script starts with, one per kind. They are separate
-// constants rather than a builder because a test that changes a manifest wants
-// to read the manifest it is changing.
 const (
 	sourceManifest = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
 		`"summary":"scripted fixture","capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`
@@ -82,14 +74,10 @@ const (
 	shutdownOK = `shutdown emit {"v":1,"id":"$ID","ok":true}`
 )
 
-// script assembles a script file from groups, which read better in a test than
-// one string with hand-counted blank lines.
 func script(groups ...string) string {
 	return strings.Join(groups, "\n\n") + "\n"
 }
 
-// scripted writes a script beside a copy of the fixture binary and returns the
-// path to execute.
 func scripted(t *testing.T, text string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -104,8 +92,6 @@ func scripted(t *testing.T, text string) string {
 	return binary
 }
 
-// copyFile is the fallback for a temp directory on another filesystem, where a
-// hard link is not available.
 func copyFile(t *testing.T, from, to string) {
 	t.Helper()
 	body, err := os.ReadFile(from)
@@ -117,9 +103,6 @@ func copyFile(t *testing.T, from, to string) {
 	}
 }
 
-// testTuning keeps the shape of the protocol's timeouts — a longer budget for
-// completions, a shorter one for the handshake — while staying short enough
-// that a hung plugin fails the test instead of the CI job.
 func testTuning() tuning {
 	return tuning{
 		manifest: 10 * time.Second,
@@ -131,8 +114,6 @@ func testTuning() tuning {
 	}
 }
 
-// syncBuffer collects log output written from the process's stderr pump, which
-// runs on its own goroutine.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -247,8 +228,6 @@ func batchLine(docs, cursor string) string {
 	return fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[%s],"cursor":%s}}`, docs, cursor)
 }
 
-// ticket is one wire document with every required field, so a test that is not
-// about document shape does not have to spell one out.
 func ticket(instance, external string) string {
 	return fmt.Sprintf(`{"id":"%s:ticket:%s","source":"%s","type":"ticket","repo_ref":"",`+
 		`"title":"t","body":"b","author":"a","url":"https://example.test/%s",`+
@@ -258,8 +237,6 @@ func ticket(instance, external string) string {
 
 const doneLine = `changes emit {"v":1,"id":"$ID","done":true}`
 
-// announcedPID is the pid the streaming process wrote to its stderr, which the
-// host pumps to the logger from a goroutine of its own.
 func announcedPID(t *testing.T, logs *syncBuffer) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -305,8 +282,6 @@ func TestOpenReturnsOnlyTheKindTheManifestDeclares(t *testing.T) {
 	if _, ok := plugin.(lore.SourcePlugin); !ok {
 		t.Errorf("a source manifest produced %T, which is not a lore.SourcePlugin", plugin)
 	}
-	// The registry's kind check is only meaningful if a source cannot be bound
-	// to a provider role by accident of interface satisfaction.
 	if _, ok := plugin.(lore.ProviderPlugin); ok {
 		t.Error("a source manifest produced a value that also satisfies lore.ProviderPlugin")
 	}
@@ -429,7 +404,6 @@ func TestChangesStreamsBatchesThenDone(t *testing.T) {
 	if got := batches[0].Cursor["after"]; got != "2" {
 		t.Errorf("first cursor = %v, want after=2", batches[0].Cursor)
 	}
-	// An empty batch is still a checkpoint, so it reaches the consumer.
 	if len(batches[1].Docs) != 0 || len(batches[1].Cursor) != 2 {
 		t.Errorf("second batch = %+v, want no documents and a two-key cursor", batches[1])
 	}
@@ -507,8 +481,6 @@ func TestLineOverTheLimitFailsTheOperationNamingInstanceAndOp(t *testing.T) {
 }
 
 func TestFrameWithTheWrongIDIsRefused(t *testing.T) {
-	// The id is echoed verbatim on every frame, streamed frames included, so a
-	// stream that starts correlated and then drifts is caught mid-stream.
 	for name, stream := range map[string]string{
 		"the first frame": `changes emit {"v":1,"id":"borrowed-from-the-docs","done":true}`,
 		"a later batch": batchLine(ticket("linear", "1"), `{"after":"1"}`) + "\n" +
@@ -583,10 +555,6 @@ func TestUnknownKindKeepsWhatThePluginClaimed(t *testing.T) {
 }
 
 func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
-	// A process lives for one round, and an error frame ends one. The plugin is
-	// still answering, so it leaves the way the protocol says it may — asked,
-	// not signalled — and exit 0 is the proof: a host that walked away instead
-	// would leave this process running for as long as the host itself lives.
 	text := script(
 		sourceManifest,
 		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","kind":"rate_limit"}}`,
@@ -674,8 +642,6 @@ func TestSecretsTravelInThePayloadAndTheEnvironmentIsNotInherited(t *testing.T) 
 	if want := "secret=[sk-payload]"; !strings.Contains(got, want) {
 		t.Errorf("answer %q does not contain %q: secrets travel in the request payload", got, want)
 	}
-	// The deny case: a variable set in the parent is invisible to the child, so
-	// a plugin sees only what its manifest declared.
 	if !strings.Contains(got, "env=[]") {
 		t.Errorf("answer %q shows the child read %s from its environment", got, probe)
 	}
@@ -835,8 +801,6 @@ func TestTheHandshakeRunsOnEveryProcessBeforeTheOperation(t *testing.T) {
 	}
 
 	out := logs.String()
-	// Two handshakes, one per process: the one Open ran and the one the stream's
-	// own process ran before it was asked for anything.
 	if got := strings.Count(out, "handshaking"); got != 2 {
 		t.Errorf("the plugin handshook %d times, want one per process:\n%s", got, out)
 	}
@@ -847,8 +811,7 @@ func TestTheHandshakeRunsOnEveryProcessBeforeTheOperation(t *testing.T) {
 }
 
 func TestUnknownResponseFieldsAreIgnored(t *testing.T) {
-	// Evolution is additive, and ignoring is what makes that safe: a plugin
-	// built against a later host must still work against this one.
+	// Ignoring unknown fields is the compatibility rule: a plugin built against a newer host works against this one.
 	future := `manifest emit {"v":1,"id":"$ID","ok":true,"trailer":{"deadline":"soon"},"manifest":{"name":"scripted",` +
 		`"kind":"source","api_version":1,"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
 		`"fields":[],"secrets":[],"telemetry":true}}`
@@ -899,8 +862,6 @@ func TestAbandoningTheStreamKillsThePlugin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("a pid's liveness is probed with signal 0, which Windows has no equivalent of")
 	}
-	// The plugin sleeps before its second batch, so a host that walked away
-	// from the iterator without killing it would leave it alive to be found.
 	text := script(
 		sourceManifest,
 		"changes stderr pid=$PID\n"+
@@ -944,8 +905,6 @@ func TestTheRequestCarriesTheCursor(t *testing.T) {
 }
 
 func TestAbsentConfigTravelsAsAnObject(t *testing.T) {
-	// A plugin decoding `null` into its config struct would have to handle a
-	// case a compiled plugin never sees.
 	if got := string(emptyObject(nil)); got != "{}" {
 		t.Errorf("emptyObject(nil) = %s, want {}", got)
 	}

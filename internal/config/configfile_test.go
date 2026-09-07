@@ -81,8 +81,7 @@ func TestReadFileClassifiesEveryRefusal(t *testing.T) {
 	}
 }
 
-// The text is returned verbatim because every edit is a splice into it: a
-// reflowed document would lose the comments the operator wrote.
+// The text is returned verbatim because every edit is a splice into it: a reflowed document would lose the comments the operator wrote.
 func TestReadFileReturnsTheFileVerbatim(t *testing.T) {
 	path := writeEditable(t, editable)
 

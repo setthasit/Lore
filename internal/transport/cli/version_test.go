@@ -32,7 +32,6 @@ func mockIdentity(t *testing.T) (*Runtime, *mock_services.MockStatusService) {
 	}, status
 }
 
-// The resolver fails the way a missing lore.yaml or an unopenable index fails.
 func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 	t.Helper()
 
@@ -81,8 +80,6 @@ func TestVersionReportsTheBuildStampAndTheWorkspaceIdentity(t *testing.T) {
 	}
 }
 
-// A never-synced index is the normal state right after `lore init`: reporting it
-// as a mismatch would send the reader to a pointless re-embed.
 func TestVersionSaysWhenTheIndexHoldsNoVectorsYet(t *testing.T) {
 	rt, status := mockIdentity(t)
 	status.EXPECT().EmbedderIdentity(gomock.Any()).
@@ -107,8 +104,6 @@ func TestVersionFlagsAnEmbedderMismatchWithItsRemedy(t *testing.T) {
 	}
 }
 
-// --version is the first command a bug report runs, so a broken workspace is
-// reported on stdout and still exits zero.
 func TestVersionSurvivesAnUnresolvableWorkspace(t *testing.T) {
 	res := runVersionWithBrokenWorkspace(t,
 		fxLikeWrap(internalerror.NewBadRequestError("cannot read ./lore.yaml", nil)))
@@ -139,7 +134,6 @@ func TestVersionReportsAnUnreadableEmbedderIdentity(t *testing.T) {
 	}
 }
 
-// An unstamped binary still has to identify itself: every field falls back.
 func TestStampNeverPrintsAnEmptyField(t *testing.T) {
 	s := stamp()
 

@@ -86,8 +86,6 @@ func TestEmbedderIdentityReportsBothSides(t *testing.T) {
 	}
 }
 
-// A workspace that has never synced is configured but not yet committed to a
-// vector space: the empty half is the signal, not an error.
 func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.T) {
 	store, svc := newStatusFixture(t)
 	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", nil)

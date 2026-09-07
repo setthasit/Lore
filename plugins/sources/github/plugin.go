@@ -2,19 +2,16 @@ package github
 
 import "github.com/setthasit/Lore/sdk"
 
-// Plugin is the official GitHub source plugin.
 func Plugin() lore.SourcePlugin { return plugin{} }
 
 type plugin struct{}
 
 func (plugin) Manifest() lore.Manifest {
 	return lore.Manifest{
-		Name:       forgeName,
-		Kind:       lore.KindSource,
-		APIVersion: lore.APIVersion,
-		Summary:    "GitHub commits, pull requests, issues and their comments and reviews (read-only)",
-		// Documents carry a "github:owner/name" RepoRef, so a registered local
-		// clone can be matched against what this instance ingests.
+		Name:         forgeName,
+		Kind:         lore.KindSource,
+		APIVersion:   lore.APIVersion,
+		Summary:      "GitHub commits, pull requests, issues and their comments and reviews (read-only)",
 		Capabilities: lore.Capabilities{RepoRemotes: true},
 		Fields: []lore.Field{
 			{
@@ -43,7 +40,5 @@ func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
 	if err := c.Decode(&cfg); err != nil {
 		return nil, err
 	}
-	// GitHub Enterprise Server roots are not part of the configuration surface
-	// yet, so the connector's baseURL stays empty and means github.com.
 	return NewConnector(c.Instance, c.Secret("token"), cfg.Repos, ""), nil
 }

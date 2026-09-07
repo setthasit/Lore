@@ -15,8 +15,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// roundTripper serves the index from memory: a search test that reached the
-// real index would assert whatever the ecosystem happened to hold that day.
 type roundTripper struct {
 	status int
 	body   string
@@ -66,8 +64,6 @@ func TestFetchReadsTheIndex(t *testing.T) {
 	}
 }
 
-// Name, summary and kind are all searched because a user knows one of the
-// three: the tool they use, what it does, or what they need it to be.
 func TestMatchSearchesNameSummaryAndKind(t *testing.T) {
 	entries, _, err := fakeIndex(roundTripper{status: http.StatusOK, body: indexBody}).Fetch(context.Background())
 	if err != nil {
@@ -75,13 +71,13 @@ func TestMatchSearchesNameSummaryAndKind(t *testing.T) {
 	}
 
 	cases := map[string][]string{
-		"linear":   {"linear"},                         // name
-		"LINEAR":   {"linear"},                         // case folded
-		"deals":    {"acme-crm"},                       // summary
-		"provider": {"together"},                       // kind
-		"source":   {"linear", "acme-crm"},             // kind, several
-		"":         {"linear", "acme-crm", "together"}, // an empty query is everything
-		"jira":     nil,                                // no match is not an error
+		"linear":   {"linear"},
+		"LINEAR":   {"linear"},
+		"deals":    {"acme-crm"},
+		"provider": {"together"},
+		"source":   {"linear", "acme-crm"},
+		"":         {"linear", "acme-crm", "together"},
+		"jira":     nil,
 	}
 
 	for query, want := range cases {
@@ -96,8 +92,6 @@ func TestMatchSearchesNameSummaryAndKind(t *testing.T) {
 	}
 }
 
-// An empty index is the honest state of a young ecosystem, so it must reach the
-// caller as data it can explain rather than as a failure.
 func TestFetchReportsAnEmptyIndexAsData(t *testing.T) {
 	entries, _, err := fakeIndex(roundTripper{status: http.StatusOK, body: `{"version": 1, "plugins": []}`}).
 		Fetch(context.Background())
@@ -154,8 +148,6 @@ func TestFetchRejectsAnUnusableIndex(t *testing.T) {
 	}
 }
 
-// An index the cap cuts short is not a JSON mistake, and reporting it as one
-// sends the reader looking for a syntax error that is not there.
 func TestFetchRefusesAnOversizedIndexAsTooLarge(t *testing.T) {
 	oversized := roundTripper{status: http.StatusOK, body: strings.Repeat("a", plugindist.MaxMetadataBytes+1)}
 
@@ -255,9 +247,6 @@ func indexOf(entries ...string) string {
 
 const goodCoordinate = "github.com/jdoe/lore-linear@v0.3.1"
 
-// A search prints the coordinate the user is told to hand to `lore plugin
-// install`, so an entry that can rewrite its own rendered row is a coordinate
-// swap, not a cosmetic defect.
 func TestFetchSkipsEntriesItCannotRender(t *testing.T) {
 	overCap := strings.Repeat("a", maxEntryFieldBytes+1)
 	cases := map[string]string{
@@ -311,8 +300,6 @@ func TestFetchSkipsEntriesItCannotRender(t *testing.T) {
 	}
 }
 
-// One bad third-party entry must not take `lore plugin search` down for every
-// user, and it must not vanish quietly either.
 func TestFetchKeepsGoodEntriesBesideSkippedOnes(t *testing.T) {
 	body := indexOf(
 		indexEntry("linear", "source", "Linear issues and comments", goodCoordinate),

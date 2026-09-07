@@ -12,8 +12,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
-// scratchWorkspace roots the plugin cache in a temporary directory and seeds a
-// configuration beside a temporary lockfile, so no test writes to a real home.
 func scratchWorkspace(t *testing.T, body string) string {
 	t.Helper()
 
@@ -64,9 +62,6 @@ func TestInstallDeclaresAnUndeclaredCoordinateAtTheResolvedVersion(t *testing.T)
 	}
 }
 
-// @latest asks for the newest release, which only a repository coordinate has.
-// Install refuses the others in the same words update already refuses them in,
-// rather than gluing "@latest" onto a filename and fetching it.
 func TestInstallAtLatestRefusesACoordinateNoArgumentCanRepoint(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -105,8 +100,6 @@ func TestInstallAtLatestRefusesACoordinateNoArgumentCanRepoint(t *testing.T) {
 	}
 }
 
-// config does not reject two plugins: entries sharing a name, so each row of
-// `lore plugin list` has to be answered from its own declaration.
 func TestInstalledAnswersEachDeclarationFromItsOwnCoordinate(t *testing.T) {
 	path := scratchWorkspace(t, "workspace: myproject\n\nplugins:\n"+
 		"  - name: linear\n    from: ./lore-linear\n"+
@@ -182,8 +175,7 @@ func TestPinEditsSpliceOnceForEachPinnedCoordinate(t *testing.T) {
 }
 
 // Remove rewrites the configuration, then the lockfile, then deletes the cache.
-// The cache is the only one of the three a later install rebuilds, so a refused
-// lockfile write must not find it already thrown away.
+// Only the cache is rebuilt by re-running install, so it goes last.
 func TestRemoveKeepsTheCacheWhenTheLockfileCannotBeWritten(t *testing.T) {
 	path := scratchWorkspace(t, "workspace: myproject\n\nplugins:\n  - name: linear\n"+
 		"    from: github.com/jdoe/lore-linear@v0.3.1\n")
@@ -199,8 +191,7 @@ func TestRemoveKeepsTheCacheWhenTheLockfileCannotBeWritten(t *testing.T) {
 	workspace := openScratch(t, path)
 	cached := seedCache(t, workspace.store, "linear", "v0.3.1")
 
-	// An atomic rename cannot replace a directory, so the lockfile write fails
-	// once the configuration has already been rewritten.
+	// An atomic rename cannot replace a directory, so a directory at the lock path makes the write fail.
 	if err := os.Remove(lockPath(dir)); err != nil {
 		t.Fatalf("clear the lockfile: %v", err)
 	}

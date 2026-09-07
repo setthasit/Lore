@@ -8,41 +8,30 @@ import (
 )
 
 type Host struct {
-	// Log is never nil.
-	Log *slog.Logger
+	Log *slog.Logger // never nil
 }
 
-// SourceConfig is everything a source instance is built from. Instance is the
-// identity the whole engine keys on, so a connector never spells its own name.
 type SourceConfig struct {
-	Instance string          // "jira-acme" — cursor key, Source value, DocID prefix
+	Instance string
 	Config   json.RawMessage // the `with:` block, minus the keys that name secrets
 	Secrets  map[string]string
 	Host     Host
 }
 
-// Decode unmarshals the `with:` block strictly: a key the plugin does not know
-// is an error, never a silently ignored typo.
+// Decode unmarshals the `with:` block strictly: an unknown key is an error,
+// never a silently ignored typo.
 func (c SourceConfig) Decode(v any) error { return decodeStrict(c.Instance, c.Config, v) }
 
-// Secret returns the resolved value of a secret the manifest declared. An
-// undeclared key is empty: needing a value the manifest never asked for means
-// the plugin is misconfigured, not that the host withheld something.
+// An undeclared key is empty.
 func (c SourceConfig) Secret(key string) string { return c.Secrets[key] }
 
-// DocID builds a document identity prefixed with this instance's id, which is
-// what keeps two instances of one plugin out of each other's namespace.
 func (c SourceConfig) DocID(t DocType, external string) DocID {
 	return NewDocID(c.Instance, t, external)
 }
 
-// ProviderConfig is everything a provider instance is built from for one role
-// binding. Capability says which half of a multi-capability provider to build;
-// Model and Dimensions come from the binding, not the instance, because one
-// connection serves several models.
 type ProviderConfig struct {
 	Instance   string
-	Capability Capability
+	Capability Capability // a provider serving several builds only this one
 	Model      string
 
 	// Dimensions is the vector width the operator declared, for drivers whose
@@ -58,9 +47,8 @@ func (c ProviderConfig) Decode(v any) error { return decodeStrict(c.Instance, c.
 
 func (c ProviderConfig) Secret(key string) string { return c.Secrets[key] }
 
-// CodeConfig binds a code plugin to one clone. Root is workspace-absolute.
 type CodeConfig struct {
-	Root string
+	Root string // workspace-absolute
 	Host Host
 }
 

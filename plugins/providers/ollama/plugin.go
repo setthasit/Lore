@@ -6,7 +6,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Plugin is the official Ollama provider plugin.
 func Plugin() lore.ProviderPlugin { return plugin{} }
 
 type plugin struct{}
@@ -18,8 +17,6 @@ func (plugin) Manifest() lore.Manifest {
 		APIVersion:   lore.APIVersion,
 		Summary:      "Local Ollama daemon embeddings and chat completions",
 		Capabilities: lore.Capabilities{Embed: true, Complete: true},
-		// Both suggestions are models the daemon pulls by name; the embedding
-		// one still needs an explicit width, because no Ollama model implies one.
 		DefaultModels: map[lore.Capability]string{
 			lore.CapabilityEmbed:    "nomic-embed-text",
 			lore.CapabilityComplete: "llama3.1",
@@ -33,16 +30,10 @@ func (plugin) Manifest() lore.Manifest {
 				Prompt:  "Ollama daemon URL",
 			},
 		},
-		// No secrets: the daemon is unauthenticated, and the manifest is the
-		// only place that can say so — a provider with no declared secret is
-		// one the host never resolves an environment variable for.
+		// No secrets: the daemon is unauthenticated.
 	}
 }
 
-// NewProvider builds only the half it was asked for: an embedding model and a
-// chat model are separate connections configured from different bindings, so
-// building both would demand configuration for a role nobody asked this
-// instance to play.
 func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	var cfg struct {
 		BaseURL string `json:"base_url"`

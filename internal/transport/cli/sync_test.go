@@ -47,7 +47,6 @@ func TestSyncPassesReembedThrough(t *testing.T) {
 	}
 }
 
-// Scoping a round is what makes a freshly added source verifiable on its own.
 func TestSyncPassesTheSourceSelectorThrough(t *testing.T) {
 	rt, orchestrator := mockSync(t)
 	orchestrator.EXPECT().Sync(gomock.Any(), services.SyncOptions{Source: "jira"}).Return(services.SyncResult{}, nil)
@@ -58,8 +57,6 @@ func TestSyncPassesTheSourceSelectorThrough(t *testing.T) {
 	}
 }
 
-// The refusal is the orchestrator's: a re-embed rewinds every cursor, so it
-// cannot be scoped to one source.
 func TestSyncRejectsAScopedReembed(t *testing.T) {
 	rt, orchestrator := mockSync(t)
 	refused := internalerror.NewBadRequestError("cannot re-embed a single source", nil)

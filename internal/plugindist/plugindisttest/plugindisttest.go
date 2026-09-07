@@ -1,5 +1,4 @@
-// Package plugindisttest hosts the fake GitHub release server shared by the
-// plugindist tests and the CLI tests that drive the plugin supply chain.
+// Package plugindisttest hosts the fake GitHub release server shared by the plugindist and CLI tests.
 package plugindisttest
 
 import (
@@ -18,8 +17,6 @@ import (
 
 const checksumsAsset = "checksums.txt"
 
-// GitHub answers the two calls the plugin supply chain makes: the release
-// metadata for a tag, and the asset download it points at.
 type GitHub struct {
 	*httptest.Server
 
@@ -30,8 +27,7 @@ type GitHub struct {
 	latest string
 }
 
-// NewGitHub serves over TLS because the installer refuses plaintext: reach it
-// with Client(), or trust Certificate() where the code under test finds roots.
+// NewGitHub serves over TLS: reach it with Client(), or trust Certificate() where the code under test finds roots.
 func NewGitHub(t *testing.T, owner, repo string) *GitHub {
 	t.Helper()
 
@@ -46,8 +42,7 @@ func NewGitHub(t *testing.T, owner, repo string) *GitHub {
 	return fake
 }
 
-// Publish adds a release and generates checksums.txt over its assets, which is
-// what a release pipeline following the convention produces.
+// Publish also generates checksums.txt over the assets.
 func (g *GitHub) Publish(tag string, assets map[string][]byte) {
 	g.t.Helper()
 
@@ -60,8 +55,7 @@ func (g *GitHub) Publish(tag string, assets map[string][]byte) {
 	g.tags[tag], g.latest = published, tag
 }
 
-// Attach writes one asset and leaves checksums.txt as published: a signature
-// beside the file it signs, or a mutated asset.
+// Attach writes one asset and leaves checksums.txt as published.
 func (g *GitHub) Attach(tag, name string, body []byte) {
 	g.t.Helper()
 
@@ -86,8 +80,6 @@ func (g *GitHub) DownloadURL(tag, name string) string {
 	return g.URL + "/download/" + tag + "/" + name
 }
 
-// AssetName is the archive name goreleaser publishes for this machine, which is
-// the one the installer asks for.
 func (g *GitHub) AssetName(tag string) string {
 	return g.repo + "_" + strings.TrimPrefix(tag, "v") + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 }
@@ -142,8 +134,6 @@ func (g *GitHub) writeRelease(w http.ResponseWriter, tag string) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Archive builds the tar.gz a goreleaser release publishes: the binary,
-// executable, beside the files nobody runs.
 func Archive(t *testing.T, binaryName string, body []byte) []byte {
 	t.Helper()
 

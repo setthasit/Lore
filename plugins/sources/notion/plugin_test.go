@@ -7,8 +7,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Every document lands in the instance's own namespace, so the id the host
-// configures has to reach the connector this builds.
 func TestNewSourceCarriesTheConfiguredInstanceID(t *testing.T) {
 	c, err := Plugin().NewSource(lore.SourceConfig{
 		Instance: "notion-acme",

@@ -20,8 +20,6 @@ import (
 )
 
 const (
-	// fakeToken is obviously not a credential; the stub asserts it arrives in
-	// the Authorization header and nowhere else.
 	fakeToken   = "ghp_fake_test_token"
 	fixtureRepo = "acme/widgets"
 
@@ -29,7 +27,6 @@ const (
 	shaB = "1a2b3c4d5e6f708192a3b4c5d6e7f80910111213"
 )
 
-// Documents the fixtures are expected to produce, in stream order.
 const (
 	commitBID   lore.DocID = "github:commit:acme/widgets/commit/" + shaB
 	commitAID   lore.DocID = "github:commit:acme/widgets/commit/" + shaA
@@ -61,9 +58,6 @@ func wantCursors() []lore.Cursor {
 
 var operationPattern = regexp.MustCompile(`query\s+(\w+)`)
 
-// stub replays hand-written fixtures shaped like real GraphQL and REST
-// responses. hook, when set, may answer a request itself — that is how failure
-// modes are injected.
 type stub struct {
 	t      *testing.T
 	server *httptest.Server
@@ -82,9 +76,6 @@ func newStub(t *testing.T) *stub {
 	return s
 }
 
-// connector builds a connector against the stub. Batches close after two
-// documents so batch boundaries are observable, and retries sleep for a
-// millisecond instead of a second.
 func (s *stub) connector(repos []string, opts ...Option) *Connector {
 	base := []Option{withBatchSize(2), withMaxAttempts(3), withBackoff(time.Millisecond)}
 	return NewConnector(forgeName, fakeToken, repos, s.server.URL, append(base, opts...)...)
@@ -205,8 +196,7 @@ type stream struct {
 	afterErr int // yields observed after the first error: must stay 0
 }
 
-// drain consumes the whole iterator without breaking, so a yield after an error
-// would be observed rather than hidden by an early return.
+// drain never breaks, so a yield after an error is observed rather than hidden by an early return.
 func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
@@ -259,8 +249,7 @@ func TestConformance(t *testing.T) {
 	}
 	conform.Run(t, func() lore.Connector { return s.connector([]string{fixtureRepo}) }, conform.Fixture{
 		Docs: docs,
-		// A commit whose committed date ties with the cursor's second is
-		// replayed rather than risked; nothing else re-enters the stream.
+		// A commit whose committed date ties with the cursor's second is replayed rather than risked.
 		ReplayableTypes: []lore.DocType{lore.DocTypeCommit},
 	})
 }
@@ -276,8 +265,7 @@ func TestChangesStreamsOldestFirstInBatches(t *testing.T) {
 		t.Fatalf("batches\n got %v\nwant %v", diff, wantBatchedIDs())
 	}
 
-	// Oldest-first orders the top-level items. A review or comment keeps its own
-	// (older) edit time and travels with the parent whose update surfaced it.
+	// A review or comment keeps its own older edit time and travels with the parent that surfaced it.
 	var last lore.Document
 	for _, d := range allDocs(got.batches) {
 		switch d.Type {
@@ -319,10 +307,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 		t.Fatalf("first pass: %v", first.err)
 	}
 
-	// Resuming after the first batch re-fetches everything the API offers — the
-	// stub, like GitHub, has no idea what was committed — and must yield only
-	// what the cursor has not covered. The watermark commit is the exception: it
-	// shares the watermark's second, so it is replayed rather than risked.
+	// GitHub re-offers the whole overlap window, so the cursor has to exclude what it covered; the watermark commit's tied second replays.
 	resumed := drain(t, conn, first.batches[0].Cursor)
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
@@ -346,9 +331,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 	}
 }
 
-// A cursor can land on an item's own second with a document id that sorts above
-// it. An immutable commit has to be replayed there — nothing would ever bring it
-// back — while a pull request or issue is skipped and returns on its next edit.
+// At a tied second an immutable commit is replayed, while a pull request or issue returns on its next edit.
 func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -400,8 +383,7 @@ func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 					t.Errorf("%s was already covered by the cursor", id)
 				}
 			}
-			// A replayed unit sits below the resume position and must not drag
-			// the cursor backwards.
+			// A replayed unit sits below the resume position and must not drag the cursor backwards.
 			final := got.batches[len(got.batches)-1].Cursor
 			want := wantCursors()[len(wantCursors())-1]
 			if !maps.Equal(final, want) {
@@ -550,8 +532,7 @@ func externalID(t *testing.T, id lore.DocID) string {
 	return parts[2]
 }
 
-// The chunker derives a Chunk's thread by cutting a comment's external id at
-// "#", so that prefix has to be exactly the parent's external id.
+// The chunker cuts a comment's external id at "#", so that prefix has to be exactly the parent's external id.
 func TestCommentIDsStripToTheirThread(t *testing.T) {
 	tests := []struct {
 		comment lore.DocID
@@ -710,7 +691,6 @@ func TestRetriesSecondaryRateLimit(t *testing.T) {
 	if diff := batchedIDs(got.batches); !sameIDs(diff, wantBatchedIDs()) {
 		t.Fatalf("batches\n got %v\nwant %v", diff, wantBatchedIDs())
 	}
-	// The throttled attempt plus both history pages.
 	if n := s.callCount("LoreCommits"); n != 3 {
 		t.Errorf("LoreCommits called %d times, want 3 (one 429 retried, then two pages)", n)
 	}
@@ -852,9 +832,7 @@ func TestCursorIsCopiedPerBatch(t *testing.T) {
 	}
 }
 
-// A second instance of the plugin must not collide with the first, so its id
-// prefixes document identity; RepoRef still names the forge, because a clone's
-// remote in lore.yaml is written against the forge and not against an instance.
+// A clone's remote in lore.yaml is written against the forge, so RepoRef must not follow the instance id.
 func TestInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 	s := newStub(t)
 	c := NewConnector("github-acme", fakeToken, []string{fixtureRepo}, s.server.URL,

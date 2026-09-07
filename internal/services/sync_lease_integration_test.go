@@ -30,8 +30,7 @@ const (
 	leaseStall = 5 * time.Second
 )
 
-// Anchored to now, so only the injected clock can age a lease past the TTL:
-// a service-level check that slipped back to the wall clock would read zero.
+// Anchored to now, so only the injected clock can age a lease past the TTL.
 var leaseEpoch = time.Now().UTC().Truncate(time.Second)
 
 var (
@@ -101,8 +100,7 @@ func (leaseEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 	return vectors, nil
 }
 
-// held, when set, is closed once the batch is durable and the round then parks
-// on resume, keeping its lease alive for a contender to run against.
+// held, when set, is closed once the batch is durable; the round then parks on resume, keeping its lease alive for a contender.
 type leaseSource struct {
 	doc    lore.Document
 	held   chan struct{}

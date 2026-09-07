@@ -14,17 +14,10 @@ import (
 	"github.com/setthasit/Lore/sdk/conform"
 )
 
-// fixturePath is the Python plugin, which lives outside this package because it
-// is not Go and because `lore plugin verify` has to be able to point at it the
-// way it points at any third-party binary.
 const fixturePath = "../../test/fixtures/plugins/pysource.py"
 
-// pythonPlugin returns an executable that runs the fixture. The host executes a
-// binary with no arguments and no inherited environment, so the interpreter and
-// the script are baked into a launcher rather than passed: `#!/usr/bin/env
-// python3` would need a PATH the child deliberately does not get.
-//
-// Absent python3 the test skips; present but misbehaving, it fails.
+// The child gets no environment, so `#!/usr/bin/env python3` would find no PATH:
+// the interpreter's absolute path is baked into the launcher instead.
 func pythonPlugin(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -54,8 +47,6 @@ func quote(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
-// pythonSource opens the fixture and builds one instance of it. cfg is the
-// `with:` block as JSON, which is how the fixture is told to crash.
 func pythonSource(t *testing.T, binary, config string) lore.Connector {
 	t.Helper()
 	plugin, err := open(binary, testHost(nil), testTuning())
@@ -78,8 +69,6 @@ func pythonSource(t *testing.T, binary, config string) lore.Connector {
 	return conn
 }
 
-// One suite certifies compiled and external plugins identically: this is the
-// suite plugins/sources/* run, reached over a pipe.
 func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 	binary := pythonPlugin(t)
 
@@ -94,8 +83,6 @@ func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 	conform.Run(t, func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{Docs: 7})
 }
 
-// What `lore plugin verify` runs: no fixture facts, because a host verifying a
-// stranger's binary knows neither its document count nor its stream's shape.
 func TestPythonFixturePassesTheHostSideCheck(t *testing.T) {
 	binary := pythonPlugin(t)
 
@@ -108,8 +95,6 @@ func TestPythonFixturePassesTheHostSideCheck(t *testing.T) {
 func TestAPluginKilledMidStreamResumesWithoutDuplicates(t *testing.T) {
 	binary := pythonPlugin(t)
 
-	// The fixture crashes after its second batch, so the third batch onward was
-	// never sent and the second batch's cursor is the last persisted one.
 	crashed := pythonSource(t, binary, `{"crash_after_batch":2}`)
 	committed, err := drain(crashed, nil)
 	if err == nil {
@@ -126,8 +111,6 @@ func TestAPluginKilledMidStreamResumesWithoutDuplicates(t *testing.T) {
 		t.Fatalf("committed %d batches before the crash, want 2", len(committed))
 	}
 
-	// Only what was committed is durable: the host makes no assumption that a
-	// killed plugin flushed anything.
 	cursor := committed[len(committed)-1].Cursor
 	if len(cursor) == 0 {
 		t.Fatal("the last committed batch carries no cursor, so there is nothing to resume from")

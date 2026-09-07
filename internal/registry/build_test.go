@@ -21,8 +21,6 @@ func providerManifest(name string, caps lore.Capabilities) lore.Manifest {
 	}
 }
 
-// honest builds whatever capability it is asked for, which is what a provider
-// serving several roles must do.
 func honest(caps lore.Capabilities) stubProvider {
 	return stubProvider{
 		manifest: providerManifest("acme", caps),
@@ -58,15 +56,12 @@ func TestBuildProviderRefusesARoleTheProviderDoesNotServe(t *testing.T) {
 	}
 }
 
-// A manifest that claims a capability the built value does not implement would
-// otherwise surface as a nil-interface panic on the first query.
 func TestBuildProviderRejectsACapabilityLie(t *testing.T) {
 	t.Setenv("ACME_API_KEY", "sk-example")
 
 	r := newRegistry(t, stubProvider{
 		manifest: providerManifest("acme", lore.Capabilities{Embed: true, Complete: true}),
 		build: func(lore.ProviderConfig) (lore.Provider, error) {
-			// Declares both, only ever builds the completion half.
 			return completeOnly{}, nil
 		},
 	})
@@ -85,8 +80,6 @@ func TestBuildProviderRejectsACapabilityLie(t *testing.T) {
 	}
 }
 
-// An undeclared provider id that names a registered plugin is built with that
-// plugin's defaults, which is what keeps a two-line starter config working.
 func TestBuildProviderBuildsAnImplicitInstanceFromPluginDefaults(t *testing.T) {
 	t.Setenv("ACME_API_KEY", "sk-example")
 
@@ -152,8 +145,6 @@ func TestBuildProviderPrefersADeclaredInstanceOverThePluginDefaults(t *testing.T
 		t.Errorf("api_key = %q, want the value of the named variable", got.Secret("api_key"))
 	}
 
-	// The key that names the variable never reaches the plugin: it receives the
-	// resolved value under its own secret key instead.
 	var decoded map[string]any
 	if err := json.Unmarshal(got.Config, &decoded); err != nil {
 		t.Fatalf("decode the delivered config: %v", err)
@@ -342,8 +333,6 @@ func TestCheckURLRefusalDoesNotEchoURLCredentials(t *testing.T) {
 	}
 }
 
-// Secrets live in the environment only, so a variable that is named but unset is
-// a configuration error naming the variable the operator must export.
 func TestPrepareRejectsAnUnsetSecretVariable(t *testing.T) {
 	manifest := sourceManifest("acme")
 	manifest.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "ACME_TOKEN"}}

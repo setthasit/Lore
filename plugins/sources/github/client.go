@@ -29,10 +29,8 @@ const (
 	// maxRetryWait caps a server-requested delay; a longer one ends the sync round.
 	maxRetryWait = 2 * time.Minute
 
-	// maxResponseBytes guards against an unbounded read of a malformed body.
 	maxResponseBytes = 32 << 20
 
-	// maxErrorBody bounds how much of a failing body reaches an error message.
 	maxErrorBody = 512
 
 	// GitHub rejects a query whose potential node count exceeds 500,000, and PRs nest

@@ -49,8 +49,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 	return cmd
 }
 
-// A round with a failed instance still committed everything the others
-// produced; the exit status is non-zero anyway so a script can tell.
+// A partial round exits non-zero so a script can tell.
 func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	for _, failure := range failures {
 		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, internalerror.MessageOf(failure.Err))

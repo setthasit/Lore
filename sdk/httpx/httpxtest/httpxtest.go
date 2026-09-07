@@ -1,5 +1,4 @@
-// Package httpxtest hosts the httptest scaffolding shared by the connector
-// tests that drive httpx.Client.
+// Package httpxtest scripts per-attempt responses for httpx.Client tests.
 package httpxtest
 
 import (
@@ -19,8 +18,7 @@ type Server struct {
 	calls int
 }
 
-// NewServer starts a server whose handler is called with the 1-based attempt
-// number, so tests can script a different answer per attempt.
+// NewServer calls handler with the 1-based attempt number.
 func NewServer(t *testing.T, handler func(w http.ResponseWriter, r *http.Request, attempt int)) *Server {
 	t.Helper()
 
@@ -49,8 +47,7 @@ func WriteJSON(w http.ResponseWriter, status int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// WaitRecorder stands in for the backoff sleep so tests observe the computed
-// delays without spending them.
+// WaitRecorder stands in for the backoff sleep, recording delays without spending them.
 type WaitRecorder struct {
 	mu    sync.Mutex
 	waits []time.Duration

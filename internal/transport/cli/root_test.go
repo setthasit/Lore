@@ -47,8 +47,6 @@ func run(t *testing.T, rt *Runtime, args ...string) result {
 	return runOn(t, registry.New(lore.Host{}), rt, "", args...)
 }
 
-// A nil runtime belongs to a command that must not build one; resolving one
-// then fails the test rather than the assertion after it.
 func runOn(t *testing.T, reg *registry.Registry, rt *Runtime, stdin string, args ...string) result {
 	t.Helper()
 
@@ -236,7 +234,6 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 }
 
 func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
-	// The cause is what a caller-facing kind must not print: Message already says everything actionable.
 	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", errUnclassified))
 
 	var stderr bytes.Buffer

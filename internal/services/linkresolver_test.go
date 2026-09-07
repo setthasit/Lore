@@ -680,8 +680,6 @@ func TestLinkRejectsAReferenceOfUnknownKind(t *testing.T) {
 	source := linkDoc(linkPRID, lore.DocTypePR, "rolls up EPIC-7", ref)
 	pending := []entities.PendingRef{{SourceDoc: linkPRID, Ref: ref}}
 
-	// Both passes are covered: a kind the resolver cannot rule on must never be
-	// carried by a stored ref either, however it got there.
 	tests := map[string]func(m linkMocks) error{
 		"a document brings it in at ingest": func(m linkMocks) error {
 			return m.resolver().Link(context.Background(), []lore.Document{source})
@@ -697,8 +695,7 @@ func TestLinkRejectsAReferenceOfUnknownKind(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			// No ResolveRef, no UpsertEdges and no UpsertPendingRefs are declared: the ref
-			// is refused before anything reads or records it.
+			// No ResolveRef, no UpsertEdges and no UpsertPendingRefs are declared: the ref is refused before anything reads it.
 			err := run(newLinkMocks(t))
 			if !internalerror.IsBadRequest(err) {
 				t.Fatalf("= %v (%s), want bad request", err, internalerror.KindOf(err))

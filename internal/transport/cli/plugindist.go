@@ -13,10 +13,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// trustNotice is printed before anything is downloaded. An external plugin runs
-// as a subprocess with the user's privileges and holds its source's token; the
-// engine does not sandbox it, so the one honest mitigation is saying so at the
-// moment the user chooses to install.
 const trustNotice = "installing a plugin runs that author's code on this machine, with your privileges" +
 	" and the tokens you give its sources"
 

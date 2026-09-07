@@ -9,8 +9,6 @@ import (
 	"github.com/setthasit/Lore/internal/registry"
 )
 
-// The warnings are computed by the registry from what the built connectors say
-// they ingest, so a command's job is only to put them on the right stream.
 func TestStartupWarningsReachStderrOnly(t *testing.T) {
 	rt := mockStatus(t, entities.IndexStats{}, nil)
 	rt.Config = &config.Config{Workspace: "myproject"}

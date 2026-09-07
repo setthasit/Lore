@@ -17,7 +17,6 @@ import (
 type Runtime struct {
 	Config *config.Config
 
-	// Warnings are configuration facts that degrade answers without being errors.
 	Warnings  registry.Warnings
 	Query     services.QueryService
 	Why       services.WhyService
@@ -29,11 +28,8 @@ type Runtime struct {
 	Synthesis services.SynthesisService
 }
 
-// modules are fx options beyond the workspace: only `lore serve` adds the scheduler.
 type Resolver func(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error)
 
-// fxResolver closes over the registry so every command resolves a workspace
-// against the same plugin set the binary was assembled from.
 func fxResolver(reg *registry.Registry) Resolver {
 	return func(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error) {
 		return resolveWithFX(ctx, reg, configPath, modules...)

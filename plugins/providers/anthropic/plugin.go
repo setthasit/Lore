@@ -6,7 +6,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Plugin is the official Anthropic provider plugin.
 func Plugin() lore.ProviderPlugin { return plugin{} }
 
 type plugin struct{}
@@ -39,8 +38,6 @@ func (plugin) Manifest() lore.Manifest {
 	}
 }
 
-// NewProvider serves completions only; the messages API embeds nothing, so an
-// embed binding is a configuration mistake rather than a missing feature.
 func (p plugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	var cfg struct {
 		BaseURL string `json:"base_url"`

@@ -28,10 +28,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The plugins these tests wire are declared here rather than imported: nothing
-// under internal/ may reach into plugins/, and the subject is the graph anyway.
-// A stub also pins the graph down where a real plugin could not — it reports
-// exactly the vector width a case wants, including none at all.
 const (
 	sourcePlugin = "pigeon"     // a source that claims the remotes it is told to
 	dualPlugin   = "abacus"     // a provider that both embeds and completes
@@ -42,12 +38,8 @@ const (
 	embedderModel  = "beads-v2"
 	completerModel = "chalk-v1"
 
-	// The width dualPlugin reports, so a configuration binding it never has to
-	// declare one.
 	dualWidth = 24
 
-	// The answer dualPlugin's completer gives, so a test can tell the completer
-	// the graph resolved from any other value.
 	dualReply = "an answer from the stub completer"
 )
 
@@ -99,8 +91,6 @@ func (stubConnector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch,
 	return func(func(lore.Batch, error) bool) {}
 }
 
-// The manifest claims repo_remotes, so the connector must answer which remotes
-// it ingests: that question is the whole of the unmatched-clone warning.
 func (c stubConnector) MatchesRemote(remote string) bool { return slices.Contains(c.seams, remote) }
 
 type stubDualPlugin struct{}
@@ -121,8 +111,6 @@ func (stubDualPlugin) Manifest() lore.Manifest {
 	}
 }
 
-// One value serves both halves; which half it was built for is the capability
-// the host asked for and then asserts it against.
 func (stubDualPlugin) NewProvider(lore.ProviderConfig) (lore.Provider, error) {
 	return stubModel{}, nil
 }
@@ -162,9 +150,6 @@ func (stubWidthPlugin) Manifest() lore.Manifest {
 	}
 }
 
-// The width the binding declared is reported back verbatim, which is how a case
-// drives the graph with a chosen vector width — or with none, as the deny case
-// wants.
 func (stubWidthPlugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
 	return stubEmbedder{dims: c.Dimensions}, nil
 }
@@ -199,8 +184,6 @@ func (stubCodePlugin) Manifest() lore.Manifest {
 
 func (stubCodePlugin) NewCode(lore.CodeConfig) (lore.CodeRepo, error) { return stubClone{}, nil }
 
-// A clone that tracks no file: the code-anchored verbs then refuse for a reason
-// that names the clone, which is what proves the clone reached them.
 type stubClone struct{}
 
 var _ lore.CodeRepo = stubClone{}
@@ -224,8 +207,6 @@ func stubRegistry(t *testing.T) *registry.Registry {
 	return reg
 }
 
-// The embedder is the one role a workspace cannot resolve without, so every
-// configuration below carries one; the cases about widths spell their own.
 const embedderBlock = `embedder:
   provider: ` + dualPlugin + `
   model: ` + embedderModel + `
@@ -254,10 +235,7 @@ func gitClone(t *testing.T) string {
 	return dir
 }
 
-// startWorkspace resolves the graph, runs its startup hooks and populates
-// targets. The index is closed on cleanup rather than before returning, so a
-// test can still question the store the graph opened; a Close failure surfaces
-// there as a test failure.
+// The index is closed on cleanup rather than before returning, so a test can still question the store the graph opened.
 func startWorkspace(t *testing.T, path string, targets ...any) error {
 	t.Helper()
 
@@ -300,8 +278,6 @@ func TestWorkspaceResolvesOneConnectorPerSourceInstance(t *testing.T) {
 	for _, connector := range connectors {
 		names = append(names, connector.Name())
 	}
-	// Configuration order is sync order, and each connector answers to its
-	// instance id, because that id is the cursor key and the document namespace.
 	if want := []string{sourcePlugin, "pigeon-archive"}; !slices.Equal(names, want) {
 		t.Errorf("connector names = %v, want %v", names, want)
 	}
@@ -331,8 +307,6 @@ func TestWorkspaceWithReposAndNoSourcesResolvesTheCodeAnchoredVerbs(t *testing.T
 	_, whyErr := why.Why(ctx, services.WhyRequest{File: anchoredFile, LineStart: 10, LineEnd: 20})
 	_, historyErr := history.HistoryOf(ctx, services.HistoryRequest{File: anchoredFile})
 
-	// The registered clone reached both verbs: each refusal is about the file
-	// and names the clone it looked in, not about there being no clone at all.
 	for verb, err := range map[string]error{"why": whyErr, "history_of": historyErr} {
 		if got := internalerror.KindOf(err); got != internalerror.KindNotFound {
 			t.Fatalf("%s kind = %s, want %s (error %v)", verb, got, internalerror.KindNotFound, err)
@@ -343,8 +317,6 @@ func TestWorkspaceWithReposAndNoSourcesResolvesTheCodeAnchoredVerbs(t *testing.T
 	}
 }
 
-// widthConfig is a workspace whose embedder reports exactly dims, which is the
-// one number the index and the vector-space identity are both built from.
 func widthConfig(t *testing.T, dimensions string) string {
 	t.Helper()
 
@@ -370,9 +342,6 @@ func TestWorkspaceComposesTheVectorSpaceFromThePluginModelAndWidth(t *testing.T)
 	if got := embedder.Dimensions(); got != 8 {
 		t.Fatalf("Dimensions = %d, want 8", got)
 	}
-	// The host composes the identity from the plugin's manifest name, the
-	// configured model and the width the provider reports; a provider never
-	// names a vector space itself, so it cannot claim another's.
 	if want := services.VectorSpace(widthPlugin + "/" + embedderModel + "/8"); space != want {
 		t.Errorf("vector space = %q, want %q", space, want)
 	}
@@ -390,8 +359,6 @@ func TestWorkspaceOpensTheIndexAtTheWidthTheEmbedderReports(t *testing.T) {
 	if _, err := store.SearchVector(ctx, make([]float32, 8), entities.Filters{}, 1); err != nil {
 		t.Errorf("SearchVector at the width the embedder reports: %v", err)
 	}
-	// The vector column's width is baked into the index at creation, so a query
-	// vector of any other width is the proof that it was baked in at this one.
 	if _, err := store.SearchVector(ctx, make([]float32, 9), entities.Filters{}, 1); err == nil {
 		t.Error("the index accepted a 9-dimension query vector: it was opened at some other width")
 	}
@@ -415,7 +382,6 @@ func TestWorkspaceRefusesAnEmbedderThatReportsNoVectorWidth(t *testing.T) {
 	}
 }
 
-// `lore mcp`, `lore sync` and `lore status` run on workspaces that never synthesize.
 func TestWorkspaceResolvesWithoutAnLLMBlock(t *testing.T) {
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
@@ -462,8 +428,6 @@ llm:
 		t.Fatalf("graph resolved to synthesis=%v llm=%v; want both", synthesis, completer)
 	}
 
-	// Answering with the bound plugin's text is what tells this completer apart
-	// from any other value the graph could have handed synthesis.
 	got, err := completer.Complete(context.Background(), "system", "user")
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -473,8 +437,6 @@ llm:
 	}
 }
 
-// The binding names an instance id that no plugin answers to, so each role
-// resolves only if the decoded providers: block reached it.
 func TestWorkspaceBindsOneDeclaredProviderInstanceToBothRoles(t *testing.T) {
 	const instance = "house-abacus"
 
@@ -534,8 +496,6 @@ func TestWorkspaceResolvesWithNoProvidersReposOrLLM(t *testing.T) {
 	}
 }
 
-// A clone whose remote no source ingests still answers blame, so it is reported
-// as a warning the transports print, never as a failure to resolve.
 func TestWorkspaceWarnsOnlyAboutACloneNoSourceClaims(t *testing.T) {
 	const ingestedRemote = "pigeon:acme/app"
 
@@ -738,8 +698,6 @@ func TestWorkspaceResolvesTheCodeAnchoredVerbsForAnAskOnlyWorkspace(t *testing.T
 	_, whyErr := why.Why(ctx, services.WhyRequest{File: anchoredFile, LineStart: 10, LineEnd: 20})
 	_, historyErr := history.HistoryOf(ctx, services.HistoryRequest{File: anchoredFile})
 
-	// A workspace with no clone answers document questions and declines code
-	// questions instead of guessing at them.
 	for verb, err := range map[string]error{"why": whyErr, "history_of": historyErr} {
 		if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 			t.Fatalf("%s kind = %s, want %s (error %v)", verb, got, internalerror.KindPrecondition, err)
@@ -760,7 +718,6 @@ const (
 	schedulerStopTimeout = 200 * time.Millisecond
 )
 
-// A round parks until the test releases it, so a graph can be stopped mid-round.
 type scheduledSync struct {
 	rounds   chan struct{}
 	released chan struct{}

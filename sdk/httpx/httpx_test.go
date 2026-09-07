@@ -20,8 +20,7 @@ type chatBody struct {
 }
 
 func TestPostJSONWritesOutOnlyOnASoundBody(t *testing.T) {
-	// json.Decoder fills earlier fields before reporting a type error, so a
-	// half-decoded attempt must never be retried into a thinner second body.
+	// json.Decoder fills earlier fields before reporting a type error, so a half-decoded attempt must not be retried into a thinner second body.
 	const partlyTyped = `{"choices":[{"message":{"content":"stale"}},{"message":{"content":5}}]}`
 
 	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, _ *http.Request, attempt int) {
@@ -156,8 +155,7 @@ func TestReadableRedactsOnlyARealSecret(t *testing.T) {
 		t.Errorf("readable = %q, want %q", got, want)
 	}
 
-	// An unauthenticated provider has no secret; replacing an empty string
-	// would splice the redaction marker between every character.
+	// An unauthenticated provider has no secret; replacing an empty string would splice the marker between every character.
 	if got := (Client{}).readable("model not found"); got != "model not found" {
 		t.Errorf("readable without a secret = %q, want the message unchanged", got)
 	}

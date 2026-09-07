@@ -15,8 +15,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Repo is the git implementation of lore.CodeRepo. Every path it takes is
-// relative to the root of the single clone it is bound to.
 var _ lore.CodeRepo = (*Repo)(nil)
 
 type Repo struct {

@@ -1,5 +1,3 @@
-// Package ollama completes and embeds text with a local Ollama daemon's chat
-// and embeddings APIs over net/http.
 package ollama
 
 import (
@@ -38,7 +36,6 @@ func WithHTTPClient(client *http.Client) Option {
 }
 
 // New builds a client for model at baseURL; empty baseURL means DefaultBaseURL.
-// The daemon is unauthenticated, so there is no credential to pass.
 func New(model, baseURL string, opts ...Option) (*Client, error) {
 	if model == "" {
 		return nil, errors.New("ollama: model is empty")

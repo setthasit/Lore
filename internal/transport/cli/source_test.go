@@ -10,9 +10,6 @@ import (
 	"github.com/setthasit/Lore/internal/registry"
 )
 
-// seeded is a hand-written configuration with comments in it, which is what
-// `source add` has to leave alone: the splice exists so a round trip through the
-// YAML encoder never reflows a file a human wrote.
 const seeded = `workspace: myproject
 
 # Sources say what to INGEST: one item per instance, in sync order.
@@ -30,12 +27,8 @@ embedder:
   model: embed-small
 `
 
-// The answers a full run over forgePlugin's manifest needs: the token variable
-// defaulted, one repository, the base URL defaulted, and the three optional
-// fields left out.
 const forgeAnswers = "\nacme/app\n\n\n\n\n"
 
-// trackerAnswers covers the other shape: a required field with no default.
 const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
 
 func TestSourceAddAppendsASequenceItem(t *testing.T) {
@@ -90,9 +83,6 @@ embedder:
 		t.Errorf("with.projects = %v, want both keys", values["projects"])
 	}
 
-	// The transcript is the manifest read aloud: one question per declared
-	// secret and field, in declaration order, and a credential question that
-	// asks for a variable name.
 	const transcript = "name of the environment variable holding the tracker api token" +
 		" — the name, never the value [LORE_TRACKER_TOKEN]: " +
 		"Tracker base URL: " +
@@ -116,8 +106,6 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	// Every declared field is asked for, optional ones included: the operator
-	// sees what the plugin accepts even when the answer is to skip it.
 	const transcript = "sources already has an instance called forge," +
 		" so this one needs its own id, for example forge-2: " +
 		"name of the environment variable holding the forge token" +
@@ -153,7 +141,6 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 		t.Errorf("sources = %+v, want a second instance under its own id", cfg.Sources)
 	}
 	if err := cfg.Validate(); err != nil {
-		// Two instances of one plugin are legitimate; only a shared identity is not.
 		t.Errorf("the file no longer validates: %v", err)
 	}
 }
@@ -185,7 +172,6 @@ func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 			t.Errorf("stderr = %q, want it to contain %q", res.stderr, want)
 		}
 	}
-	// A provider is registered but is not a source, so it must not be offered.
 	if strings.Contains(res.stderr, "vectors") {
 		t.Errorf("stderr = %q, want only the source plugins listed", res.stderr)
 	}
@@ -194,8 +180,6 @@ func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 	}
 }
 
-// An inline flow sequence is a valid configuration no text splice can extend,
-// so the command refuses it and says what to do rather than reflowing the file.
 func TestSourceAddRefusesAnInlineSourcesValue(t *testing.T) {
 	const inline = `workspace: askonly
 sources: [{use: forge, with: {repos: [acme/app]}}]
@@ -215,8 +199,6 @@ repos: []
 	}
 }
 
-// A user who pastes a credential where a variable name was asked for must not
-// see it echoed, and must not find it in the file either.
 func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
 	const pasted = "glpat-Pasted!Credential"
 	path := writeConfigFile(t, seeded)
@@ -283,8 +265,8 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			wantErr: "sources[tracker].with.base_url must be an absolute http(s) URL",
 		},
 		{
-			// A second instance of a plugin already in the file is asked for an
-			// id first, so these answers open with one.
+			// A plugin that already has an instance is asked for an id first,
+			// so these answers open with one.
 			name:    "a url whose default is offered as the example",
 			plugin:  "forge",
 			answers: "forge-2\n\nacme/app\nftp://forge.acme.dev\n",
@@ -369,9 +351,6 @@ func TestSourceAddUsageListsTheRegisteredSourcePlugins(t *testing.T) {
 	}
 }
 
-// sourceRegistry is the build these tests pretend to be: two source plugins so
-// the usage line and the refusals have something to list, and one provider so
-// the seeded configuration's embedder names something real.
 func sourceRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 
@@ -398,8 +377,6 @@ func readConfigFile(t *testing.T, path string) string {
 	return string(raw)
 }
 
-// decodeConfigFile goes through the one strict decoder the repository has, so a
-// spliced file that this package accepts is one the next `lore` run accepts too.
 func decodeConfigFile(t *testing.T, content string) *config.Config {
 	t.Helper()
 

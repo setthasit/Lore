@@ -5,14 +5,10 @@ import (
 	"strings"
 )
 
-// APIVersion is the contract version this SDK implements. A plugin declares the
-// version it was built against and the host refuses a mismatch, naming both
-// numbers: running a source over a contract the two sides do not agree on
-// corrupts an index in ways no later validation can find.
+// APIVersion mismatch is fatal: the host refuses the plugin, because indexing
+// over a contract the two sides disagree on corrupts the index beyond repair.
 const APIVersion = 1
 
-// Kind is what a plugin extends. Each kind has exactly one construction method
-// and exactly one capability interface it must produce.
 type Kind string
 
 const (
@@ -21,42 +17,31 @@ const (
 	KindCode     Kind = "code"
 )
 
-// Plugin is the common half of every plugin: it describes itself before it is
-// asked to build anything, so a misconfiguration is caught before a sync round.
 type Plugin interface {
 	Manifest() Manifest
 }
 
-// SourcePlugin builds connectors. One plugin serves any number of instances:
-// two Jira sites are two SourceConfigs, not two plugins.
 type SourcePlugin interface {
 	Plugin
 	NewSource(SourceConfig) (Connector, error)
 }
 
-// ProviderPlugin builds model providers. The returned Provider is asserted
-// against the manifest's Capabilities by the host, which rejects a mismatch.
 type ProviderPlugin interface {
 	Plugin
 	NewProvider(ProviderConfig) (Provider, error)
 }
 
-// CodePlugin builds read-only accessors for one local clone.
 type CodePlugin interface {
 	Plugin
 	NewCode(CodeConfig) (CodeRepo, error)
 }
 
-// Provider is deliberately unconstrained: an embedding provider and a
-// completion provider are the same kind of plugin differing only in the
-// optional interfaces they satisfy. The host asserts them against the manifest.
+// Provider satisfies Embedder, Completer or both, matching the capabilities its
+// manifest declares; the host asserts it against them.
 type Provider = any
 
-// RemoteMatcher is the optional interface a Connector implements when its
-// manifest declares Capabilities.RepoRemotes. It answers whether a registered
-// local clone's "<forge>:<namespace>/<name>" remote is one this instance
-// ingests, which is what keeps the startup warning about an unmatched clone
-// working without the engine knowing a forge by name.
+// RemoteMatcher is the optional interface a Connector declaring
+// Capabilities.RepoRemotes implements; remote is "<forge>:<namespace>/<name>".
 type RemoteMatcher interface {
 	MatchesRemote(remote string) bool
 }
@@ -71,38 +56,26 @@ func IsNamespacedPath(path string) bool {
 	return len(segments) >= 2 && !slices.Contains(segments, "")
 }
 
-// Manifest is the single description of a plugin's configuration. It is not
-// documentation: the host generates scaffolds, prompts, validation and error
-// text from it, so a field that is not declared here does not exist.
 type Manifest struct {
-	Name         string       `json:"name"` // "github", "openai-compatible", "git"
+	Name         string       `json:"name"`
 	Kind         Kind         `json:"kind"`
-	APIVersion   int          `json:"api_version"` // must equal APIVersion
-	Summary      string       `json:"summary"`     // one line; shown by `lore plugin list`
+	APIVersion   int          `json:"api_version"`
+	Summary      string       `json:"summary"` // one line; shown by `lore plugin list`
 	Capabilities Capabilities `json:"capabilities"`
-	Fields       []Field      `json:"fields"` // the plugin's `with:` block
+	Fields       []Field      `json:"fields"` // the host rejects a `with:` key not declared here
 	Secrets      []Secret     `json:"secrets"`
 
-	// DefaultModels suggests one model per capability, for scaffolds and prompts.
-	// The host never applies a suggestion: a role binding always names its model,
-	// because a silently defaulted embedding model is a silently defaulted vector
-	// space, and the index it built cannot be reinterpreted afterwards.
+	// DefaultModels suggests one model per capability for scaffolds and prompts;
+	// the host never applies a suggestion.
 	DefaultModels map[Capability]string `json:"default_models,omitempty"`
 }
 
-// Capabilities are the optional behaviors a manifest claims. The host verifies
-// each claim against the built value and refuses a role binding to a capability
-// the plugin did not declare.
 type Capabilities struct {
-	Embed       bool `json:"embed"`        // provider serves embeddings
-	Complete    bool `json:"complete"`     // provider serves completions
-	RepoRemotes bool `json:"repo_remotes"` // source documents carry repo paths a local clone maps onto
+	Embed       bool `json:"embed"`
+	Complete    bool `json:"complete"`
+	RepoRemotes bool `json:"repo_remotes"` // documents carry repo paths a local clone maps onto
 }
 
-// Capability is the role a provider is being built for. It is part of
-// ProviderConfig because a chat model and an embedding model are configured
-// differently: a provider that serves both builds only the half it was asked
-// for, and the host then asserts the built value against that half.
 type Capability string
 
 const (
@@ -110,7 +83,6 @@ const (
 	CapabilityComplete Capability = "complete"
 )
 
-// Declares reports whether these Capabilities include c.
 func (c Capabilities) Declares(want Capability) bool {
 	switch want {
 	case CapabilityEmbed:
@@ -146,8 +118,6 @@ func (c Capabilities) String() string {
 	return strings.Join(out, ", ")
 }
 
-// FieldType is the shape a configuration value must have. The host checks it
-// before the plugin's own decoder runs, so a type error names the field.
 type FieldType string
 
 const (
@@ -161,27 +131,23 @@ const (
 
 // Field is one key of a plugin's `with:` block.
 type Field struct {
-	Name     string    `json:"name"` // "base_url"
+	Name     string    `json:"name"`
 	Type     FieldType `json:"type"`
 	Required bool      `json:"required"`
 
-	// Default documents the value the plugin falls back to. The host shows it in
-	// scaffolds and prompts but never injects it: applying it belongs to the
-	// plugin, which is the only side that knows the value's real type.
+	// Default documents the fallback value; the host never injects it, because
+	// only the plugin knows the value's real type.
 	Default string `json:"default,omitempty"`
 
-	Doc    string `json:"doc,omitempty"`    // shown in `lore init` scaffolds and errors
-	Prompt string `json:"prompt,omitempty"` // question `lore source add` asks
+	Doc    string `json:"doc,omitempty"`    // scaffold comment and required-field error suffix
+	Prompt string `json:"prompt,omitempty"` // question `lore source add` asks; defaults to Name
 }
 
-// Secret is a credential a plugin needs. The plugin names the key it wants;
-// the operator names the environment variable holding it; the host resolves the
-// variable and injects the value. A plugin never reads the environment, which
-// is what makes a per-plugin secret allowlist possible and what stops one
-// plugin from reading another's token.
+// Secret is a credential the host injects: the plugin names Key, the operator
+// names the env var holding it in ConfigField. A plugin never reads the environment.
 type Secret struct {
-	Key         string `json:"key"`          // "token" — how the plugin asks for it
-	ConfigField string `json:"config_field"` // "token_env" — the config key naming the env var
+	Key         string `json:"key"`
+	ConfigField string `json:"config_field"`
 	DefaultEnv  string `json:"default_env,omitempty"`
 	Doc         string `json:"doc,omitempty"`
 }

@@ -8,8 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The host injects the site, the scope and the credentials as configuration, so
-// the first request the connector sends is where that plumbing is observable.
 func TestNewSourceSyncsTheConfiguredSiteWithTheInjectedCredentials(t *testing.T) {
 	s := newStub(t)
 	c, err := Plugin().NewSource(lore.SourceConfig{

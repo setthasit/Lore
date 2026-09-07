@@ -64,7 +64,6 @@ func recordHeartbeats(store *mock_repositories.MockIndexStore, err error) <-chan
 	return beats
 }
 
-// Fails the first beat the way a busy SQLite writer would, then reports every beat that succeeds.
 func recoveringHeartbeats(store *mock_repositories.MockIndexStore) <-chan struct{} {
 	var calls atomic.Int64
 
@@ -249,8 +248,7 @@ func TestSyncFailsWithTheHeartbeatErrorNotTheCancellationItCaused(t *testing.T) 
 	t.Parallel()
 
 	conn := heartbeatConnector(t, "github")
-	// The second instance declares no Cursor call: a lost lease ends the round rather
-	// than moving on to the instances behind the one that noticed.
+	// The second instance declares no Cursor call: a lost lease ends the round rather than moving on.
 	round, m := newHeartbeatRound(t, conn, heartbeatConnector(t, "notion"))
 	recordHeartbeats(m.store, errLeaseTakenOver)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
@@ -361,7 +359,6 @@ func TestSyncJoinsItsHeartbeatBeforeReleasingTheLease(t *testing.T) {
 	}()
 
 	<-inFlight
-	// A round that never joined its heartbeat has long since released the lease by now.
 	time.Sleep(5 * testHeartbeat)
 	close(release)
 

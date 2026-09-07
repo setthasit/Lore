@@ -317,8 +317,6 @@ func TestSyncEventsCarryTheCumulativeTotalsOfEachRound(t *testing.T) {
 	}
 }
 
-// A round-level failure needs a step the round owns rather than an instance's, and
-// the LinkResolver pass is the one the sync round runs for itself.
 type failingLinks struct{ err error }
 
 func (failingLinks) Link(context.Context, []lore.Document) error { return nil }

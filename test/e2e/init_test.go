@@ -14,10 +14,6 @@ import (
 // cli keeps its exit codes unexported; this is the one it returns on success.
 const exitOK = 0
 
-// The round trip is the scaffold's one hard contract: a file `lore init` writes
-// and the next `lore` invocation rejects would strand a fresh workspace. It has
-// to hold over the plugin set the real binary registers, not a hand-wired
-// subset, which is why it runs here rather than beside the command.
 func TestInitScaffoldDecodesForTheOfficialPluginSet(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lore.yaml")
 
@@ -43,9 +39,7 @@ func TestInitScaffoldDecodesForTheOfficialPluginSet(t *testing.T) {
 	t.Logf("scaffold for the official plugin set:\n%s", scaffold)
 }
 
-// assertNoSecretValues holds the line no generated file may cross: a *_env key
-// names a variable, and anything else that looks like a credential key would be
-// holding the credential itself.
+// A *_env key names a variable; anything else that looks like a credential key would be holding the credential.
 func assertNoSecretValues(t *testing.T, content string) {
 	t.Helper()
 

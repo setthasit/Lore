@@ -2,7 +2,6 @@ package notion
 
 import "github.com/setthasit/Lore/sdk"
 
-// Plugin is the official Notion source plugin.
 func Plugin() lore.SourcePlugin { return plugin{} }
 
 type plugin struct{}
@@ -35,7 +34,6 @@ func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
 	if err := c.Decode(&cfg); err != nil {
 		return nil, err
 	}
-	// The API host is not configurable: only the tests redirect it, so an empty
-	// base URL here lets the client pick the one real Notion endpoint.
+	// Empty base URL means the one real Notion endpoint; only tests redirect it.
 	return NewConnector(c.Instance, c.Secret("token"), cfg.RootPages, ""), nil
 }

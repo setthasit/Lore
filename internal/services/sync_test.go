@@ -133,8 +133,6 @@ func syncDoc(id lore.DocID) lore.Document {
 	}
 }
 
-// The instance assertion reads nothing but Source and ID, so a mislabelling
-// connector is one of the two set to something the instance never owns.
 func syncDocOf(source string, id lore.DocID) lore.Document {
 	doc := syncDoc(id)
 	doc.Source = source
@@ -173,7 +171,6 @@ func assertSyncKind(t *testing.T, err error, want internalerror.Kind) {
 	}
 }
 
-// Transports may show the caller nothing but Message, so it carries the assertions.
 func syncMessage(t *testing.T, err error) string {
 	t.Helper()
 
@@ -185,7 +182,6 @@ func syncMessage(t *testing.T, err error) string {
 	return classified.Message
 }
 
-// The round survives a failing instance, so its error is read off the result.
 func onlySyncFailure(t *testing.T, res services.SyncResult, instance string) services.InstanceFailure {
 	t.Helper()
 
@@ -417,8 +413,7 @@ func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
 			conn.EXPECT().Changes(gomock.Any(), nil).
 				Return(newSyncStream(syncBatch(lore.Cursor{"page": "1"}, tt.doc)).seq())
 			m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
-			// No UpsertDocuments and no SetCursor are declared: the batch must be refused
-			// before it is written, and the cursor must not move past it.
+			// No UpsertDocuments and no SetCursor are declared: the batch is refused before it is written and the cursor must not move.
 
 			res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
 			if err != nil {

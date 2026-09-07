@@ -20,8 +20,6 @@ import (
 )
 
 const (
-	// Obviously not credentials; the stub asserts they reach the Authorization
-	// header and nowhere else.
 	fakeEmail = "bot@example.invalid"
 	fakeToken = "fake-api-token"
 
@@ -31,12 +29,9 @@ const (
 	issuePrefix   = "/rest/api/3/issue/"
 	commentSuffix = "/comment"
 
-	// The instance id defaults to the plugin's own name, so the identity
-	// assertions below read exactly as they do for a single Jira site.
 	defaultInstance = "jira"
 )
 
-// Documents the fixtures are expected to produce, in stream order.
 const (
 	proj101ID   lore.DocID = "jira:ticket:PROJ-101"
 	proj101c1ID lore.DocID = "jira:ticket_comment:PROJ-101#10001"
@@ -66,8 +61,6 @@ func wantCursors() []lore.Cursor {
 	}
 }
 
-// stub replays hand-written fixtures shaped like real Jira Cloud responses. hook,
-// when set, may answer a request itself — that is how failure modes are injected.
 type stub struct {
 	t      *testing.T
 	server *httptest.Server
@@ -92,8 +85,6 @@ func (s *stub) connector(opts ...Option) *Connector {
 	return s.connectorFor(fixtureProjects(), opts...)
 }
 
-// Batches close after two documents so boundaries are observable; retries record
-// their wait instead of taking it.
 func (s *stub) connectorFor(projects []string, opts ...Option) *Connector {
 	return s.instanceConnector(defaultInstance, projects, opts...)
 }
@@ -207,8 +198,7 @@ type stream struct {
 	afterErr int // yields observed after the first error: must stay 0
 }
 
-// drain consumes the whole iterator without breaking, so a yield after an error
-// would be observed rather than hidden by an early return.
+// drain never breaks, so a yield after an error is observed rather than hidden by an early return.
 func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
@@ -288,8 +278,7 @@ func TestChangesStreamsOldestFirstInUnitBatches(t *testing.T) {
 		t.Fatalf("batches\n got %v\nwant %v", ids, wantBatchedIDs())
 	}
 
-	// Oldest-first orders the issues. A comment keeps its own (older) edit time and
-	// travels with the issue whose update surfaced it.
+	// A comment keeps its own older edit time and travels with the issue whose update surfaced it.
 	var last lore.Document
 	for _, d := range allDocs(got.batches) {
 		if d.Type != lore.DocTypeTicket {
@@ -387,8 +376,7 @@ func TestJQLOnTheWire(t *testing.T) {
 	if resumed.err != nil {
 		t.Fatalf("resumed Changes: %v", resumed.err)
 	}
-	// The cursor watermark is 2024-05-01T09:30:00Z; the literal is minute-granular,
-	// zone-free and a day behind it.
+	// The literal is minute-granular and zone-free, a day behind the 2024-05-01T09:30:00Z cursor watermark.
 	want := `project IN (PROJ, INFRA) AND updated >= "2024-04-30 09:30" ORDER BY updated ASC`
 	for _, jql := range s.sentJQL()[2:] {
 		if jql != want {
@@ -470,15 +458,13 @@ func TestDocumentMetadata(t *testing.T) {
 		},
 		{
 			id: proj101c1ID, docType: lore.DocTypeTicketComment,
-			title:  "Comment on PROJ-101",
-			author: "Grace Hopper",
-			path:   "/browse/PROJ-101?focusedCommentId=10001",
-			body:   "Confirmed with the gateway team; INFRA-7 covers the queue.",
-			// A comment keeps its own edit time, older than the issue's watermark.
+			title:     "Comment on PROJ-101",
+			author:    "Grace Hopper",
+			path:      "/browse/PROJ-101?focusedCommentId=10001",
+			body:      "Confirmed with the gateway team; INFRA-7 covers the queue.",
 			createdAt: "2024-04-29T09:00:00Z", updatedAt: "2024-04-29T09:00:00Z",
 		},
 		{
-			// No updated field: the created time fills it.
 			id: proj101c2ID, docType: lore.DocTypeTicketComment,
 			title:     "Comment on PROJ-101",
 			author:    "Alan Turing",
@@ -580,8 +566,7 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 		want []lore.RawRef
 	}{
 		{
-			// PROJ-101 names itself in its own description: a self-edge is dropped,
-			// the cross-project key survives.
+			// PROJ-101 names itself in its own description: the self-edge is dropped, the cross-project key survives.
 			id: proj101ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
@@ -601,7 +586,6 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 			},
 		},
 		{
-			// The parent issue comes first, before anything the text matched.
 			id: proj101c1ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
@@ -649,8 +633,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 		t.Fatalf("first pass: %v", first.err)
 	}
 
-	// Resuming re-fetches the whole overlap window — the stub, like Jira, has no
-	// idea what was committed — and must yield only what the cursor has not covered.
+	// Like Jira, the stub re-serves the whole overlap window, so the cursor has to exclude what it covered.
 	resumed := drain(t, s.connector(), first.batches[0].Cursor)
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
@@ -673,8 +656,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 
 func TestCursorTiebreakSkipsTheWatermarkUnitOnly(t *testing.T) {
 	s := newStub(t)
-	// PROJ-123's own second with a document id sorting above it: the tie is broken
-	// lexicographically, so PROJ-123 stays covered.
+	// PROJ-123's own second with a document id sorting above it: the lexicographic tiebreak keeps PROJ-123 covered.
 	cursor := lore.Cursor{"updated_at": "2024-05-03T12:00:00.5Z", "doc_id": "jira:ticket:ZZZZ-1"}
 	got := drain(t, s.connector(), cursor)
 	if got.err != nil {
@@ -737,7 +719,6 @@ func TestRetriesThrottledSearch(t *testing.T) {
 	if ids := batchedIDs(got.batches); !sameIDs(ids, wantBatchedIDs()) {
 		t.Fatalf("batches\n got %v\nwant %v", ids, wantBatchedIDs())
 	}
-	// The throttled attempt plus both search pages.
 	if n := s.callCount("search"); n != 3 {
 		t.Errorf("search called %d times, want 3 (one 429 retried, then two pages)", n)
 	}
@@ -816,8 +797,6 @@ func TestNewConnectorTrimsTheSiteRoot(t *testing.T) {
 	}
 }
 
-// A second Jira site is a second instance of the one plugin, so nothing it
-// streams may land in the first instance's namespace.
 func TestInstanceIDPrefixesDocumentIdentity(t *testing.T) {
 	const instance = "jira-acme"
 

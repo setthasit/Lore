@@ -23,28 +23,22 @@ const (
 	benchRarePerChunk = 3
 	benchTitleWords   = 8
 
-	// One batch is one document transaction plus benchIngestBatch chunk
-	// transactions, because ReplaceChunks is per document by contract.
+	// ReplaceChunks is per document, so one batch is one document transaction plus benchIngestBatch chunk transactions.
 	benchIngestBatch = 100
 
-	// 1,000 documents, so ~10,000 chunks and ~10,000 vectors.
 	benchSearchDocs = 1000
 
 	benchK = 12
 
-	// Rotated so a benchmark reports the cost of searching rather than the cost
-	// of SQLite's page cache holding one query's postings list.
+	// Rotated so a benchmark measures searching rather than SQLite's page cache holding one query's postings list.
 	benchQueryCount = 16
 
-	// Fixes every word choice and vector component: with a per-document
-	// generator, document i is identical in every benchmark and on every run.
 	benchSeed = 20250827
 )
 
 var benchEpoch = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// The high-frequency half of the vocabulary, which is what gives BM25 the long
-// postings lists a natural-language query actually pays for.
+// The high-frequency half of the vocabulary, which gives BM25 the long postings lists a natural-language query pays for.
 var benchCommonWords = strings.Fields(`
 	the a an of to and or in for on with from into that this when why where
 	service store index query chunk document embedding vector search request
@@ -52,8 +46,7 @@ var benchCommonWords = strings.Fields(`
 	page thread comment schema migration transaction connection pool cache
 	latency deploy rollback config token limit worker queue batch flush`)
 
-// Disjoint from benchCommonWords: a stem in both halves would stop being
-// selective.
+// Disjoint from benchCommonWords: a stem in both halves would stop being selective.
 var benchRareStems = strings.Fields(`
 	auth gate shard lease quorum proxy spool ledger vault beacon cursor digest
 	entropy fabric girder harbor jitter lattice mantle nexus oracle parcel
@@ -61,8 +54,7 @@ var benchRareStems = strings.Fields(`
 	delta ember fjord glyph hollow ivory jasper kiln lumen marrow nimbus
 	obsidian plume`)
 
-// Every ordered pair of stems, so a token lands in a handful of the ten thousand
-// chunks — as selective as a real identifier or symbol name.
+// Every ordered pair of stems, so a token lands in a handful of the ten thousand chunks.
 var benchRareWords = func() []string {
 	words := make([]string, 0, len(benchRareStems)*len(benchRareStems))
 	for _, head := range benchRareStems {
@@ -109,8 +101,7 @@ func openBenchStore(b *testing.B) *Store {
 	return s
 }
 
-// The generator is seeded per document, so index i means the same bytes whatever
-// order or iteration count the benchmark loop settles on.
+// The generator is seeded per document, so index i means the same bytes at any iteration count.
 func benchDoc(i int) (lore.Document, []entities.Chunk) {
 	rng := rand.New(rand.NewPCG(benchSeed, uint64(i)))
 	kind := benchDocKinds[i%len(benchDocKinds)]
@@ -169,8 +160,7 @@ func benchTitle(text string) string {
 	return strings.Join(words[:benchTitleWords], " ")
 }
 
-// Uniform noise is fine: vec0's KNN is a brute-force scan whose cost depends on
-// how many vectors there are and how wide they are, not on what they hold.
+// Uniform noise is fine: vec0's KNN cost depends on how many vectors there are and how wide they are, not on what they hold.
 func benchVector(rng *rand.Rand) []float32 {
 	v := make([]float32, benchDims)
 	for i := range v {
@@ -235,8 +225,6 @@ func benchQueryVectors() [][]float32 {
 	return vectors
 }
 
-// ns/op is per batch; ns/doc and ns/chunk are what a connector's throughput is
-// read off.
 func BenchmarkUpsertAndChunk(b *testing.B) {
 	s := openBenchStore(b)
 

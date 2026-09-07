@@ -12,8 +12,7 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The chunker's sizing contract, restated here so the tests fail if the
-// implementation's constants drift away from the documented targets.
+// Mirrors the chunker's own sizing constants, so a drift in either fails here.
 const (
 	bytesPerToken  = 4
 	minChunkTokens = 300
@@ -43,13 +42,11 @@ func docWith(t lore.DocType, id lore.DocID, body string) lore.Document {
 	}
 }
 
-// paragraph builds a distinguishable ~50-token single-line paragraph.
 func paragraph(section, index int) string {
 	return strings.TrimSpace(fmt.Sprintf("s%dp%d %s", section, index, strings.Repeat("alpha ", 32)))
 }
 
-// headedBody builds a markdown body of sections sized so that each section is
-// itself between minChunkTokens and maxChunkTokens.
+// Each section is itself between minChunkTokens and maxChunkTokens.
 func headedBody(sections, perSection int) string {
 	var b strings.Builder
 	for s := range sections {
@@ -96,8 +93,6 @@ func assertInvariants(t *testing.T, doc lore.Document, chunks []entities.Chunk) 
 	}
 }
 
-// carriedOverlap returns the context a chunk carried from its predecessor: the
-// text before its first paragraph break.
 func carriedOverlap(text string) string {
 	head, _, ok := strings.Cut(text, "\n\n")
 	if !ok {
@@ -257,8 +252,6 @@ func TestChunkFallsBackToParagraphGroups(t *testing.T) {
 		}
 	}
 
-	// Paragraph boundaries are respected: the first paragraph opens the first
-	// chunk and the last one closes the last chunk, whole.
 	if !strings.HasPrefix(chunks[0].Text, paragraph(0, 0)) {
 		t.Errorf("first chunk does not start at the first paragraph: %q", chunks[0].Text)
 	}

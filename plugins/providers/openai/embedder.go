@@ -16,8 +16,7 @@ var _ lore.Embedder = (*Embedder)(nil)
 const (
 	embeddingsPath = "/v1/embeddings"
 
-	// maxInputsPerRequest splits caller batches: every vector comes back inline,
-	// and 512 inputs at 1536 dimensions is already a multi-megabyte response.
+	// Every vector comes back inline: 512 inputs at 1536 dimensions is already megabytes.
 	maxInputsPerRequest = 512
 
 	embedTimeout = 60 * time.Second
@@ -44,8 +43,7 @@ func NewEmbedder(apiKey, model, baseURL string, dims int) (*Embedder, error) {
 	return NewEmbedderAt(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, embeddingsPath), dims)
 }
 
-// NewEmbedderAt builds an Embedder for another provider serving this same
-// protocol at endpoint, naming it provider in errors.
+// endpoint is the vendor's full embeddings URL; provider prefixes this Embedder's errors.
 func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int) (*Embedder, error) {
 	if model == "" {
 		return nil, fmt.Errorf("%s: model is empty", provider)
@@ -66,8 +64,6 @@ func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int) (*Embedde
 	return e, nil
 }
 
-// Dimensions is the width every vector this Embedder returns carries; the host
-// composes the vector-space identity from it.
 func (e *Embedder) Dimensions() int { return e.dims }
 
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {

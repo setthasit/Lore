@@ -210,8 +210,7 @@ func TestCompleteRejectsAnswerlessResponses(t *testing.T) {
 			wantErr: "answered with no text",
 		},
 		{
-			// The daemon answers with one message object; a choices array is a
-			// different provider's shape and carries no answer here.
+			// The daemon answers with one message object; a choices array is a different provider's shape.
 			name:    "openai shaped body",
 			body:    `{"choices":[{"message":{"role":"assistant","content":"wrong shape"}}]}`,
 			wantErr: "answered with no text",
@@ -346,8 +345,7 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		// Cancelling from inside the wait is the path a caller hits: by then the
-		// 429 has been read and only the delay is left to abandon.
+		// By the time the wait starts the 429 has been read, so only the delay is left to abandon.
 		c.call.Sleep = func(ctx context.Context, _ time.Duration) error {
 			cancel()
 			return ctx.Err()

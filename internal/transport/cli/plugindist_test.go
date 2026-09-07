@@ -15,14 +15,9 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
-// pluginStub is a binary that is NOT a plugin: it answers nothing on the
-// protocol. Installing it is legal — the supply chain checks bytes, not
-// behavior — and certifying it is what refuses it.
+// pluginStub answers nothing on the plugin protocol: install checks bytes, certification is what refuses it.
 const pluginStub = "#!/bin/sh\necho lore-linear\n"
 
-// The Python fixture is a real plugin, so `lore plugin verify` runs the same
-// certification suite against it that the official plugins run under `go test`
-// and the command is exercised end to end rather than up to the handshake.
 func pythonPlugin(t *testing.T) string {
 	t.Helper()
 
@@ -37,8 +32,6 @@ func pythonPlugin(t *testing.T) string {
 	return string(body)
 }
 
-// The plugin supply chain is faked whole: these tests never reach GitHub and
-// never write to a real home.
 func newFakeReleases(t *testing.T) *plugindisttest.GitHub {
 	t.Helper()
 
@@ -50,8 +43,7 @@ func newFakeReleases(t *testing.T) *plugindisttest.GitHub {
 	return fake
 }
 
-// The commands build their own client, so the fake's certificate has to be
-// trusted where that client looks for roots: the default transport.
+// The commands build their own client, so the fake's certificate has to be trusted on the default transport.
 func trustFakeReleases(t *testing.T, certificate *x509.Certificate) {
 	t.Helper()
 
@@ -106,8 +98,6 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	// Installing a plugin runs that author's code, and the CLI says so at the
-	// moment the user chooses to.
 	if !strings.Contains(res.stdout, "runs that author's code on this machine") {
 		t.Fatalf("stdout %q does not state what installing means", res.stdout)
 	}
@@ -135,8 +125,6 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	}
 }
 
-// @latest is legal as an argument and illegal in a file, so install resolves it
-// and writes the concrete version back.
 func TestPluginInstallLatestWritesTheVersionBack(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -157,7 +145,6 @@ func TestPluginInstallLatestWritesTheVersionBack(t *testing.T) {
 	}
 }
 
-// A floating version in lore.yaml is refused before anything is downloaded.
 func TestPluginInstallRefusesAFloatingConfiguration(t *testing.T) {
 	newFakeReleases(t)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@latest"))
@@ -195,8 +182,8 @@ func TestPluginInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	}
 }
 
-// Report prints the cause chain for unclassified and KindInternal errors, and a
-// *url.Error cause carries the raw URL: this refusal must stay classified.
+// A *url.Error cause carries the raw URL, and Report prints the cause chain for
+// unclassified and KindInternal errors, so this refusal must stay classified.
 func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
 	fake := newFakeReleases(t)
 	base := fake.URL
@@ -223,8 +210,6 @@ func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
 	}
 }
 
-// A coordinate argument for a plugin nobody declared yet declares it, because
-// the declaration is what every `use:` refers to afterwards.
 func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -244,8 +229,6 @@ func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	}
 }
 
-// A URL argument carries a separator, so it is taken for a coordinate and
-// refused for having no derivable name — with the whole argument in the text.
 func TestPluginInstallUnnameableCoordinatePrintsNoURLCredentials(t *testing.T) {
 	newFakeReleases(t)
 	path := writeConfigFile(t, "workspace: myproject\n")
@@ -295,10 +278,6 @@ func TestPluginVerifyReportsTheDigestAndCertifiesTheBinary(t *testing.T) {
 	}
 }
 
-// The digest proves the bytes are the ones that were published; it says nothing
-// about whether they implement the contract. Certification is what closes that
-// gap, so a binary that answers nothing on the protocol is refused even though
-// its digest is perfect.
 func TestPluginVerifyRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -312,15 +291,11 @@ func TestPluginVerifyRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 	if res.exitCode == exitOK {
 		t.Fatalf("exit = %d, want a refusal; stdout = %q", res.exitCode, res.stdout)
 	}
-	// The digest report still precedes the refusal: which check failed is the
-	// whole diagnostic value of the command.
 	if !strings.Contains(res.stdout, publishedDigest(fake, "v0.3.1")) {
 		t.Errorf("stdout %q does not report the digest it verified", res.stdout)
 	}
 }
 
-// A cached binary rewritten after installation is caught at verify, and would
-// be caught the same way at startup: the digest is re-checked, never trusted.
 func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -396,8 +371,6 @@ func TestPluginRemoveDropsTheDeclarationLockAndCache(t *testing.T) {
 	}
 }
 
-// Removing a plugin an instance still names would write a configuration the
-// next command cannot load, so it is refused with what is in the way.
 func TestPluginRemoveRefusesWhileAnInstanceUsesIt(t *testing.T) {
 	newFakeReleases(t)
 	declared := declaredConfig("github.com/jdoe/lore-linear@v0.3.1") +

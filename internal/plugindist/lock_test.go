@@ -31,8 +31,6 @@ plugins:
         digest: sha256:1a08be77
 `
 
-// The bytes matter: the lockfile is committed, so two machines writing the same
-// pins must produce the same file rather than a diff.
 func TestLockRoundTripsExactBytes(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +42,7 @@ func TestLockRoundTripsExactBytes(t *testing.T) {
 
 	darwin, linux := Platform{OS: "darwin", Arch: "arm64"}, Platform{OS: "linux", Arch: "amd64"}
 	const release = "https://github.com/jdoe/lore-linear/releases/download/v0.3.1/"
-	// The plugins are set out of alphabetical order on purpose: the file must
-	// not depend on the order the commands happened to install in.
+	// The plugins are set out of alphabetical order: the file must sort, not follow install order.
 	lock.Set("linear", "v0.3.1", "github.com/jdoe/lore-linear@v0.3.1", linux,
 		LockArtifact{URL: release + "lore-linear_0.3.1_linux_amd64.tar.gz", Digest: "sha256:1a08be77"})
 	lock.Set("acme-crm", "v2.0.1", "https://artifacts.acme.internal/lore/acme-crm/v2.0.1.tar.gz", darwin,
@@ -76,9 +73,6 @@ func TestLockRoundTripsExactBytes(t *testing.T) {
 	}
 }
 
-// A workspace with no lockfile is not an error: it is what "nothing is pinned
-// yet" looks like, and every declared plugin then fails at startup with the
-// command that pins it.
 func TestLockAbsentFileIsEmptyNotAnError(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +108,6 @@ func TestLockRefusesAFileFromTheFuture(t *testing.T) {
 	}
 }
 
-// A version change invalidates every platform's digest, because a digest is of
-// that version's artifact and of nothing else.
 func TestLockNewVersionDropsStaleDigests(t *testing.T) {
 	t.Parallel()
 

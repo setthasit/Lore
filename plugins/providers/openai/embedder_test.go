@@ -23,8 +23,6 @@ const (
 	testDims       = 4
 )
 
-// testServer answers embeddings calls and records what arrived, checking the
-// parts of the request every test expects to be identical.
 type testServer struct {
 	*httptest.Server
 
@@ -33,8 +31,7 @@ type testServer struct {
 	headers []http.Header
 }
 
-// newTestServer starts a server whose handler is called with the 1-based attempt
-// number, so tests can script a different answer per attempt.
+// The handler is called with the 1-based attempt number, so a test can script a different answer per attempt.
 func newTestServer(t *testing.T, handler func(w http.ResponseWriter, attempt int, req embedRequest)) *testServer {
 	t.Helper()
 
@@ -109,8 +106,7 @@ func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *httpxt
 	return e, rec
 }
 
-// vectorFor is the server's deterministic answer for a text, distinct per text
-// so misordered results are detectable.
+// Distinct per text, so a misordered response is detectable.
 func vectorFor(text string, dims int) []float32 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(text))
@@ -123,7 +119,6 @@ func vectorFor(text string, dims int) []float32 {
 	return vector
 }
 
-// writeVectors answers inputs in the given order of input positions.
 func writeVectors(w http.ResponseWriter, inputs []string, dims int, order []int) {
 	data := make([]embeddingData, 0, len(order))
 	for _, i := range order {
@@ -156,8 +151,7 @@ func assertVectors(t *testing.T, got [][]float32, texts []string, dims int) {
 
 func TestEmbedPreservesInputOrder(t *testing.T) {
 	texts := []string{"alpha", "beta", "gamma", "delta"}
-	// The API does not promise response order, so answer in a shuffled one: the
-	// index field is what must decide where each vector lands.
+	// The API does not promise response order, so answer in a shuffled one: the index field decides where each vector lands.
 	shuffled := []int{2, 0, 3, 1}
 	ts := newTestServer(t, func(w http.ResponseWriter, _ int, req embedRequest) {
 		if !slices.Equal(req.Input, texts) {
@@ -257,9 +251,7 @@ func TestEmbedRetriesRateLimitHonoringRetryAfter(t *testing.T) {
 		if len(waits) != 1 {
 			t.Fatalf("waits = %v, want one entry", waits)
 		}
-		// The date is resolved against wall clock, so only the bound is stable;
-		// what matters is that it came from the header, not the exponential
-		// schedule, whose first window never reaches two seconds.
+		// The date resolves against the wall clock, so only the bound is stable; the backoff's first window never reaches two seconds.
 		if waits[0] <= time.Second || waits[0] > 3*time.Second {
 			t.Errorf("wait = %v, want within (1s, 3s]", waits[0])
 		}
@@ -350,8 +342,7 @@ func TestEmbedRespectsContextCancelDuringBackoff(t *testing.T) {
 	defer cancel()
 
 	ts := newTestServer(t, func(w http.ResponseWriter, _ int, _ embedRequest) {
-		// A directive far longer than this test is willing to wait: cancelling
-		// the context must cut the sleep short instead of honoring it.
+		// A directive longer than this test will wait: cancelling the context must cut the sleep short.
 		w.Header().Set("Retry-After", "600")
 		w.WriteHeader(http.StatusTooManyRequests)
 		cancel()
@@ -448,8 +439,7 @@ func TestEmbedRejectsMalformedResponses(t *testing.T) {
 }
 
 func TestEmbedErrorsOmitAPIKey(t *testing.T) {
-	// The provider echoes the credential it rejected; the error built from that
-	// body is what reaches logs and user output.
+	// The provider echoes the credential it rejected, and that body is what reaches logs and user output.
 	echoBody := fmt.Sprintf(`{"error":{"message":"Incorrect API key provided: %s. Check your key."}}`, fakeKey)
 
 	cases := []struct {

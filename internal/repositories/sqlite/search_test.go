@@ -26,9 +26,8 @@ func day(month, d int) time.Time {
 	return time.Date(2025, time.Month(month), d, 12, 0, 0, 0, time.UTC)
 }
 
-// Shaped for ranking assertions: "sqlite" is in two of the five chunks so BM25's
-// IDF stays positive, "lore" is in all five so a filter test sees only the filter
-// exclude rows, and the embeddings give every pair a distinct L2 distance.
+// "sqlite" is in two of the five chunks so BM25's IDF stays positive, "lore" is in all five,
+// and the embeddings give every pair a distinct L2 distance.
 var searchCorpus = []corpusEntry{{
 	id:        lore.NewDocID("github", lore.DocTypeCommit, "abcdef0123456789"),
 	source:    "github",
@@ -261,8 +260,7 @@ func TestSearchVectorRanksByDistance(t *testing.T) {
 	}
 }
 
-// The query matches the whole corpus, so anything missing was excluded by the
-// filter.
+// The query matches the whole corpus, so anything missing was excluded by the filter.
 var filterCases = []struct {
 	name   string
 	filter entities.Filters
@@ -354,9 +352,7 @@ func TestSearchFiltersPushDown(t *testing.T) {
 	}
 }
 
-// A filtered vector search must return the k best chunks *of the filtered set*:
-// if the filter were applied after the KNN, asking for one hit would spend it on
-// the nearest chunk and then throw it away, returning nothing.
+// Applying the filter after the KNN would spend the single hit on the nearest chunk and return nothing.
 func TestSearchVectorFilterAppliesBeforeK(t *testing.T) {
 	s := openTestStore(t)
 	seedSearchCorpus(t, s)
@@ -391,8 +387,6 @@ func TestSearchRejectsBadArguments(t *testing.T) {
 	}
 }
 
-// A chunk indexed without an embedding is lexically retrievable and invisible to
-// vector search.
 func TestSearchVectorSkipsUnembeddedChunks(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

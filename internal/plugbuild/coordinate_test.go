@@ -42,9 +42,6 @@ func TestParseCoordinateAcceptsModuleForms(t *testing.T) {
 	}
 }
 
-// The failure a user is most likely to hit is a repository whose name is not an
-// identifier, and the only recovery is the suffix, so every one of these must
-// name it rather than describing the problem abstractly.
 func TestParseCoordinateAsksForAnExplicitPackage(t *testing.T) {
 	for _, raw := range []string{
 		"github.com/acme/lore-acme.crm@v1.0.0",

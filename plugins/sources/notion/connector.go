@@ -62,10 +62,8 @@ func withBackoff(base time.Duration) Option {
 	return func(c *Connector) { c.client.baseBackoff = base }
 }
 
-// NewConnector scopes the sync to rootPages and their descendants, each entry a page
-// id or an exact page title; empty rootPages means every page the token can read.
-// The instance id is this connector's identity: two Notion workspaces are two
-// instances, and neither may write into the other's document namespace.
+// NewConnector scopes the sync to rootPages and their descendants, each entry a page id
+// or an exact page title; empty rootPages means every page the token can read.
 func NewConnector(instance, token string, rootPages []string, baseURL string, opts ...Option) *Connector {
 	c := &Connector{
 		client:    newClient(token, baseURL),

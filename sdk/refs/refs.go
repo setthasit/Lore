@@ -11,9 +11,7 @@ var (
 	ticketKeyPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
 
 	// Bracketing characters stay out of the match so a markdown link yields a bare URL.
-	urlPattern = regexp.MustCompile(`https?://[^\s<>()\[\]{}"'` + "`" + `]+`)
-
-	// commitSHAPattern matches abbreviated and full lowercase hex SHAs.
+	urlPattern       = regexp.MustCompile(`https?://[^\s<>()\[\]{}"'` + "`" + `]+`)
 	commitSHAPattern = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
 
 	filePathPattern = regexp.MustCompile(`[\w.-]+(?:/[\w.-]+)+\.[A-Za-z][A-Za-z0-9]*`)

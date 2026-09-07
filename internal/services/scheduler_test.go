@@ -29,7 +29,6 @@ type roundOutcome struct {
 	err    error
 }
 
-// A round parks until the test ends it, so a tick can never outrun the assertions.
 type roundCall struct {
 	ctx  context.Context
 	ends chan roundOutcome

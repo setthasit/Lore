@@ -374,7 +374,6 @@ func TestWhyChainsBlamedCommitsToTheirDiscussion(t *testing.T) {
 	f.expectMetas([]lore.DocID{whyPRID, whyIssueID}, whyPRMeta, whyIssueMeta)
 	f.expectNeighbors([]lore.DocID{whyPRID, whyIssueID})
 
-	// The blamed code is grouped per commit, not left in collapsed-span order.
 	f.expectSearch(
 		whyEmbedText(whyAsked,
 			commitACode+"\n"+whyCode(whyOnlyB),

@@ -9,7 +9,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// A row with no published endpoint must refuse and name the preset, not guess one.
 func TestEmbeddingsFollowEachPresetsPublishedEndpoint(t *testing.T) {
 	for _, name := range presetKeys() {
 		t.Run(name, func(t *testing.T) {
@@ -37,8 +36,7 @@ func embedConfig(preset, model string) lore.ProviderConfig {
 	}
 }
 
-// The preset documentation is the only place an operator reads a row's default
-// models, so it must offer every key, in a stable order.
+// The preset documentation is where an operator reads these defaults, so it must offer every key in a stable order.
 func TestPresetDocOffersEveryPresetSorted(t *testing.T) {
 	doc := presetDoc()
 

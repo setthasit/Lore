@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// CodeRepo answers blame and history questions about one local clone. Every
-// path is relative to the root of the clone the host bound this value to, and
-// every operation is read-only: a code plugin never writes to the clone.
+// Paths are relative to the clone root the host bound this value to, and every
+// operation is read-only: a code plugin never writes to the clone.
 type CodeRepo interface {
 	// An endLine past the last line of the file is clamped to it; a startLine past it is an error.
 	Blame(ctx context.Context, path string, startLine, endLine int) ([]BlameSpan, error)

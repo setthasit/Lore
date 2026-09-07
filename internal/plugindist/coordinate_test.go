@@ -51,9 +51,6 @@ func TestCoordinateDispatchesByShape(t *testing.T) {
 	}
 }
 
-// A floating version in lore.yaml is the failure this whole file exists to
-// prevent: two machines would resolve it differently and run different code
-// against one index.
 func TestCoordinateRefusesFloatingVersionInConfig(t *testing.T) {
 	t.Parallel()
 
@@ -70,8 +67,6 @@ func TestCoordinateRefusesFloatingVersionInConfig(t *testing.T) {
 		}
 	}
 
-	// The same coordinate is legal as an install argument, which is the only
-	// place that can pin it back into the file.
 	if _, err := ResolveInstall(".", config.PluginDecl{Name: "linear", From: "github.com/jdoe/lore-linear@latest"}); err != nil {
 		t.Fatalf("resolving @latest as an install argument: %v", err)
 	}
@@ -109,8 +104,6 @@ func TestCoordinateRefusesUnpinnedAndMalformed(t *testing.T) {
 	}
 }
 
-// The asset name is constructed, never guessed at: that is what lets a release
-// which ignores the convention fail with the name that was looked for.
 func TestCoordinateAssetNameFollowsConvention(t *testing.T) {
 	t.Parallel()
 
@@ -128,8 +121,6 @@ func TestCoordinateAssetNameFollowsConvention(t *testing.T) {
 	}
 }
 
-// A local plugin is the development escape hatch, and the warning is the whole
-// price: no lock entry, no digest, no way to know what changed.
 func TestCoordinateLocalWarnsAndIsNotLocked(t *testing.T) {
 	t.Parallel()
 
@@ -152,9 +143,6 @@ func TestCoordinateLocalWarnsAndIsNotLocked(t *testing.T) {
 	}
 }
 
-// A name becomes a directory in the plugin cache, so a name that is not one
-// path component would let a declaration reach outside it: an install writes
-// where the name says, and `lore plugin remove` deletes what it says.
 func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +159,6 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 		}
 	}
 
-	// The accept case: the names an operator actually writes still resolve.
 	for _, name := range []string{"linear", "jira-acme", "acme-crm", "s3"} {
 		if _, err := Resolve(".", config.PluginDecl{Name: name, From: from}); err != nil {
 			t.Errorf("name %q was refused: %v", name, err)
@@ -238,9 +225,6 @@ func TestCoordinateRefusesABlankPubKey(t *testing.T) {
 	}
 }
 
-// A moved coordinate keeps the key the declaration named: `lore plugin update`
-// pins a new version through AtVersion, and a dropped key would install the
-// new release unsigned.
 func TestCoordinateKeepsPubKeyAcrossAtVersion(t *testing.T) {
 	t.Parallel()
 

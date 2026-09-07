@@ -32,8 +32,7 @@ type Embedder struct {
 	sleep func(context.Context, time.Duration) error
 }
 
-// NewEmbedder builds an Embedder for model at baseURL; empty baseURL means
-// DefaultBaseURL. The daemon is unauthenticated, so there is no credential to pass.
+// NewEmbedder builds an Embedder for model at baseURL; empty baseURL means DefaultBaseURL.
 func NewEmbedder(model, baseURL string, dims int) (*Embedder, error) {
 	if model == "" {
 		return nil, errors.New("ollama: model is empty")
@@ -52,8 +51,6 @@ func NewEmbedder(model, baseURL string, dims int) (*Embedder, error) {
 	return e, nil
 }
 
-// Dimensions is the width every vector this Embedder returns carries; the host
-// composes the vector-space identity from it.
 func (e *Embedder) Dimensions() int { return e.dims }
 
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {

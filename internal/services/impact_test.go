@@ -24,7 +24,7 @@ const (
 	impactWalkDepth = 2
 )
 
-// The service's excerpt budget, restated so a drift in either constant fails here.
+// Mirrors the service's excerpt budget, so a drift in either constant fails here.
 const impactExcerptChars = 500
 
 const impactDay = 24 * time.Hour

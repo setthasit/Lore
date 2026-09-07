@@ -28,13 +28,9 @@ import (
 const (
 	instanceFixtures = "instances"
 
-	// Two instances of one plugin: the ids are the operator's, and everything the
-	// engine keys on — cursor, Document.Source, DocID prefix — is one of them.
 	acmeInstance   = "jira-acme"
 	legacyInstance = "jira-legacy"
 
-	// Each instance's site is a path on one fixture server, which is the whole of
-	// the difference between the two: same plugin, different configuration.
 	acmeSitePath   = "/acme"
 	legacySitePath = "/legacy"
 
@@ -44,22 +40,18 @@ const (
 	acmeCommentID   = "10101"
 	legacyCommentID = "20202"
 
-	// Not credentials; the fixture sites only assert they arrived in Authorization.
 	instanceJiraEmail = "lore-bot@example.invalid"
 	instanceJiraToken = "e2e_instances_jira_token"
 
 	instanceEmailEnv = "LORE_E2E_JIRA_EMAIL"
 	instanceTokenEnv = "LORE_E2E_JIRA_TOKEN"
 
-	// One ticket and one comment per instance.
 	instanceDocuments    = 4
 	perInstanceDocuments = 2
 
-	// The harness leaves both sites healthy when no instance is named as broken.
 	noFailingInstance = ""
 
-	// No fixture here quotes a browse URL, so the corpus needs no host placeholder;
-	// this is the one the rewriting in fixtureAPI.write looks for and never finds.
+	// No fixture here quotes a browse URL, so fixtureAPI.write looks for this placeholder and never finds it.
 	instanceFixtureHost = "https://jira.example"
 
 	instanceSearchCall   = "search"
@@ -71,14 +63,8 @@ const (
 	instanceWorkspaceIndex = "instances.db"
 )
 
-// instanceAuth is the Basic credential the Jira client builds from the pair
-// above; both sites are configured with the same one.
 var instanceAuth = "Basic " + base64.StdEncoding.EncodeToString([]byte(instanceJiraEmail+":"+instanceJiraToken))
 
-// The workspace these tests run: one Jira plugin used twice, and an embedding
-// role bound to a provider that lives in this file, so a round needs no model
-// service. It is written to disk and loaded back, because instance identity is
-// a configuration fact and the configuration is where a regression would show.
 const instanceConfig = `workspace: lore-e2e-instances
 index_path: %[1]s
 sources:
@@ -101,9 +87,6 @@ embedder:
   model: bag-of-words
 `
 
-// site maps an instance onto the fixture site it is configured to reach. The
-// routing table and the assertions read the same entries, so a test can never
-// disagree with itself about which site belongs to which instance.
 type site struct {
 	instance string
 	path     string
@@ -129,8 +112,6 @@ func siteOf(t *testing.T, instance string) site {
 	return site{}
 }
 
-// docIDs are the two documents an instance's site yields, named the way the
-// engine names them: the instance id, not the plugin name, is the prefix.
 func (s site) docIDs() []lore.DocID {
 	return []lore.DocID{
 		lore.NewDocID(s.instance, lore.DocTypeTicket, s.ticket),
@@ -138,10 +119,6 @@ func (s site) docIDs() []lore.DocID {
 	}
 }
 
-// stubEmbedderPlugin is the embedding role's provider for this suite. It is
-// declared here rather than taken from plugins/ because the subject is which
-// instance a document belongs to, and a real provider would only add a network
-// dependency to that question.
 type stubEmbedderPlugin struct{}
 
 var _ lore.ProviderPlugin = stubEmbedderPlugin{}
@@ -164,10 +141,6 @@ func (stubEmbedderPlugin) NewProvider(c lore.ProviderConfig) (lore.Provider, err
 	return fakeEmbedder{}, nil
 }
 
-// instanceWorkspace is a workspace assembled the way the binary assembles one:
-// plugins into a registry, a lore.yaml on disk, and the fx graph over both. The
-// connectors are therefore built from configuration, which is the only way a
-// test can hold the instance wiring to account.
 type instanceWorkspace struct {
 	api    *fixtureAPI
 	store  repositories.IndexStore
@@ -175,8 +148,7 @@ type instanceWorkspace struct {
 	status services.StatusService
 }
 
-// failing names the instance whose site answers every request with a hard
-// error; noFailingInstance leaves both sites healthy.
+// failing is the instance whose site answers every request with a hard error; empty leaves both healthy.
 func newInstanceWorkspace(t *testing.T, failing string) *instanceWorkspace {
 	t.Helper()
 
@@ -225,10 +197,7 @@ func writeInstanceConfig(t *testing.T, baseURL string) string {
 	return configPath
 }
 
-// serveInstanceSites answers as one Jira site per instance, each rooted at its
-// own path. A failing site answers with a status the Jira client does not
-// retry, so the round reaches the other instance instead of spending its
-// retry budget on this one.
+// A failing site answers with a status the Jira client does not retry, so the round reaches the other instance instead of spending its retry budget.
 func (a *fixtureAPI) serveInstanceSites(w http.ResponseWriter, r *http.Request, failing string) {
 	for _, s := range instanceSites {
 		rest, ok := strings.CutPrefix(r.URL.Path, s.path)
@@ -266,8 +235,6 @@ func (a *fixtureAPI) serveInstanceSite(w http.ResponseWriter, r *http.Request, s
 	a.write(w, "comments_"+key+".json")
 }
 
-// Calls are counted per site, not per endpoint: what a filtered round has to
-// prove is that the site it left out was never asked anything.
 func (s site) call(op string) string { return s.instance + " " + op }
 
 func (w *instanceWorkspace) sync(ctx context.Context, t *testing.T, opts services.SyncOptions) services.SyncResult {
@@ -303,8 +270,6 @@ func (w *instanceWorkspace) cursor(ctx context.Context, t *testing.T, instance s
 	return cursor
 }
 
-// assertOwns checks the two identities the instance id decides at once: the
-// source every document of that instance carries, and the prefix of its id.
 func (w *instanceWorkspace) assertOwns(ctx context.Context, t *testing.T, instance string) {
 	t.Helper()
 
@@ -366,8 +331,6 @@ func TestTwoJiraInstancesSyncUnderTheirOwnIdentities(t *testing.T) {
 	w.assertOwns(ctx, t, acmeInstance)
 	w.assertOwns(ctx, t, legacyInstance)
 
-	// Neither instance may write into the other's namespace, which is what the
-	// id prefix is for: the same plugin produced both halves of this index.
 	w.assertNotIndexed(ctx, t,
 		lore.NewDocID(acmeInstance, lore.DocTypeTicket, legacyTicket),
 		lore.NewDocID(legacyInstance, lore.DocTypeTicket, acmeTicket),
@@ -383,8 +346,7 @@ func TestTwoJiraInstancesSyncUnderTheirOwnIdentities(t *testing.T) {
 	if len(acme) == 0 || len(legacy) == 0 {
 		t.Fatalf("cursors = %v and %v, want both instances checkpointed", acme, legacy)
 	}
-	// The two sites are at different watermarks, so one cursor serving both
-	// instances would show up here as a single shared position.
+	// The two sites sit at different watermarks, so equal cursors would mean one shared position.
 	if maps.Equal(acme, legacy) {
 		t.Errorf("both instances resume from %v, want each site's own position", acme)
 	}
@@ -419,8 +381,7 @@ func TestSyncingOneJiraInstanceLeavesTheOtherUntouched(t *testing.T) {
 	}
 }
 
-// The failure-isolation guarantee: the broken instance is declared first, so a
-// round that stopped at it would leave the healthy one with nothing at all.
+// The broken instance is declared first, so a round that stopped at it would leave the healthy one with nothing.
 func TestAFailingJiraInstanceDoesNotStopTheHealthyOne(t *testing.T) {
 	ctx := context.Background()
 	w := newInstanceWorkspace(t, acmeInstance)

@@ -44,8 +44,7 @@ var (
 	whyIssueDocID = lore.NewDocID(githubSource, lore.DocTypeIssue, fixtureRepo+"/issues/88")
 )
 
-// Line 3 opens the span, line 4 holds the field the unsynced commit renames and
-// line 13 the sentinel the follow-up renames, so one span blames three commits.
+// Line 3 is untouched since the anchor commit, line 4 is renamed by the unsynced commit and line 13 by the follow-up, so one span blames three commits.
 const writerAtFirstCommit = `package ingest
 
 type Writer struct {
@@ -118,7 +117,6 @@ func (c *clone) commit(file, content, author, when, message string) string {
 	return strings.TrimSpace(c.git("rev-parse", "HEAD"))
 }
 
-// The fixture corpus carries the SHAs this clone produced, so a blamed SHA resolves.
 type codeCorpus struct {
 	repos    []services.CodeRepo
 	fixtures string
@@ -151,8 +149,7 @@ func newCodeCorpus(t *testing.T) codeCorpus {
 	}
 }
 
-// The corpus ships as a template: its SHAs exist only once the clone is built,
-// and serveREST looks a commit fixture up by the leading characters of its SHA.
+// The corpus is a template: its SHAs exist only once the clone is built, and serveREST looks a commit fixture up by the leading characters of its SHA.
 func materialiseCorpus(t *testing.T, shas map[string]string) string {
 	t.Helper()
 

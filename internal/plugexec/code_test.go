@@ -72,8 +72,6 @@ func TestBlameReturnsSpansForAWorkspaceAbsolutePath(t *testing.T) {
 
 func TestTheHostResolvesThePathAgainstTheCloneRoot(t *testing.T) {
 	root := t.TempDir()
-	// The plugin echoes the path it was sent back in an unused field, which is
-	// the only way to observe what crossed the pipe.
 	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`, shutdownOK)
 
 	commits, err := codeOf(t, text, root).Log(context.Background(), "internal/auth/auth.go")
@@ -140,8 +138,6 @@ func TestLogWithNoHistoryIsAnAnswerNotAnError(t *testing.T) {
 }
 
 func TestHasFileAtHEADAnswersPresenceWithoutFailing(t *testing.T) {
-	// Neither an untracked path nor a clone with no commits is an error, which
-	// is why the op exists instead of inferring presence from an empty log.
 	for name, tt := range map[string]struct {
 		frame string
 		want  bool

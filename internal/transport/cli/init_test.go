@@ -11,9 +11,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The scaffold and the prompts are generated from manifests, so the tests are
-// written against stub plugins: they exercise every field type and capability
-// combination the renderer has to handle, which no real plugin set happens to.
 type stubSource struct{ manifest lore.Manifest }
 
 func (s stubSource) Manifest() lore.Manifest { return s.manifest }
@@ -26,8 +23,6 @@ func (p stubProvider) Manifest() lore.Manifest { return p.manifest }
 
 func (stubProvider) NewProvider(lore.ProviderConfig) (lore.Provider, error) { return nil, nil }
 
-// forgePlugin declares one of every field type, so a scaffold and a prompt run
-// over it cover required and optional handling for all of them.
 func forgePlugin() lore.Plugin {
 	return stubSource{lore.Manifest{
 		Name:         "forge",
@@ -63,8 +58,6 @@ func forgePlugin() lore.Plugin {
 	}}
 }
 
-// trackerPlugin has a required field with no default, which is the only shape
-// that can refuse an empty answer.
 func trackerPlugin() lore.Plugin {
 	return stubSource{lore.Manifest{
 		Name:       "tracker",
@@ -173,7 +166,6 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 			t.Errorf("scaffold is missing %q\n--- scaffold ---\n%s", want, scaffold)
 		}
 	}
-	// The starter source is the first registered one; the second must not appear.
 	if strings.Contains(scaffold, "tracker") {
 		t.Errorf("scaffold names a plugin that is not the starter\n--- scaffold ---\n%s", scaffold)
 	}
@@ -201,6 +193,38 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 	}
 	if cfg.LLM != nil {
 		t.Errorf("llm = %+v, want the stanza to stay commented out so a fresh workspace loads unchanged", cfg.LLM)
+	}
+}
+
+func TestInitScaffoldsTheRepoExampleOnlyForASourceServingRemotes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source lore.Plugin
+		want   bool
+	}{
+		{name: "forge declares repo remotes", source: forgePlugin(), want: true},
+		{name: "tracker declares none", source: trackerPlugin(), want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "lore.yaml")
+			reg := stubRegistry(t, test.source, vectorsPlugin())
+
+			res := runOn(t, reg, nil, "", "init", "--config", path)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+			}
+
+			scaffold := readConfigFile(t, path)
+			if !strings.Contains(scaffold, "\nrepos: []\n") {
+				t.Errorf("scaffold has no repos key\n--- scaffold ---\n%s", scaffold)
+			}
+			if got := strings.Contains(scaffold, "#     remote: "); got != test.want {
+				t.Errorf("remote example present = %t, want %t\n--- scaffold ---\n%s", got, test.want, scaffold)
+			}
+			if cfg := decodeConfigFile(t, scaffold); len(cfg.Repos) != 0 {
+				t.Errorf("repos = %+v, want the scaffold to load with no clone registered", cfg.Repos)
+			}
+		})
 	}
 }
 
@@ -233,7 +257,6 @@ func TestInitRefusesABuildItCannotScaffold(t *testing.T) {
 			if !strings.Contains(res.stderr, test.wantErr) {
 				t.Errorf("stderr = %q, want it to contain %q", res.stderr, test.wantErr)
 			}
-			// A scaffold that cannot load is worse than none: nothing is written.
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Errorf("stat %s = %v, want no file written", path, err)
 			}
@@ -261,9 +284,6 @@ func TestInitRefusesToOverwrite(t *testing.T) {
 	}
 }
 
-// assertNoSecretValues holds the line no generated file may cross: a *_env key
-// names a variable, and anything else that looks like a credential key would be
-// holding the credential itself.
 func assertNoSecretValues(t *testing.T, content string) {
 	t.Helper()
 

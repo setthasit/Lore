@@ -6,19 +6,16 @@ import (
 	"time"
 )
 
-// DocID is the globally unique document identity, formatted
-// "<source>:<type>:<external_id>".
+// DocID is formatted "<source>:<type>:<external_id>".
 type DocID string
 
-// NewDocID builds a DocID from its three parts. A connector never spells its
-// own name here: the host supplies the instance id through SourceConfig.DocID.
+// A connector uses SourceConfig.DocID rather than spelling its own name here.
 func NewDocID(source string, t DocType, externalID string) DocID {
 	return DocID(source + ":" + string(t) + ":" + externalID)
 }
 
-// DocType names the kind of thing a Document normalizes. The set is open: a new
-// connector may introduce a type, and unknown types get the default chunking
-// strategy and rank as ordinary evidence.
+// The set is open: a connector may introduce a type, and an unknown type gets
+// the default chunking strategy and ranks as ordinary evidence.
 type DocType string
 
 const (
@@ -33,12 +30,10 @@ const (
 	DocTypeTicketComment DocType = "ticket_comment"
 )
 
-// Document is the single shape every connector normalizes its source to. The
-// tags are the wire format an out-of-process plugin speaks; they are on the
-// type rather than on a separate DTO so the two modes cannot drift.
+// The json tags are the wire format an out-of-process plugin speaks.
 type Document struct {
 	ID      DocID   `json:"id"`
-	Source  string  `json:"source"` // the instance id that produced it — "github", "jira-acme", …
+	Source  string  `json:"source"` // the instance id that produced it
 	Type    DocType `json:"type"`
 	RepoRef string  `json:"repo_ref"` // "github:owner/repo"; the key is always present, the value may be empty
 	Title   string  `json:"title"`
@@ -46,17 +41,15 @@ type Document struct {
 	Author  string  `json:"author"`
 	URL     string  `json:"url"` // canonical web URL — the citation target
 
-	// Both timestamps are required and non-zero, encoded RFC 3339 with an offset.
-	// A source with no true creation time sets CreatedAt equal to UpdatedAt and
-	// says so in its manifest summary.
-	CreatedAt time.Time `json:"created_at"` // when the thing happened (event time)
-	UpdatedAt time.Time `json:"updated_at"` // last edit (freshness / sync watermark)
+	// Both are required and non-zero, encoded RFC 3339 with an offset. A source
+	// with no true creation time sets CreatedAt equal to UpdatedAt.
+	CreatedAt time.Time `json:"created_at"` // event time
+	UpdatedAt time.Time `json:"updated_at"` // last edit — the freshness watermark
 
-	Refs []RawRef `json:"refs"` // unresolved references found in the body
+	Refs []RawRef `json:"refs"`
 }
 
-// RefKind classifies the textual form of an unresolved reference. The
-// vocabulary is closed: an unknown kind is rejected at ingest, never dropped.
+// The vocabulary is closed: an unknown kind is rejected at ingest, never dropped.
 type RefKind string
 
 const (
@@ -67,20 +60,18 @@ const (
 	RefKindPRNumber  RefKind = "pr_number"
 )
 
-// RefKinds is the closed vocabulary, in the order errors list it.
+// RefKinds lists the vocabulary in the order errors list it.
 func RefKinds() []RefKind {
 	return []RefKind{RefKindURL, RefKindTicketKey, RefKindCommitSHA, RefKindFilePath, RefKindPRNumber}
 }
 
-// RawRef is a reference emitted by a connector before the host turns it into an
-// edge.
 type RawRef struct {
 	Kind  RefKind `json:"kind"`
-	Value string  `json:"value"` // "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
+	Value string  `json:"value"`
 }
 
-// Cursor is an opaque per-instance sync position; only the connector that
-// produced it interprets its keys.
+// Cursor is opaque and per-instance: only the connector that produced it
+// interprets its keys.
 type Cursor map[string]string
 
 // Clone never returns nil; a nil or empty receiver yields a fresh empty Cursor.
@@ -91,8 +82,8 @@ func (c Cursor) Clone() Cursor {
 	return maps.Clone(c)
 }
 
-// Batch is the checkpoint unit of a sync round: Cursor becomes durable once Docs
-// are durably committed. Every batch carries a cursor, empty ones included.
+// Cursor becomes durable once Docs are durably committed, and every batch
+// carries a cursor, empty ones included.
 type Batch struct {
 	Docs   []Document `json:"docs"`
 	Cursor Cursor     `json:"cursor"`

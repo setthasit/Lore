@@ -14,8 +14,7 @@ const (
 	editedAt = "2024-03-05T12:30:00Z"
 )
 
-// blameFixture leaves app.go attributed A,A,B,B,A,A: commit A appears, commit B
-// interrupts it, and commit A returns without git repeating its author block.
+// app.go is attributed A,A,B,B,A,A, so git omits the author block when commit A returns.
 func blameFixture(t *testing.T) (git *Repo, shaA, shaB string) {
 	t.Helper()
 	repo := newTestRepo(t)

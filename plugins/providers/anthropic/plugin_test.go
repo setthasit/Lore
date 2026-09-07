@@ -22,8 +22,7 @@ func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
 	conform.Provider(t, Plugin(), testProviderConfig)
 }
 
-// `lore init` scaffolds a model from this map, so a missing suggestion writes an
-// empty model into the file it tells the operator to use as-is.
+// `lore init` scaffolds a model from this map, so a missing suggestion writes an empty model.
 func TestManifestSuggestsAModelPerCapability(t *testing.T) {
 	m := Plugin().Manifest()
 	for _, capability := range m.Capabilities.Names() {

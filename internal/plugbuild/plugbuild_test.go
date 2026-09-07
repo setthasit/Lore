@@ -23,8 +23,6 @@ func (r recordedRun) command() string {
 	return strings.Join(append([]string{filepath.Base(r.program)}, r.args...), " ")
 }
 
-// fakeRunner stands in for the toolchain so the fast tests assert the exact
-// command sequence without a compiler, a network or a minute of compilation.
 type fakeRunner struct {
 	runs   []recordedRun
 	answer func(recordedRun) (string, error)
@@ -55,8 +53,7 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 
 	runner := &fakeRunner{}
 	runner.answer = func(run recordedRun) (string, error) {
-		// Reading the file at compile time proves the generated root reached the
-		// scratch module, not merely that Render was called.
+		// Build deletes the scratch module when it returns, so the generated root can only be read from inside a run.
 		if run.program == goCommand && len(run.args) > 0 && run.args[0] == "build" {
 			raw, err := os.ReadFile(filepath.Join(run.dir, generatedFile))
 			if err != nil {
@@ -156,8 +153,6 @@ func TestBuildRemovesTheScratchModuleWhenTheCompileFails(t *testing.T) {
 	assertNoScratchModule(t, scratchParent)
 }
 
-// A binary whose plugin set fails to register is not a build that succeeded:
-// registration is where a misdeclared plugin is supposed to surface.
 func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
 	scratchParent, output := buildDirs(t, "lore")
 
@@ -200,8 +195,7 @@ func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
 	}
 
 	commands := strings.Join(runner.commands(), "\n")
-	// "(devel)" is what a checkout stamps and no proxy can resolve it, so a
-	// replaced module must never be fetched by version.
+	// No proxy can resolve "(devel)", which is what a checkout stamps, so a replaced module must never be fetched by version.
 	if strings.Contains(commands, "go get "+engineModule) {
 		t.Errorf("commands =\n%s\nwant the replaced engine to be edited in, not fetched", commands)
 	}
@@ -278,18 +272,12 @@ func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
 	assertNoScratchModule(t, scratchParent)
 }
 
-// The slow proof: a real toolchain, the real engine and a real plugin module,
-// compiled and then asked what it contains. Everything is local — the engine and
-// the plugin are replace directives and the proxy is off — so it needs no
-// network, only patience.
 func TestBuildProducesARunnableBinary(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiling the engine takes about a minute")
 	}
 
-	// No -mod=mod here: `lore build` runs the toolchain in whatever mode the
-	// operator's environment gives it, which is readonly by default, and a
-	// sequence that only completes go.sum under -mod=mod does not work there.
+	// `lore build` gets no -mod=mod, so the sequence has to complete go.sum in the readonly mode the toolchain defaults to.
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")
 
@@ -319,8 +307,6 @@ func TestBuildProducesARunnableBinary(t *testing.T) {
 	assertNoScratchModule(t, scratchParent)
 }
 
-// writeFakePlugin writes the smallest module that satisfies the SDK's source
-// contract, which is all a build has to prove it can link.
 func writeFakePlugin(t *testing.T) string {
 	t.Helper()
 
@@ -379,8 +365,6 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "..", "..")
 }
 
-// The scratch module carries generated code and a stranger's dependencies; a
-// build that leaves one behind leaves both in the temporary directory.
 func assertNoScratchModule(t *testing.T, parent string) {
 	t.Helper()
 

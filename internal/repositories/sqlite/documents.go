@@ -77,7 +77,6 @@ SELECT %s
 FROM documents
 WHERE doc_id IN (%s)`
 
-// The body column is deliberately not read.
 func (s *Store) DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error) {
 	if len(ids) == 0 {
 		return nil, nil

@@ -8,34 +8,21 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// preset is one vendor's published OpenAI-compatible surface. The base URL and
-// the two paths are kept apart because vendors disagree about both halves —
-// Z.AI serves /paas/v4, Groq puts /openai in front of /v1, DeepSeek omits /v1
-// entirely — so an operator moving one vendor behind a gateway overrides the
-// host without retyping that vendor's path layout.
+// Vendors disagree on both host and path — Z.AI serves /paas/v4, DeepSeek omits /v1 — so a row carries each.
 type preset struct {
-	label    string
-	baseURL  string
-	chatPath string
-	// Unset when the vendor publishes none: a guessed path only 404s on the
-	// first index write, after the operator has committed a vector space.
+	label          string
+	baseURL        string
+	chatPath       string
 	embeddingsPath string
 
-	// defaultModels suggests a model per capability this row serves. A
-	// self-hosted row leaves it empty: the model is whichever one the operator
-	// loaded, and no table can know that.
 	defaultModels map[lore.Capability]string
 }
 
-// presets is the vendor table. Rows follow the provider table in
-// docs/v3/08-extensibility.md so the two can be read against each other, and
-// every URL and path below is the one that vendor's own documentation
-// publishes rather than the OpenAI shape assumed on its behalf.
+// presets follows the provider table in docs/v3/08-extensibility.md.
 var presets = map[string]preset{
 	"zai": {
 		label: "Z.AI (GLM)",
-		// The China deployment serves the same paths under
-		// https://open.bigmodel.cn/api, which is a base_url override.
+		// The China deployment serves the same paths under https://open.bigmodel.cn/api.
 		baseURL:       "https://api.z.ai/api",
 		chatPath:      "/paas/v4/chat/completions",
 		defaultModels: map[lore.Capability]string{lore.CapabilityComplete: "glm-4.6"},
@@ -78,9 +65,6 @@ var presets = map[string]preset{
 			lore.CapabilityEmbed:    "intfloat/multilingual-e5-large-instruct",
 		},
 	},
-	// Both self-hosted rows carry the port their project listens on out of the
-	// box, so an operator running one locally names the preset and nothing
-	// else, and anyone serving it elsewhere overrides base_url.
 	"vllm": {
 		label:          "vLLM (self-hosted)",
 		baseURL:        "http://localhost:8000",
@@ -95,16 +79,10 @@ var presets = map[string]preset{
 	},
 }
 
-// presetKeys lists the keys an operator may write, sorted, because they appear
-// in a manifest field's documentation and in every error that offers them: a
-// map's order would churn generated scaffolds between builds.
 func presetKeys() []string {
 	return slices.Sorted(maps.Keys(presets))
 }
 
-// presetDoc is what the operator reads while choosing a preset, which is why
-// each row's default models are spelled out here rather than in the manifest's
-// DefaultModels: one static map cannot suggest a model per vendor.
 func presetDoc() string {
 	rows := make([]string, 0, len(presets))
 	for _, key := range presetKeys() {

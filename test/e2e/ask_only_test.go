@@ -19,13 +19,11 @@ import (
 const (
 	askOnlyFixtures = "askonly"
 
-	// Not credentials; the fixture API only asserts they arrived in Authorization.
 	askOnlyNotionToken = "secret_e2e_askonly_notion"
 	askOnlyJiraEmail   = "lore-bot@example.invalid"
 	askOnlyJiraToken   = "e2e_askonly_jira_token"
 
-	// The Notion fixtures quote Jira browse URLs, which only exist once the
-	// fixture server has a port, so they are written against this placeholder.
+	// The Notion fixtures quote Jira browse URLs, which exist only once the fixture server has a port.
 	askOnlyHost = "https://jira.example"
 
 	askOnlyDocuments = 4
@@ -67,8 +65,6 @@ const (
 	jiraCommentSuffix = "/comment"
 )
 
-// A workspace with no GitHub source and no local clone: every answer below has to
-// come out of the two API connectors alone.
 func askOnlyWorkspace(ctx context.Context, t *testing.T) *workspace {
 	t.Helper()
 
@@ -141,8 +137,7 @@ func (a *fixtureAPI) expectAuth(r *http.Request, want string) {
 	}
 }
 
-// Fixture names carry the leading segment of a page id, which is the one form
-// shared by the dashed ids in payloads and the undashed ids in configuration.
+// Fixture names carry the leading segment of a page id, the one form shared by the dashed ids in payloads and the undashed ids in configuration.
 func shortNotionID(id string) string {
 	if len(id) < 8 {
 		return id
@@ -287,7 +282,6 @@ func TestAskOnlyWhyRefusesForWantOfACodeAnchor(t *testing.T) {
 	}
 }
 
-// The whole point of an ask-only workspace: provenance that no single source holds.
 func assertSpansBothSources(t *testing.T, tool string, chains [][]lore.DocID) {
 	t.Helper()
 

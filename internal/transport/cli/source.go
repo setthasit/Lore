@@ -49,8 +49,6 @@ func newSourceAddCommand(configPath *string, reg *registry.Registry) *cobra.Comm
 	}
 }
 
-// A build with no source plugin has no name to put in the usage line, and the
-// invocation is refused by sourceToAdd with an error that explains that.
 func sourceArgument(reg *registry.Registry) []string {
 	if names := reg.Names(lore.KindSource); len(names) > 0 {
 		return names
@@ -100,8 +98,6 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	return nil
 }
 
-// sourceToAdd resolves the argument against the registry, so this command
-// accepts whatever plugins the binary was built with and nothing else.
 func sourceToAdd(args []string, reg *registry.Registry) (lore.Manifest, error) {
 	names := reg.Names(lore.KindSource)
 	registered := "the source plugins this build registers are " + strings.Join(names, ", ")
@@ -120,9 +116,6 @@ func sourceToAdd(args []string, reg *registry.Registry) (lore.Manifest, error) {
 	return manifest, nil
 }
 
-// sourceDraft is what one round of prompting produced: the identity the instance
-// will carry, its `with:` keys in manifest order, and the variables the operator
-// now has to export.
 type sourceDraft struct {
 	id        string
 	use       string
@@ -137,8 +130,6 @@ func (d sourceDraft) ident() string {
 	return d.use
 }
 
-// promptSource asks for everything the manifest declares and nothing else: a
-// plugin that adds a field gets a prompt for it without this file changing.
 func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceDraft, error) {
 	draft := sourceDraft{use: m.Name}
 
@@ -169,10 +160,6 @@ func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceD
 	return draft, nil
 }
 
-// promptInstanceID asks for an id only when the plugin's name is already taken,
-// which is exactly when a second instance of one plugin needs one: config
-// rejects two instances sharing an identity, because that identity is the sync
-// cursor key and the document id prefix.
 func promptInstanceID(p *prompter, plugin string, existing []config.Instance) (string, error) {
 	taken := func(ident string) bool {
 		for _, instance := range existing {
@@ -198,16 +185,10 @@ func promptInstanceID(p *prompter, plugin string, existing []config.Instance) (s
 	return id, nil
 }
 
-// secretHolds describes the credential a secret prompt is asking the variable
-// name for. It is spelled from the manifest so the question names the
-// operator's own system rather than a plugin this file would have to know.
 func secretHolds(m lore.Manifest, secret lore.Secret) string {
 	return m.Name + " " + strings.ReplaceAll(secret.Key, "_", " ")
 }
 
-// promptField asks for one declared field and reports whether it was answered:
-// an optional field left empty stays out of the file entirely, so the plugin's
-// own default keeps applying rather than being frozen into a configuration.
 func promptField(p *prompter, field string, declared lore.Field) (any, bool, error) {
 	question := declared.Prompt
 	if question == "" {
@@ -259,8 +240,7 @@ func parseField(field string, declared lore.Field, answer string) (any, error) {
 			return nil, internalerror.NewBadRequestError(field+" must be a duration like 30m or 30d, got "+
 				strconv.Quote(answer), nil)
 		}
-		// The answer is written back as text: the whole-day "30d" form the
-		// configuration accepts survives no time.Duration round trip.
+		// Written back as text: the whole-day "30d" form survives no time.Duration round trip.
 		return answer, nil
 	default:
 		return answer, nil
@@ -316,9 +296,6 @@ func (p *prompter) required(field, question string) (string, error) {
 	return answer, nil
 }
 
-// answer offers the declared default when there is one, and otherwise refuses an
-// empty answer to a required field: `source add` writing a configuration that
-// every later `lore` invocation rejects at load is worse than asking again.
 func (p *prompter) answer(field, question string, declared lore.Field) (string, error) {
 	if declared.Required && declared.Default == "" {
 		return p.required(field, question)
@@ -341,8 +318,6 @@ func (p *prompter) list(question string) ([]string, error) {
 	return items, nil
 }
 
-// requiredList refuses an empty answer: a source that names no project would
-// pass `source add` and then fail every later `lore` invocation at config load.
 func (p *prompter) requiredList(field, question string) ([]string, error) {
 	items, err := p.list(question)
 	if err != nil {

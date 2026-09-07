@@ -8,7 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// A repo bound to the wrong clone answers plausibly until its history is read.
 func TestPluginNewCodeBindsTheConfiguredRoot(t *testing.T) {
 	r := newTestRepo(t)
 	r.write("main.go", "package main\n")

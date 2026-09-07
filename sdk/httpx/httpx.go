@@ -102,8 +102,7 @@ func (c Client) post(ctx context.Context, url string, header http.Header, body [
 		return statusErr
 	}
 
-	// A body cut short by a dropped connection arrives as a decode failure, so
-	// the retry decision is made on raw bytes before out is written once.
+	// A truncated body arrives as a decode failure, so retry is decided on raw bytes.
 	var raw json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return &transientError{err: fmt.Errorf("%s: decode response: %w", c.Op, err)}

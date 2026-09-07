@@ -28,7 +28,6 @@ func printfln(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format+"\n", args...)
 }
 
-// A negative age reads as "just now".
 func humanizeAge(d time.Duration) string {
 	switch {
 	case d < 5*time.Second:

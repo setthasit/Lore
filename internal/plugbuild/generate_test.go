@@ -63,8 +63,6 @@ func TestRenderRejectsCollidingSets(t *testing.T) {
 	}
 }
 
-// Render is handed coordinates by any caller, not only ParseCoordinate, and the
-// package name lands unquoted in the generated source.
 func TestRenderRejectsAPackageNameItCannotEmit(t *testing.T) {
 	cases := map[string]string{
 		"not an identifier":              "lore-linear",

@@ -9,8 +9,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// CheckName identifies the failed assertion. `lore plugin verify` prints it to a
-// plugin author who has to find the assertion from the name alone.
 type CheckName string
 
 const (
@@ -20,37 +18,30 @@ const (
 	CheckIdempotent CheckName = "changes is idempotent"
 	CheckResumable  CheckName = "resume from a mid-stream cursor"
 
-	// Not a sixth assertion but the precondition the five rest on, and reported
-	// alone: a stream that fails leaves nothing else to assert.
 	CheckStream CheckName = "changes streams to completion"
 )
 
 type Fixture struct {
 	// Docs is the number of documents one full, cursor-less stream yields. Zero
-	// asserts no count: a host verifying a stranger's binary cannot know it,
-	// while a plugin's own test always can and so must declare it.
+	// asserts no count in Check; Run requires it.
 	Docs int
 
-	// ResumeAfterBatch indexes the full-stream batch whose cursor the resume check
-	// starts from: that batch was committed, everything after it was not. Zero
-	// derives the resume point from the stream, for the same reason Docs may be
-	// zero — the shape of a stranger's stream is not knowable in advance.
+	// ResumeAfterBatch indexes the full-stream batch whose cursor the resume
+	// check starts from; zero resumes after batch 0.
 	ResumeAfterBatch int
 
-	// ReplayableTypes may reappear below the resume position — immutable records the
-	// connector re-yields rather than risk dropping. Any other reappearance is a duplicate.
+	// ReplayableTypes may reappear below the resume position: immutable records
+	// the connector re-yields rather than drop. Any other reappearance is a duplicate.
 	ReplayableTypes []lore.DocType
 }
 
-// Finding is one failed assertion. An empty slice is a passing plugin.
+// Finding is one failed assertion; an empty slice is a passing plugin.
 type Finding struct {
 	Check  CheckName
 	Detail string
 }
 
-// Check runs the suite outside `go test` and returns what failed, so
-// `lore plugin verify` certifies a third-party binary through the identical
-// code path a plugin author runs locally. newConnector is called once per
+// Check runs the suite outside `go test`. newConnector is called once per
 // stream and must open the same unchanged source every time.
 func Check(newConnector func() lore.Connector, fixture Fixture) []Finding {
 	conn := newConnector()
@@ -75,15 +66,13 @@ func Check(newConnector func() lore.Connector, fixture Fixture) []Finding {
 	return findings
 }
 
-// Run asserts the connector contract against fixture. newConnector is called once
-// per stream and must open the same unchanged source every time.
+// Run is Check as a `go test` subtest tree; newConnector is called once per
+// stream and must open the same unchanged source every time.
 func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 	t.Helper()
 	if newConnector == nil {
 		t.Fatal("conform.Run needs a connector constructor")
 	}
-	// A plugin's own test knows its fixture, so a missing count is a test bug:
-	// every assertion below would hold vacuously over an empty stream.
 	if fixture.Docs <= 0 {
 		t.Fatalf("fixture declares %d documents: the whole suite would hold vacuously", fixture.Docs)
 	}
@@ -106,8 +95,6 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 	}
 }
 
-// where distinguishes the full stream from the resumed one, which asserts the
-// same rule over a different set of batches.
 func batchCursors(batches []lore.Batch, where string) []Finding {
 	var findings []Finding
 	for i, b := range batches {
@@ -161,9 +148,6 @@ func identity(batches []lore.Batch, source string) []Finding {
 			if d.URL == "" {
 				fail("%s: empty URL, so the document cannot be cited", where)
 			}
-			// The DocID is the join key of the whole index and the host never
-			// rebuilds it, so an id that disagrees with the document's own source
-			// and type writes into a namespace nothing will look in.
 			if prefix := d.Source + ":" + string(d.Type) + ":"; d.Source != "" && d.Type != "" {
 				if external, ok := strings.CutPrefix(string(d.ID), prefix); !ok || external == "" {
 					fail("%s: DocID is not %q plus a non-empty external id", where, prefix)

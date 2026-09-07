@@ -15,8 +15,6 @@ import (
 )
 
 const (
-	// An obviously fake credential: these tests must never need a real one, and
-	// several of them assert this exact string never reaches an error message.
 	fakeKey    = "sk-ant-fake-test-key"
 	testModel  = "claude-fake-4"
 	testSystem = "You cite sources."
@@ -343,8 +341,7 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		// Cancelling from inside the wait is the path a caller hits: by then the
-		// 429 has been read and only the delay is left to abandon.
+		// By the time the wait starts the 429 has been read, so only the delay is left to abandon.
 		c.call.Sleep = func(ctx context.Context, _ time.Duration) error {
 			cancel()
 			return ctx.Err()
@@ -360,8 +357,7 @@ func TestCompleteRespectsContextCancellation(t *testing.T) {
 }
 
 func TestErrorsOmitAPIKey(t *testing.T) {
-	// The provider echoes the credential it rejected; the error built from that
-	// body is what reaches logs and user output.
+	// The provider echoes the credential it rejected, and that body is what reaches logs and user output.
 	echoBody := fmt.Sprintf(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key: %s"}}`, fakeKey)
 
 	cases := []struct {

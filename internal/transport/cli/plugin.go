@@ -49,18 +49,13 @@ func newPluginListCommand(configPath *string, reg *registry.Registry) *cobra.Com
 	}
 }
 
-// externalRow is a declared external plugin. Its manifest is deliberately not
-// read: reading one means executing the binary, and listing must not do that.
+// Its manifest is not read: reading one means executing the binary, and listing must not do that.
 type externalRow struct {
 	name  string
 	from  string
 	state string
 }
 
-// declaredExternals reports the `plugins:` entries this build would resolve at
-// startup. It is best-effort on purpose: `lore plugin list` answers what a
-// binary can be configured with, and refusing to answer because a workspace is
-// half-configured would withhold the information most likely to explain why.
 func declaredExternals(configPath string, reg *registry.Registry) []externalRow {
 	workspace, err := plugindist.Open(configPath)
 	if err != nil {

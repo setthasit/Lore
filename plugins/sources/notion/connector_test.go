@@ -20,8 +20,6 @@ import (
 
 const fakeToken = "secret_test-token"
 
-// The instance id defaults to the plugin's own name, so the identity assertions
-// below read exactly as they do in a single-workspace configuration.
 const defaultInstance = "notion"
 
 const (
@@ -851,8 +849,6 @@ func TestCredentialTravelsOnlyInTheAuthorizationHeader(t *testing.T) {
 	}
 }
 
-// A second Notion workspace is a second instance of the one plugin, so nothing
-// it streams may land in the first instance's namespace.
 func TestInstanceIDPrefixesDocumentIdentity(t *testing.T) {
 	const instance = "notion-acme"
 

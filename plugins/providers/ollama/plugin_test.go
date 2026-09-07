@@ -39,16 +39,14 @@ func TestPluginRequiresDimensionsForEmbed(t *testing.T) {
 	}
 }
 
-// The daemon is unauthenticated, so a declared secret would make the host
-// resolve, and an operator supply, a credential nothing ever sends.
+// The daemon is unauthenticated, so a declared secret would have an operator supply a credential nothing sends.
 func TestManifestDeclaresNoSecrets(t *testing.T) {
 	if secrets := Plugin().Manifest().Secrets; len(secrets) != 0 {
 		t.Errorf("Secrets = %v, want none for an unauthenticated daemon", secrets)
 	}
 }
 
-// `lore init` scaffolds a model from this map, so a missing suggestion writes an
-// empty model into the file it tells the operator to use as-is.
+// `lore init` scaffolds a model from this map, so a missing suggestion writes an empty model.
 func TestManifestSuggestsAModelPerCapability(t *testing.T) {
 	m := Plugin().Manifest()
 	for _, capability := range m.Capabilities.Names() {

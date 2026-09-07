@@ -2,7 +2,6 @@ package jira
 
 import "github.com/setthasit/Lore/sdk"
 
-// Plugin is the official Jira source plugin.
 func Plugin() lore.SourcePlugin { return plugin{} }
 
 type plugin struct{}

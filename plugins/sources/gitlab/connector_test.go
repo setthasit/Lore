@@ -18,19 +18,14 @@ import (
 )
 
 const (
-	// Obviously not a credential; the stub asserts it reaches the PRIVATE-TOKEN
-	// header and nowhere else.
 	fakeToken = "glpat-fake-token-value"
 
-	// These tests run the instance under the plugin's own name, which is what a
-	// single-instance workspace gets by default.
 	instanceID = "gitlab"
 
 	projectPath = "acme/widgets"
 	apiPrefix   = "/api/v4/projects/acme%2Fwidgets"
 
-	// The fixtures' own web host, which is not the stub's: a document cites the
-	// URL GitLab reported, not one the connector guessed.
+	// The fixtures' own web host, not the stub's: a document cites the URL GitLab reported.
 	fixtureWeb = "https://gitlab.example.invalid/acme/widgets"
 
 	sha1 = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
@@ -38,7 +33,6 @@ const (
 	sha3 = "bb44cc55dd66ee77ff8899aabbccddeeff001122"
 )
 
-// Documents the fixtures are expected to produce, in stream order.
 const (
 	commit1ID  lore.DocID = "gitlab:commit:" + projectPath + "/commit/" + sha1
 	mr7ID      lore.DocID = "gitlab:pr:" + projectPath + "/pull/7"
@@ -72,9 +66,6 @@ func wantCursors() []lore.Cursor {
 	}
 }
 
-// stub replays hand-written fixtures shaped like real GitLab REST responses.
-// hook, when set, may answer a request itself — that is how failure modes are
-// injected.
 type stub struct {
 	t      *testing.T
 	server *httptest.Server
@@ -95,8 +86,6 @@ func newStub(t *testing.T) *stub {
 	return s
 }
 
-// Batches close after two documents so boundaries are observable; retries record
-// their wait instead of taking it.
 func (s *stub) connector(opts ...Option) *Connector {
 	return s.connectorFor([]string{projectPath}, opts...)
 }
@@ -108,7 +97,6 @@ func (s *stub) connectorFor(projects []string, opts ...Option) *Connector {
 	return c
 }
 
-// route names the collection a path addresses, and the fixture that answers it.
 func route(r *http.Request) (op, fixture string, ok bool) {
 	rest, found := strings.CutPrefix(r.URL.EscapedPath(), apiPrefix)
 	if !found {
@@ -157,7 +145,6 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only the commit history is paged in the fixtures; one page ends every other walk.
 	next := ""
 	if op == "commits" && r.URL.Query().Get("page") == "1" {
 		next = "2"
@@ -234,8 +221,7 @@ type stream struct {
 	afterErr int // yields observed after the first error: must stay 0
 }
 
-// drain consumes the whole iterator without breaking, so a yield after an error
-// would be observed rather than hidden by an early return.
+// drain never breaks, so a yield after an error is observed rather than hidden by an early return.
 func drain(t *testing.T, c *Connector, cursor lore.Cursor) stream {
 	t.Helper()
 	var got stream
@@ -316,8 +302,7 @@ func TestChangesStreamsOldestFirstInUnitBatches(t *testing.T) {
 		t.Fatalf("batches\n got %v\nwant %v", ids, wantBatchedIDs())
 	}
 
-	// Commits, merge requests and issues interleave by their own watermark. A note
-	// keeps its own (older) edit time and travels with the parent that surfaced it.
+	// A note keeps its own older edit time and travels with the parent that surfaced it.
 	tops := map[lore.DocType]bool{
 		lore.DocTypeCommit: true, lore.DocTypePR: true, lore.DocTypeIssue: true,
 	}
@@ -391,8 +376,7 @@ func TestTokenTravelsOnlyInThePrivateTokenHeader(t *testing.T) {
 	}
 }
 
-// Only the watermarked collections take a server-side filter; the sub-collections
-// of a changed parent are always read whole.
+// Only the watermarked collections take a server-side filter; sub-collections are read whole.
 func TestWatermarkIsSentAsAServerSideFilter(t *testing.T) {
 	s := newStub(t)
 	if got := drain(t, s.connector(), nil); got.err != nil {
@@ -444,8 +428,7 @@ func TestChangesResumesFromCursor(t *testing.T) {
 		t.Fatalf("first pass: %v", first.err)
 	}
 
-	// Resuming re-reads the overlap window — the stub, like GitLab, has no idea what
-	// was committed — and must yield only what the cursor has not covered.
+	// Like GitLab, the stub re-serves the overlap window, so the cursor has to exclude what it covered.
 	resumed := drain(t, s.connector(), first.batches[1].Cursor)
 	if resumed.err != nil {
 		t.Fatalf("resumed pass: %v", resumed.err)
@@ -460,15 +443,13 @@ func TestChangesResumesFromCursor(t *testing.T) {
 	if exhausted.err != nil {
 		t.Fatalf("exhausted pass: %v", exhausted.err)
 	}
-	// The last cursor sits on a commit's own second, which replays by design.
+	// The last cursor sits on a commit's own second, so that commit replays.
 	if ids := batchedIDs(exhausted.batches); !sameIDs(ids, [][]lore.DocID{{commit3ID}}) {
 		t.Errorf("resuming from the final cursor yielded %v, want the watermark commit alone", ids)
 	}
 }
 
-// A cursor can land on an item's own second with a document id that sorts above
-// it. An immutable commit has to be replayed there — nothing would ever bring it
-// back — while a merge request or issue is skipped and returns on its next edit.
+// At a tied second an immutable commit is replayed, while a merge request or issue returns on its next edit.
 func TestEqualSecondWatermarkReplaysCommitsOnly(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -517,8 +498,7 @@ func TestDocumentMetadata(t *testing.T) {
 	}
 	docs := docsByID(t, got.batches)
 
-	// The issue fixture carries no web_url, so its documents fall back to a URL
-	// built from the configured instance root.
+	// The issue fixture carries no web_url, so its documents fall back to the configured instance root.
 	issueURL := s.server.URL + "/" + projectPath + "/-/issues/12"
 
 	tests := []struct {
@@ -612,8 +592,7 @@ func TestDocumentMetadata(t *testing.T) {
 	}
 }
 
-// The chunker derives a Chunk's thread by cutting a note's external id at "#",
-// so that prefix has to be exactly the parent's external id.
+// The chunker cuts a note's external id at "#", so that prefix has to be exactly the parent's external id.
 func TestNoteIDsStripToTheirThread(t *testing.T) {
 	s := newStub(t)
 	got := drain(t, s.connector(), nil)
@@ -673,7 +652,6 @@ func TestReferenceExtraction(t *testing.T) {
 		want []lore.RawRef
 	}{
 		{
-			// Diff paths first, then whatever the message names.
 			id: commit1ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
@@ -681,7 +659,6 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			// A rename contributes both of its paths.
 			id: commit2ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
@@ -699,7 +676,6 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			// Every commit on the branch, the merge commit, then the prose.
 			id: mr7ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindCommitSHA, Value: sha1},
@@ -711,7 +687,6 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			// A diff note is anchored to its file and to the merge request it argues about.
 			id: review7ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
@@ -734,8 +709,7 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			// "!7" and "#7" name different things in GitLab prose, and the same pair of
-			// candidates to the resolver, so both qualify to the project path.
+			// "!7" and "#7" name different things in GitLab prose and the same pair of candidates to the resolver.
 			id: mr8ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindCommitSHA, Value: sha3},
@@ -835,7 +809,6 @@ func TestRetriesThrottledRequest(t *testing.T) {
 	if ids := batchedIDs(got.batches); !sameIDs(ids, wantBatchedIDs()) {
 		t.Fatalf("batches\n got %v\nwant %v", ids, wantBatchedIDs())
 	}
-	// The throttled attempt plus both history pages.
 	if n := s.callCount("commits"); n != 3 {
 		t.Errorf("commits called %d times, want 3 (one 429 retried, then two pages)", n)
 	}
@@ -900,8 +873,7 @@ func TestPermanentErrorFailsFastWithoutLeakingTheToken(t *testing.T) {
 	}
 }
 
-// A renamed instance owns its own document namespace, but a clone's remote is
-// still written against the forge, so RepoRef must not follow the rename.
+// A clone's remote is written against the forge, so RepoRef must not follow an instance rename.
 func TestANonDefaultInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 	s := newStub(t)
 	c := NewConnector("gitlab-acme", fakeToken, []string{projectPath}, s.server.URL,
@@ -1170,8 +1142,7 @@ func TestAPIMessageReadsBothFailureShapes(t *testing.T) {
 	}
 }
 
-// A token passed as a query parameter is a documented GitLab alternative, so an
-// error that echoes a URL must not carry one.
+// A token passed as a query parameter is a documented GitLab alternative, so an error echoing a URL must not carry one.
 func TestRedactScrubsTokenParameters(t *testing.T) {
 	got := redact("https://gitlab.acme.dev/api/v4/projects/x?private_token=" + fakeToken + "&page=2")
 	if strings.Contains(got, fakeToken) {
