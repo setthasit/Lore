@@ -705,11 +705,14 @@ func TestLinkRejectsAReferenceOfUnknownKind(t *testing.T) {
 			if !errors.As(err, &classified) {
 				t.Fatalf("= %v, want a classified error", err)
 			}
-			want := []string{string(linkPRID), string(unknown),
-				"url, ticket_key, commit_sha, file_path, pr_number"}
-			for _, name := range want {
-				if !strings.Contains(classified.Message, name) {
-					t.Errorf("message = %q, want it to name %q", classified.Message, name)
+			want := []string{string(linkPRID), string(unknown)}
+			for _, kind := range lore.RefKinds() {
+				want = append(want, string(kind))
+			}
+
+			for _, named := range want {
+				if !strings.Contains(classified.Message, named) {
+					t.Errorf("message = %q, want it to name %q", classified.Message, named)
 				}
 			}
 		})

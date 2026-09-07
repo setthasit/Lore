@@ -2,7 +2,6 @@ package entities
 
 import "github.com/setthasit/Lore/sdk"
 
-// EdgeKind names a typed relationship between two documents.
 type EdgeKind string
 
 const (

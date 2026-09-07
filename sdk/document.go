@@ -43,7 +43,7 @@ type Document struct {
 
 	// Both are required and non-zero, encoded RFC 3339 with an offset. A source
 	// with no true creation time sets CreatedAt equal to UpdatedAt.
-	CreatedAt time.Time `json:"created_at"` // event time
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"` // last edit — the freshness watermark
 
 	Refs []RawRef `json:"refs"`
@@ -60,7 +60,6 @@ const (
 	RefKindPRNumber  RefKind = "pr_number"
 )
 
-// RefKinds lists the vocabulary in the order errors list it.
 func RefKinds() []RefKind {
 	return []RefKind{RefKindURL, RefKindTicketKey, RefKindCommitSHA, RefKindFilePath, RefKindPRNumber}
 }
@@ -90,6 +89,7 @@ type Batch struct {
 }
 
 // docs is never null: docs/v3/09-plugin-protocol.md types it as a list.
+// One frame caps at 8 MiB; a longer one fails the operation, so a plugin splits an oversized Batch across batches.
 func (b Batch) MarshalJSON() ([]byte, error) {
 	type wire Batch
 	if b.Docs == nil {

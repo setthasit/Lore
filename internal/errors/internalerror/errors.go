@@ -33,8 +33,8 @@ func (k Kind) String() string {
 	}
 }
 
-// Error is a classified error carrying a caller-facing message and an optional
-// cause. The cause is reachable through errors.Unwrap, errors.Is and errors.As.
+// Error is a classified error whose cause may be nil; a non-nil cause is
+// reachable through errors.Unwrap, errors.Is and errors.As.
 type Error struct {
 	Kind    Kind
 	Message string
@@ -53,23 +53,18 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// NewBadRequestError reports malformed or invalid caller input. cause may be nil.
 func NewBadRequestError(message string, cause error) error {
 	return &Error{Kind: KindBadRequest, Message: message, cause: cause}
 }
 
-// NewNotFoundError reports a requested entity that does not exist. cause may be nil.
 func NewNotFoundError(message string, cause error) error {
 	return &Error{Kind: KindNotFound, Message: message, cause: cause}
 }
 
-// NewPreconditionError reports a workspace or state requirement the caller must
-// satisfy before the operation can run. cause may be nil.
 func NewPreconditionError(message string, cause error) error {
 	return &Error{Kind: KindPrecondition, Message: message, cause: cause}
 }
 
-// NewInternalError reports a failure the caller cannot act on. cause may be nil.
 func NewInternalError(message string, cause error) error {
 	return &Error{Kind: KindInternal, Message: message, cause: cause}
 }

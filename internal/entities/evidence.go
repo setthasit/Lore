@@ -6,7 +6,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// EvidenceBundle is the one result shape every query tool returns.
 type EvidenceBundle struct {
 	Question string         // normalized restatement of the query
 	Anchor   Anchor         // how the question was grounded
@@ -85,7 +84,6 @@ type EvidenceNode struct {
 	Via     []Edge // how this node was reached; empty for pure retrieval hits
 }
 
-// DocumentMeta is a Document without its body.
 type DocumentMeta struct {
 	ID        lore.DocID
 	Source    string

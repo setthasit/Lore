@@ -1,4 +1,3 @@
-// Package fsx holds the filesystem helpers shared across layers.
 package fsx
 
 import (
