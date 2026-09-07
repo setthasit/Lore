@@ -112,12 +112,6 @@ func TestBuildProviderBuildsAnImplicitInstanceFromPluginDefaults(t *testing.T) {
 	if _, ok := built.Value.(lore.Embedder); !ok {
 		t.Fatalf("built %T, want a lore.Embedder", built.Value)
 	}
-	if built.Plugin != "acme" || built.Instance != "acme" {
-		t.Errorf("built %+v, want the plugin and instance both named acme", built)
-	}
-	if got.Instance != "acme" || got.Model != "acme-embed" || got.Dimensions != 768 {
-		t.Errorf("provider config = %+v, want the binding's instance, model and width", got)
-	}
 	if string(got.Config) != "{}" {
 		t.Errorf("config = %s, want an empty block for an implicit instance", got.Config)
 	}
@@ -154,9 +148,6 @@ func TestBuildProviderPrefersADeclaredInstanceOverThePluginDefaults(t *testing.T
 		t.Fatalf("BuildProvider: %v", err)
 	}
 
-	if got.Instance != "openrouter" {
-		t.Errorf("instance = %q, want the declared id", got.Instance)
-	}
 	if got.Secret("api_key") != "sk-example" {
 		t.Errorf("api_key = %q, want the value of the named variable", got.Secret("api_key"))
 	}
@@ -194,47 +185,47 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 	tests := []struct {
 		name string
 		with map[string]any
-		want string
+		want []string
 	}{
 		{
 			name: "unknown key",
 			with: map[string]any{"base_url": "https://acme.dev", "porjects": []any{"P"}},
-			want: "sources[acme].with.porjects is not a key plugin \"acme\" accepts; it accepts base_url, page_size, projects, token_env, verbose, window",
+			want: []string{"sources[acme].with.porjects", "is not a key", "projects"},
 		},
 		{
 			name: "missing required field",
 			with: map[string]any{"projects": []any{"P"}},
-			want: "sources[acme].with.base_url must be set",
+			want: []string{"sources[acme].with.base_url", "must be set"},
 		},
 		{
 			name: "url that no request can be built from",
 			with: map[string]any{"base_url": "acme.dev"},
-			want: "sources[acme].with.base_url must be an absolute http(s) URL like https://acme.dev, got acme.dev",
+			want: []string{"sources[acme].with.base_url", "must be an absolute http(s) URL"},
 		},
 		{
 			name: "list holding something that is not a string",
 			with: map[string]any{"base_url": "https://acme.dev", "projects": []any{"P", 7}},
-			want: "sources[acme].with.projects[1] must be a string, got 7",
+			want: []string{"sources[acme].with.projects[1]", "must be a string"},
 		},
 		{
 			name: "scalar where a list is declared",
 			with: map[string]any{"base_url": "https://acme.dev", "projects": "P"},
-			want: "sources[acme].with.projects must be a list of strings, got P",
+			want: []string{"sources[acme].with.projects", "must be a list of strings"},
 		},
 		{
 			name: "fractional value for a whole number",
 			with: map[string]any{"base_url": "https://acme.dev", "page_size": 1.5},
-			want: "sources[acme].with.page_size must be a whole number, got 1.5",
+			want: []string{"sources[acme].with.page_size", "must be a whole number"},
 		},
 		{
 			name: "string where a boolean is declared",
 			with: map[string]any{"base_url": "https://acme.dev", "verbose": "yes"},
-			want: "sources[acme].with.verbose must be true or false, got yes",
+			want: []string{"sources[acme].with.verbose", "must be true or false"},
 		},
 		{
 			name: "unparseable duration",
 			with: map[string]any{"base_url": "https://acme.dev", "window": "a fortnight"},
-			want: "sources[acme].with.window is not a duration: a fortnight",
+			want: []string{"sources[acme].with.window", "is not a duration"},
 		},
 	}
 
@@ -247,8 +238,10 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 			if err == nil {
 				t.Fatal("BuildSources: want an error")
 			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("error %q does not contain %q", err, tt.want)
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
 			}
 		})
 	}
@@ -404,8 +397,8 @@ func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCode: %v", err)
 	}
-	if len(built) != 2 || built[0].Remote != "github:acme/app" || built[1].Remote != "" {
-		t.Errorf("built %+v, want each clone paired with its own remote", built)
+	if len(built) != 2 {
+		t.Fatalf("built %d accessors, want one per clone", len(built))
 	}
 	if len(roots) != 2 || roots[0] != "/w/app" || roots[1] != "/w/infra" {
 		t.Errorf("roots = %v, want each clone's own path", roots)

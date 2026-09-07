@@ -3,6 +3,7 @@ package ollama
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
@@ -79,11 +80,9 @@ func TestPluginRequiresDimensionsForEmbed(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewProvider accepted an embedder with no declared vector width")
 	}
-
-	const want = "ollama: embedder.dimensions must be set to the vector width of nomic-embed-text: " +
-		"an Ollama model does not imply one; `ollama show nomic-embed-text` reports it"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
+	msg := err.Error()
+	if !strings.Contains(msg, "embedder.dimensions") || !strings.Contains(msg, testEmbedModel) {
+		t.Errorf("error = %q, want it to name embedder.dimensions and the model", msg)
 	}
 }
 

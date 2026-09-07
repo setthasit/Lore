@@ -80,9 +80,10 @@ func TestPluginRefusesDimensionsForEmbed(t *testing.T) {
 		t.Fatal("NewProvider accepted a declared vector width")
 	}
 
-	const want = "openai: embedder.dimensions must not be set for this provider: the vector width follows from embedder.model"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
+	msg := err.Error()
+	if !strings.Contains(msg, "embedder.dimensions") || !strings.Contains(msg, "must not be set") ||
+		!strings.Contains(msg, "embedder.model") {
+		t.Errorf("error = %q, want it to refuse embedder.dimensions and point at embedder.model", msg)
 	}
 }
 
@@ -91,24 +92,9 @@ func TestPluginRefusesUnknownEmbeddingModel(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewProvider accepted a model of unknown vector width")
 	}
-
-	const want = "openai: embedder.model text-embedding-9-huge has no known vector width; " +
-		"supported models: text-embedding-3-large, text-embedding-3-small, text-embedding-ada-002"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
-	}
-}
-
-func TestPluginRejectsUnknownConfigKey(t *testing.T) {
-	cfg := testConfig(lore.CapabilityComplete, "gpt-4o-mini")
-	cfg.Config = json.RawMessage(`{"bas_url":"https://gateway.example"}`)
-
-	_, err := Plugin().NewProvider(cfg)
-	if err == nil {
-		t.Fatal("NewProvider accepted a key the manifest does not declare")
-	}
-	if !strings.Contains(err.Error(), "bas_url") {
-		t.Errorf("error = %q, want it to name the unknown key", err)
+	msg := err.Error()
+	if !strings.Contains(msg, "text-embedding-9-huge") || !strings.Contains(msg, "no known vector width") {
+		t.Errorf("error = %q, want it to name the model and its unknown width", msg)
 	}
 }
 

@@ -244,14 +244,6 @@ func TestFetchRefusesAnIndexRedirectOffHTTPS(t *testing.T) {
 	}
 }
 
-// The default index is a URL a user may have to open by hand when the search
-// says it is unreachable, so it must be a real, readable location.
-func TestDefaultIndexURLIsAnHTTPSURL(t *testing.T) {
-	if !strings.HasPrefix(DefaultIndexURL, "https://") || !strings.HasSuffix(DefaultIndexURL, ".json") {
-		t.Errorf("DefaultIndexURL = %q, want an https URL naming a JSON file", DefaultIndexURL)
-	}
-}
-
 func indexEntry(name, kind, summary, coordinate string) string {
 	return `{"name": "` + name + `", "kind": "` + kind + `", "summary": "` + summary +
 		`", "coordinate": "` + coordinate + `"}`

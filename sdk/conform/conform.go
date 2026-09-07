@@ -9,21 +9,20 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// The five assertions of the conformance suite, named because they are reported
-// twice: as subtests when a plugin author runs the suite under `go test`, and as
-// Findings when the host runs it against an installed binary.
-const (
-	checkCursors    = "every batch carries a cursor"
-	checkTimestamps = "created_at and updated_at are set"
-	checkIdentity   = "every document is fully identified"
-	checkIdempotent = "changes is idempotent"
-	checkResumable  = "resume from a mid-stream cursor"
+// CheckName identifies the failed assertion. `lore plugin verify` prints it to a
+// plugin author who has to find the assertion from the name alone.
+type CheckName string
 
-	// checkStream is not a sixth assertion but the precondition all five rest
-	// on: a stream that fails or that contradicts the fixture leaves nothing to
-	// assert, so the suite stops there rather than reporting five derived
-	// failures with one cause.
-	checkStream = "changes streams to completion"
+const (
+	CheckCursors    CheckName = "every batch carries a cursor"
+	CheckTimestamps CheckName = "created_at and updated_at are set"
+	CheckIdentity   CheckName = "every document is fully identified"
+	CheckIdempotent CheckName = "changes is idempotent"
+	CheckResumable  CheckName = "resume from a mid-stream cursor"
+
+	// Not a sixth assertion but the precondition the five rest on, and reported
+	// alone: a stream that fails leaves nothing else to assert.
+	CheckStream CheckName = "changes streams to completion"
 )
 
 type Fixture struct {
@@ -43,10 +42,9 @@ type Fixture struct {
 	ReplayableTypes []lore.DocType
 }
 
-// Finding is one failed assertion: Check names the assertion, Detail says what
-// the connector did instead. An empty slice is a passing plugin.
+// Finding is one failed assertion. An empty slice is a passing plugin.
 type Finding struct {
-	Check  string
+	Check  CheckName
 	Detail string
 }
 
@@ -58,11 +56,11 @@ func Check(newConnector func() lore.Connector, fixture Fixture) []Finding {
 	conn := newConnector()
 	full, err := collect(conn, nil)
 	if err != nil {
-		return []Finding{{Check: checkStream, Detail: fmt.Sprintf("%s: full stream: %v", conn.Name(), err)}}
+		return []Finding{{Check: CheckStream, Detail: fmt.Sprintf("%s: full stream: %v", conn.Name(), err)}}
 	}
 	if fixture.Docs > 0 {
 		if n := countDocs(full); n != fixture.Docs {
-			return []Finding{{Check: checkStream, Detail: fmt.Sprintf(
+			return []Finding{{Check: CheckStream, Detail: fmt.Sprintf(
 				"%s: full stream yielded %d documents in %d batches, fixture declares %d",
 				conn.Name(), n, len(full), fixture.Docs)}}
 		}
@@ -92,13 +90,13 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 
 	findings := Check(newConnector, fixture)
 	for _, f := range findings {
-		if f.Check == checkStream {
+		if f.Check == CheckStream {
 			t.Fatal(f.Detail)
 		}
 	}
 
-	for _, check := range []string{checkCursors, checkTimestamps, checkIdentity, checkIdempotent, checkResumable} {
-		t.Run(check, func(t *testing.T) {
+	for _, check := range []CheckName{CheckCursors, CheckTimestamps, CheckIdentity, CheckIdempotent, CheckResumable} {
+		t.Run(string(check), func(t *testing.T) {
 			for _, f := range findings {
 				if f.Check == check {
 					t.Error(f.Detail)
@@ -114,7 +112,7 @@ func batchCursors(batches []lore.Batch, where string) []Finding {
 	var findings []Finding
 	for i, b := range batches {
 		if len(b.Cursor) == 0 {
-			findings = append(findings, Finding{checkCursors, fmt.Sprintf(
+			findings = append(findings, Finding{CheckCursors, fmt.Sprintf(
 				"%sbatch %d (%d documents) carries no cursor, so committing it checkpoints nothing",
 				where, i, len(b.Docs))})
 		}
@@ -128,10 +126,10 @@ func timestamps(batches []lore.Batch) []Finding {
 		for j, d := range b.Docs {
 			where := fmt.Sprintf("batch %d document %d (%s)", i, j, d.ID)
 			if d.CreatedAt.IsZero() {
-				findings = append(findings, Finding{checkTimestamps, where + ": zero CreatedAt"})
+				findings = append(findings, Finding{CheckTimestamps, where + ": zero CreatedAt"})
 			}
 			if d.UpdatedAt.IsZero() {
-				findings = append(findings, Finding{checkTimestamps, where + ": zero UpdatedAt"})
+				findings = append(findings, Finding{CheckTimestamps, where + ": zero UpdatedAt"})
 			}
 		}
 	}
@@ -141,7 +139,7 @@ func timestamps(batches []lore.Batch) []Finding {
 func identity(batches []lore.Batch, source string) []Finding {
 	var findings []Finding
 	fail := func(format string, args ...any) {
-		findings = append(findings, Finding{checkIdentity, fmt.Sprintf(format, args...)})
+		findings = append(findings, Finding{CheckIdentity, fmt.Sprintf(format, args...)})
 	}
 
 	for i, b := range batches {
@@ -179,19 +177,19 @@ func identity(batches []lore.Batch, source string) []Finding {
 func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding {
 	second, err := collect(newConnector(), nil)
 	if err != nil {
-		return []Finding{{checkIdempotent, fmt.Sprintf("second full stream: %v", err)}}
+		return []Finding{{CheckIdempotent, fmt.Sprintf("second full stream: %v", err)}}
 	}
 
 	first, again := ids(full), ids(second)
 	for i := range min(len(first), len(again)) {
 		if first[i] != again[i] {
-			return []Finding{{checkIdempotent, fmt.Sprintf(
+			return []Finding{{CheckIdempotent, fmt.Sprintf(
 				"document %d differs between two runs of an unchanged source: %s then %s",
 				i, first[i], again[i])}}
 		}
 	}
 	if len(first) != len(again) {
-		return []Finding{{checkIdempotent, fmt.Sprintf(
+		return []Finding{{CheckIdempotent, fmt.Sprintf(
 			"two runs of an unchanged source yielded %d and %d documents, agreeing on the first %d",
 			len(first), len(again), min(len(first), len(again)))}}
 	}
@@ -200,12 +198,12 @@ func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding
 
 func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) []Finding {
 	if len(full) < 2 {
-		return []Finding{{checkResumable, fmt.Sprintf(
+		return []Finding{{CheckResumable, fmt.Sprintf(
 			"the full stream has %d batch(es): a mid-stream resume needs at least two", len(full))}}
 	}
 	at := fixture.ResumeAfterBatch
 	if at < 0 || at >= len(full)-1 {
-		return []Finding{{checkResumable, fmt.Sprintf(
+		return []Finding{{CheckResumable, fmt.Sprintf(
 			"ResumeAfterBatch %d has to name a batch of the %d-batch stream with at least one batch after it",
 			at, len(full))}}
 	}
@@ -226,12 +224,12 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 	cursor := full[at].Cursor
 	resumed, err := collect(newConnector(), cursor)
 	if err != nil {
-		return []Finding{{checkResumable, fmt.Sprintf("resuming from the batch %d cursor %v: %v", at, cursor, err)}}
+		return []Finding{{CheckResumable, fmt.Sprintf("resuming from the batch %d cursor %v: %v", at, cursor, err)}}
 	}
 
 	findings := batchCursors(resumed, "resumed ")
 	fail := func(format string, args ...any) {
-		findings = append(findings, Finding{checkResumable, fmt.Sprintf(format, args...)})
+		findings = append(findings, Finding{CheckResumable, fmt.Sprintf(format, args...)})
 	}
 
 	replayable := make(map[lore.DocType]bool, len(fixture.ReplayableTypes))

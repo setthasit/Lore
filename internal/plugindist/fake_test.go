@@ -49,8 +49,8 @@ func (g *fakeGitHub) publish(tag string, assets map[string][]byte) {
 	g.tags[tag], g.latest = published, tag
 }
 
-// attach adds an asset to a published release without touching checksums.txt,
-// which is how a signature is published beside the file it signs.
+// attach writes one asset and leaves checksums.txt as published: a signature
+// beside the file it signs, or a mutated asset.
 func (g *fakeGitHub) attach(tag, name string, body []byte) {
 	g.t.Helper()
 
@@ -59,14 +59,6 @@ func (g *fakeGitHub) attach(tag, name string, body []byte) {
 		g.t.Fatalf("no release published for %s", tag)
 	}
 	release[name] = body
-}
-
-// tamper replaces one asset's bytes and leaves checksums.txt alone: a mutated
-// release asset, or a hostile mirror.
-func (g *fakeGitHub) tamper(tag, name string, body []byte) {
-	g.t.Helper()
-
-	g.attach(tag, name, body)
 }
 
 func (g *fakeGitHub) asset(tag, name string) []byte {

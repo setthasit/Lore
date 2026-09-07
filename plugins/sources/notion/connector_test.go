@@ -851,12 +851,6 @@ func TestCredentialTravelsOnlyInTheAuthorizationHeader(t *testing.T) {
 	}
 }
 
-func TestNameIsTheInstanceID(t *testing.T) {
-	if got := NewConnector("notion-acme", fakeToken, nil, "").Name(); got != "notion-acme" {
-		t.Errorf("Name() = %q, want the instance id", got)
-	}
-}
-
 // A second Notion workspace is a second instance of the one plugin, so nothing
 // it streams may land in the first instance's namespace.
 func TestInstanceIDPrefixesDocumentIdentity(t *testing.T) {

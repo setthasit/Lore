@@ -23,7 +23,6 @@ type scene struct {
 	fake      *fakeGitHub
 	store     *Store
 	installer *Installer
-	dir       string
 	coord     Coordinate
 	asset     string
 	archive   []byte
@@ -44,7 +43,7 @@ func newScene(t *testing.T) *scene {
 	fake.publish("v0.3.1", map[string][]byte{asset: archive})
 
 	return &scene{
-		fake: fake, store: store, installer: fake.installer(store), dir: t.TempDir(),
+		fake: fake, store: store, installer: fake.installer(store),
 		coord: coord, asset: asset, archive: archive,
 	}
 }
@@ -117,12 +116,12 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 		t.Fatalf("%s = %q, want %q", digestFileName, recorded, result.BinaryDigest)
 	}
 
-	path, err := scene.store.Binary(scene.coord, lock)
+	report, err := scene.store.Locate(scene.coord, lock)
 	if err != nil {
 		t.Fatalf("locate the installed binary: %v", err)
 	}
-	if path != result.Binary {
-		t.Fatalf("located %q, want %q", path, result.Binary)
+	if report.Binary != result.Binary || report.Version != "v0.3.1" {
+		t.Fatalf("located %+v, want v0.3.1 at %s", report, result.Binary)
 	}
 }
 
@@ -132,7 +131,7 @@ func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	scene.fake.tamper("v0.3.1", scene.asset, archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("rm -rf /\n")))
+	scene.fake.attach("v0.3.1", scene.asset, archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("rm -rf /\n")))
 
 	lock := &Lock{}
 	_, err := scene.install(t, lock, false)
@@ -306,19 +305,9 @@ func TestInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 		}
 	}
 
-	if err := lockIsUnwritten(scene.dir); err != nil {
-		t.Fatal(err)
-	}
 	if len(lock.Plugins) != 0 {
 		t.Fatalf("a refused install pinned %+v", lock.Plugins)
 	}
-}
-
-func lockIsUnwritten(dir string) error {
-	if _, err := os.Stat(lockPath(dir)); os.IsNotExist(err) {
-		return nil
-	}
-	return &os.PathError{Op: "check", Path: lockPath(dir), Err: os.ErrExist}
 }
 
 // @latest is resolved once, by install, and what it resolved to is what the

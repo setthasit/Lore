@@ -13,18 +13,6 @@ import (
 	"github.com/setthasit/Lore/sdk/conform"
 )
 
-// The check names are part of the API: `lore plugin verify` prints them to a
-// plugin author who has to find the assertion in the document from the name
-// alone.
-const (
-	cursors    = "every batch carries a cursor"
-	timestamps = "created_at and updated_at are set"
-	identity   = "every document is fully identified"
-	idempotent = "changes is idempotent"
-	resumable  = "resume from a mid-stream cursor"
-	stream     = "changes streams to completion"
-)
-
 // stub is a connector whose whole behaviour is one function, so a test can be
 // exactly as wrong as the rule it is about.
 type stub struct {
@@ -88,8 +76,8 @@ func newStub(stream func(lore.Cursor) ([]lore.Batch, error)) func() lore.Connect
 	return func() lore.Connector { return stub{name: "stub", stream: stream} }
 }
 
-func checkNames(findings []conform.Finding) []string {
-	var names []string
+func checkNames(findings []conform.Finding) []conform.CheckName {
+	var names []conform.CheckName
 	for _, f := range findings {
 		names = append(names, f.Check)
 	}
@@ -113,7 +101,7 @@ func TestCheckWithoutFixtureFactsStillCertifies(t *testing.T) {
 func TestCheckReportsTheFailedAssertion(t *testing.T) {
 	tests := map[string]struct {
 		stream func(lore.Cursor) ([]lore.Batch, error)
-		want   string
+		want   conform.CheckName
 		detail string
 	}{
 		"a batch with no cursor checkpoints nothing": {
@@ -122,7 +110,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				batches[0].Cursor = nil
 				return batches, nil
 			},
-			want:   cursors,
+			want:   conform.CheckCursors,
 			detail: "carries no cursor",
 		},
 		"a document with no timestamps cannot be ordered": {
@@ -133,7 +121,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				}
 				return batches, nil
 			},
-			want:   timestamps,
+			want:   conform.CheckTimestamps,
 			detail: "zero CreatedAt",
 		},
 		"a document with no URL cannot be cited": {
@@ -144,7 +132,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				}
 				return batches, nil
 			},
-			want:   identity,
+			want:   conform.CheckIdentity,
 			detail: "empty URL",
 		},
 		"an id that disagrees with its own parts lands in a namespace nothing reads": {
@@ -155,7 +143,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				}
 				return batches, nil
 			},
-			want:   identity,
+			want:   conform.CheckIdentity,
 			detail: "plus a non-empty external id",
 		},
 		"a source that renames itself writes into another instance's namespace": {
@@ -166,7 +154,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				}
 				return batches, nil
 			},
-			want:   identity,
+			want:   conform.CheckIdentity,
 			detail: "want the connector name",
 		},
 		"a second run that yields something else is not idempotent": {
@@ -181,14 +169,14 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 					return batches, nil
 				}
 			}(),
-			want:   idempotent,
+			want:   conform.CheckIdempotent,
 			detail: "yielded 4 and 2 documents",
 		},
 		"a connector that ignores its cursor replays committed documents": {
 			stream: func(cursor lore.Cursor) ([]lore.Batch, error) {
 				return conformant(nil)
 			},
-			want:   resumable,
+			want:   conform.CheckResumable,
 			detail: "is a duplicate",
 		},
 		"a resume that skips past the cursor loses documents": {
@@ -199,7 +187,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 				}
 				return batches, nil
 			},
-			want:   resumable,
+			want:   conform.CheckResumable,
 			detail: "is lost",
 		},
 	}
@@ -255,14 +243,14 @@ func TestAStreamThatFailsIsReportedOnce(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("findings = %+v, want the one failure the others all derive from", findings)
 	}
-	if findings[0].Check != stream || !strings.Contains(findings[0].Detail, "token expired") {
+	if findings[0].Check != conform.CheckStream || !strings.Contains(findings[0].Detail, "token expired") {
 		t.Errorf("finding = %+v, want the stream failure carrying the connector's error", findings[0])
 	}
 }
 
 func TestADeclaredCountThatDisagreesIsAFailure(t *testing.T) {
 	findings := conform.Check(newStub(conformant), conform.Fixture{Docs: 5})
-	if len(findings) != 1 || findings[0].Check != stream {
+	if len(findings) != 1 || findings[0].Check != conform.CheckStream {
 		t.Fatalf("findings = %+v, want one stream failure about the count", findings)
 	}
 	if !strings.Contains(findings[0].Detail, "fixture declares 5") {
@@ -276,7 +264,7 @@ func TestASingleBatchStreamCannotProveResumability(t *testing.T) {
 	}
 
 	findings := conform.Check(newStub(single), conform.Fixture{Docs: 1})
-	if len(findings) != 1 || findings[0].Check != resumable {
+	if len(findings) != 1 || findings[0].Check != conform.CheckResumable {
 		t.Fatalf("findings = %+v, want the resume check to report that it could not run", findings)
 	}
 }

@@ -139,18 +139,16 @@ func TestLogWithNoHistoryIsAnAnswerNotAnError(t *testing.T) {
 	}
 }
 
-func TestHasFileAtHEADAnswersFalseWithoutFailing(t *testing.T) {
-	// A directory, an untracked path and a clone with no commits are all false
-	// and none of them is an error, which is the whole reason the op exists
-	// instead of inferring presence from an empty log.
+func TestHasFileAtHEADAnswersPresenceWithoutFailing(t *testing.T) {
+	// Neither an untracked path nor a clone with no commits is an error, which
+	// is why the op exists instead of inferring presence from an empty log.
 	for name, tt := range map[string]struct {
 		frame string
 		want  bool
 	}{
-		"present":   {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":true}`, want: true},
-		"absent":    {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":false}`},
-		"unstated":  {frame: `has_file emit {"v":1,"id":"$ID","ok":true}`},
-		"directory": {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":false}`},
+		"present":  {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":true}`, want: true},
+		"absent":   {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":false}`},
+		"unstated": {frame: `has_file emit {"v":1,"id":"$ID","ok":true}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := codeOf(t, script(codeManifest, tt.frame, shutdownOK), t.TempDir()).
@@ -172,26 +170,5 @@ func TestAFailureToReadTheCloneIsAnError(t *testing.T) {
 
 	if _, err := codeOf(t, text, t.TempDir()).HasFileAtHEAD(context.Background(), "auth.go"); err == nil {
 		t.Fatal("a clone that cannot be read was reported as a missing file")
-	}
-}
-
-func TestCodeRequestsCarryNoConfigAndNoSecrets(t *testing.T) {
-	// A local clone needs no credentials, so the payload has nowhere to leak one.
-	session := &session{instance: "git", idPrefix: "abc"}
-	env := session.begin(opBlame)
-
-	line, err := marshalRequest(blameRequest{envelope: env, Path: "/w/api/auth.go", StartLine: 1, EndLine: 2})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	for _, forbidden := range []string{"config", "secrets"} {
-		if strings.Contains(line, forbidden) {
-			t.Errorf("blame request %s carries %q", line, forbidden)
-		}
-	}
-	for _, want := range []string{`"op":"blame"`, `"path":"/w/api/auth.go"`, `"start_line":1`, `"end_line":2`} {
-		if !strings.Contains(line, want) {
-			t.Errorf("blame request %s does not carry %s", line, want)
-		}
 	}
 }

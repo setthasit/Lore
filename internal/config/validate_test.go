@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func TestLoad(t *testing.T) {
 				}) {
 					t.Errorf("Plugins = %+v", cfg.Plugins)
 				}
-				if got := idents(cfg.Sources); !equal(got, []string{"github", "jira-acme", "linear"}) {
+				if got := idents(cfg.Sources); !slices.Equal(got, []string{"github", "jira-acme", "linear"}) {
 					t.Errorf("source idents = %v", got)
 				}
 				if cfg.Sources[1].Use != "jira" {
@@ -169,7 +170,7 @@ sources:
 embedder: { provider: openai, model: text-embedding-3-small }
 `,
 			check: func(t *testing.T, cfg *Config) {
-				if got := idents(cfg.Sources); !equal(got, []string{"jira-acme", "jira-legacy"}) {
+				if got := idents(cfg.Sources); !slices.Equal(got, []string{"jira-acme", "jira-legacy"}) {
 					t.Errorf("source idents = %v", got)
 				}
 			},
@@ -211,7 +212,7 @@ embedder: { provider: openai, model: text-embedding-3-small }
 			},
 		},
 		{
-			name: "query, scheduler and index_path fall back to defaults",
+			name: "an absent query, scheduler and index_path are filled in",
 			yaml: minimal,
 			check: func(t *testing.T, cfg *Config) {
 				if cfg.Query.EventWindow != DefaultEventWindow || cfg.Query.WalkDepth != DefaultWalkDepth ||
@@ -500,7 +501,6 @@ func TestInstanceIdent(t *testing.T) {
 	}{
 		{instance: Instance{Use: "github"}, want: "github"},
 		{instance: Instance{ID: "jira-acme", Use: "jira"}, want: "jira-acme"},
-		{instance: Instance{}, want: ""},
 	}
 	for _, test := range tests {
 		if got := test.instance.Ident(); got != test.want {
@@ -856,18 +856,6 @@ func idents(instances []Instance) []string {
 		got = append(got, instances[i].Ident())
 	}
 	return got
-}
-
-func equal(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // indent nests a sequence fixture under a top-level key.

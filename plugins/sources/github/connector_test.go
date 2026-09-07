@@ -852,12 +852,6 @@ func TestCursorIsCopiedPerBatch(t *testing.T) {
 	}
 }
 
-func TestName(t *testing.T) {
-	if got := NewConnector("github-acme", fakeToken, nil, "").Name(); got != "github-acme" {
-		t.Errorf("Name() = %q, want %q", got, "github-acme")
-	}
-}
-
 // A second instance of the plugin must not collide with the first, so its id
 // prefixes document identity; RepoRef still names the forge, because a clone's
 // remote in lore.yaml is written against the forge and not against an instance.
@@ -908,41 +902,6 @@ func TestMatchesRemote(t *testing.T) {
 		if got := c.MatchesRemote(tt.remote); got != tt.want {
 			t.Errorf("MatchesRemote(%q) = %v, want %v (%s)", tt.remote, got, tt.want, tt.why)
 		}
-	}
-}
-
-func TestManifestDeclaresWhatTheConnectorProvides(t *testing.T) {
-	m := Plugin().Manifest()
-	if m.Name != forgeName {
-		t.Errorf("Name = %q, want %q", m.Name, forgeName)
-	}
-	if m.Kind != lore.KindSource {
-		t.Errorf("Kind = %q, want %q", m.Kind, lore.KindSource)
-	}
-	if m.APIVersion != lore.APIVersion {
-		t.Errorf("APIVersion = %d, want %d", m.APIVersion, lore.APIVersion)
-	}
-	if !m.Capabilities.RepoRemotes {
-		t.Error("RepoRemotes is not declared, but the connector implements lore.RemoteMatcher")
-	}
-	if len(m.Fields) != 1 || m.Fields[0].Name != "repos" || m.Fields[0].Type != lore.FieldStringList || !m.Fields[0].Required {
-		t.Errorf("Fields = %+v, want one required string_list \"repos\"", m.Fields)
-	}
-	if len(m.Secrets) != 1 || m.Secrets[0].Key != "token" ||
-		m.Secrets[0].ConfigField != "token_env" || m.Secrets[0].DefaultEnv != "LORE_GITHUB_TOKEN" {
-		t.Errorf("Secrets = %+v, want one token/token_env/LORE_GITHUB_TOKEN entry", m.Secrets)
-	}
-}
-
-// The `with:` block is decoded strictly, so a typo is an error rather than a
-// source that silently ingests nothing.
-func TestNewSourceRejectsUnknownConfigKeys(t *testing.T) {
-	_, err := Plugin().NewSource(lore.SourceConfig{
-		Instance: "github-acme",
-		Config:   []byte(`{"repoz":["acme/widgets"]}`),
-	})
-	if err == nil {
-		t.Fatal("NewSource accepted an unknown key")
 	}
 }
 

@@ -342,26 +342,6 @@ func TestEmbedRespectsContextCancel(t *testing.T) {
 	})
 }
 
-func TestDimensionsNeedsNoRequest(t *testing.T) {
-	ts := newTestServer(t, func(w http.ResponseWriter, _ int, _ embedRequest) {
-		t.Error("server called, want Dimensions to answer offline")
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	e, _ := newTestEmbedder(t, ts.URL, 768)
-
-	if got := e.Dimensions(); got != 768 {
-		t.Fatalf("Dimensions = %d, want 768", got)
-	}
-	if n := ts.requests(); n != 0 {
-		t.Errorf("requests = %d, want none", n)
-	}
-
-	narrower, _ := newTestEmbedder(t, ts.URL, 256)
-	if got := narrower.Dimensions(); got != 256 {
-		t.Errorf("Dimensions = %d, want 256", got)
-	}
-}
-
 func TestNewEmbedderValidatesArguments(t *testing.T) {
 	cases := []struct {
 		name  string

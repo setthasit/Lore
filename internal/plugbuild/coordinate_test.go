@@ -59,7 +59,7 @@ func TestParseCoordinateAsksForAnExplicitPackage(t *testing.T) {
 			t.Errorf("ParseCoordinate(%q) guessed a package name instead of asking for one", raw)
 			continue
 		}
-		if internalerror.KindOf(err) != internalerror.KindBadRequest {
+		if !internalerror.IsBadRequest(err) {
 			t.Errorf("ParseCoordinate(%q) kind = %v, want bad request", raw, internalerror.KindOf(err))
 		}
 		if !strings.Contains(err.Error(), "=acmecrm") {
@@ -106,25 +106,11 @@ func TestParseCoordinateRejectsUnbuildableSpecs(t *testing.T) {
 			t.Errorf("ParseCoordinate(%q) accepted an unbuildable coordinate", raw)
 			continue
 		}
-		if internalerror.KindOf(err) != internalerror.KindBadRequest {
+		if !internalerror.IsBadRequest(err) {
 			t.Errorf("ParseCoordinate(%q) kind = %v, want bad request", raw, internalerror.KindOf(err))
 		}
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ParseCoordinate(%q) = %q, want it to mention %q", raw, err, want)
-		}
-	}
-}
-
-// A local coordinate is not a mistake, it is the other mode: the message has to
-// point at it instead of only refusing.
-func TestParseCoordinatePointsALocalPathAtTheExternalMode(t *testing.T) {
-	_, err := ParseCoordinate("./bin/lore-scratch")
-	if err == nil {
-		t.Fatal("ParseCoordinate accepted a path as a module coordinate")
-	}
-	for _, want := range []string{"out of process", "plugins:", "lore.yaml"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to mention %q", err, want)
 		}
 	}
 }

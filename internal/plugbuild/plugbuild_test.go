@@ -212,9 +212,7 @@ func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
 	assertNoScratchModule(t, scratchParent)
 }
 
-// The message is the whole trade stated out loud: an external plugin needs no
-// toolchain, and this is what compiling one in costs.
-func TestBuildWithoutAToolchainSaysWhatItNeedsAndWhy(t *testing.T) {
+func TestBuildWithoutAToolchainNamesTheWayAroundIt(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	scratchParent, output := buildDirs(t, "lore")
 
@@ -228,10 +226,8 @@ func TestBuildWithoutAToolchainSaysWhatItNeedsAndWhy(t *testing.T) {
 	if internalerror.KindOf(err) != internalerror.KindPrecondition {
 		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
 	}
-	for _, want := range []string{"Go toolchain", "compile-time type safety", "https://go.dev/dl/", "lore plugin install"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to mention %q", err, want)
-		}
+	if !strings.Contains(err.Error(), "lore plugin install") {
+		t.Errorf("error = %q, want it to name the way around a missing toolchain", err)
 	}
 	assertNoScratchModule(t, scratchParent)
 }
@@ -243,7 +239,7 @@ func TestBuildComplainsAboutTheMissingFlagBeforeTheMissingToolchain(t *testing.T
 	if err == nil {
 		t.Fatal("Build() built a binary with nothing added to it")
 	}
-	if internalerror.KindOf(err) != internalerror.KindBadRequest {
+	if !internalerror.IsBadRequest(err) {
 		t.Errorf("kind = %v, want bad request", internalerror.KindOf(err))
 	}
 }

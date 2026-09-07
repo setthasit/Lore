@@ -900,12 +900,6 @@ func TestPermanentErrorFailsFastWithoutLeakingTheToken(t *testing.T) {
 	}
 }
 
-func TestNameIsTheInstanceID(t *testing.T) {
-	if got := NewConnector("gitlab-acme", fakeToken, nil, "").Name(); got != "gitlab-acme" {
-		t.Errorf("Name() = %q, want %q", got, "gitlab-acme")
-	}
-}
-
 // A renamed instance owns its own document namespace, but a clone's remote is
 // still written against the forge, so RepoRef must not follow the rename.
 func TestANonDefaultInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {

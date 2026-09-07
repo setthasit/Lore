@@ -1,31 +1,39 @@
 package git
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
 )
 
-func TestPluginNewCode(t *testing.T) {
-	repo, err := Plugin().NewCode(lore.CodeConfig{Root: t.TempDir()})
+// A repo bound to the wrong clone answers plausibly until its history is read.
+func TestPluginNewCodeBindsTheConfiguredRoot(t *testing.T) {
+	r := newTestRepo(t)
+	r.write("main.go", "package main\n")
+	r.commit(authorAda, "2024-05-01T09:30:00Z", "add main")
+
+	repo, err := Plugin().NewCode(lore.CodeConfig{Root: r.root})
 	if err != nil {
 		t.Fatalf("NewCode: %v", err)
 	}
-	if repo == nil {
-		t.Fatal("NewCode returned no repo")
+
+	got, err := repo.HasFileAtHEAD(context.Background(), "main.go")
+	if err != nil {
+		t.Fatalf("HasFileAtHEAD: %v", err)
+	}
+	if !got {
+		t.Error("the repo does not see the configured clone's HEAD")
 	}
 }
 
-// A repo bound to nothing would run every git command against the process's
-// working directory and answer with another clone's history.
 func TestPluginNewCodeRefusesEmptyRoot(t *testing.T) {
 	_, err := Plugin().NewCode(lore.CodeConfig{})
 	if err == nil {
 		t.Fatal("NewCode accepted an empty root")
 	}
-
-	const want = "git: root is empty"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err, want)
+	if !strings.Contains(err.Error(), "root is empty") {
+		t.Errorf("error = %q, want it to name the empty root", err)
 	}
 }

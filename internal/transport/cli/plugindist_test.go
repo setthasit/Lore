@@ -274,11 +274,20 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 		t.Fatalf("stdout %q does not report the install", res.stdout)
 	}
 
-	lock := lockFile(t, path)
-	for _, want := range []string{"version: 1", "linear:", "version: v0.3.1", fake.digest("v0.3.1")} {
-		if !strings.Contains(lock, want) {
-			t.Fatalf("lore.lock %q does not contain %q", lock, want)
-		}
+	lock, err := plugindist.LoadLock(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("LoadLock() error = %v", err)
+	}
+	entry, locked := lock.Entry("linear")
+	if !locked || entry.Version != "v0.3.1" {
+		t.Fatalf("lock entry = %+v, %v; want linear pinned at v0.3.1", entry, locked)
+	}
+	artifact, ok := lock.Artifact("linear", plugindist.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH})
+	if !ok {
+		t.Fatalf("lock = %+v, want an artifact for this platform", lock)
+	}
+	if artifact.Digest != fake.digest("v0.3.1") {
+		t.Errorf("locked digest = %q, want %q", artifact.Digest, fake.digest("v0.3.1"))
 	}
 	if config := readWorkspaceFile(t, path); config != declaredConfig("github.com/jdoe/lore-linear@v0.3.1") {
 		t.Fatalf("install rewrote a pinned configuration:\n%s", config)

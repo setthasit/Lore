@@ -225,6 +225,13 @@ func validateCapabilities(m lore.Manifest) error {
 		return internalerror.NewInternalError(fmt.Sprintf(
 			"%s plugin %q declares repo_remotes, which only a source can serve", m.Kind, m.Name), nil)
 	}
+	for _, capability := range slices.Sorted(maps.Keys(m.DefaultModels)) {
+		if !caps.Declares(capability) {
+			return internalerror.NewInternalError(fmt.Sprintf(
+				"plugin %q suggests a default model for %s, a capability it does not declare, so no role could ever ask for it",
+				m.Name, capability), nil)
+		}
+	}
 	if m.Kind == lore.KindProvider {
 		if !caps.Embed && !caps.Complete {
 			return internalerror.NewInternalError(fmt.Sprintf(

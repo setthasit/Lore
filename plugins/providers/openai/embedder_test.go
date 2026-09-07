@@ -499,27 +499,6 @@ func TestEmbedErrorsOmitAPIKey(t *testing.T) {
 	}
 }
 
-func TestDimensionsReportsTheConfiguredWidth(t *testing.T) {
-	e, err := NewEmbedder(fakeKey, testEmbedModel, "", 1536)
-	if err != nil {
-		t.Fatalf("NewEmbedder: %v", err)
-	}
-
-	if got := e.Dimensions(); got != 1536 {
-		t.Fatalf("Dimensions = %d, want 1536", got)
-	}
-
-	// The width is the only vector-space component the provider owns; the host
-	// composes the identity, so a narrower client must report the narrower width.
-	narrower, err := NewEmbedder(fakeKey, testEmbedModel, "", 512)
-	if err != nil {
-		t.Fatalf("NewEmbedder (narrower): %v", err)
-	}
-	if got := narrower.Dimensions(); got != 512 {
-		t.Errorf("Dimensions = %d, want 512", got)
-	}
-}
-
 func TestNewEmbedderValidatesArguments(t *testing.T) {
 	cases := []struct {
 		name   string

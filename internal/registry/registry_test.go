@@ -119,6 +119,11 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 		mutate(&m)
 		return stubSource{manifest: m}
 	}
+	providerWith := func(mutate func(*lore.Manifest)) lore.Plugin {
+		m := providerManifest("acme", lore.Capabilities{Embed: true})
+		mutate(&m)
+		return stubProvider{manifest: m}
+	}
 
 	tests := []struct {
 		name   string
@@ -198,6 +203,18 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 			}),
 			want: `declares "token_env" twice`,
 		},
+		{
+			name:   "provider serves no capability",
+			plugin: providerWith(func(m *lore.Manifest) { m.Capabilities = lore.Capabilities{} }),
+			want:   "declares neither embed nor complete",
+		},
+		{
+			name: "default model for a capability the manifest does not declare",
+			plugin: providerWith(func(m *lore.Manifest) {
+				m.DefaultModels = map[lore.Capability]string{lore.CapabilityComplete: "acme-chat"}
+			}),
+			want: "suggests a default model for complete, a capability it does not declare",
+		},
 	}
 
 	for _, tt := range tests {
@@ -210,21 +227,6 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err, tt.want)
 			}
 		})
-	}
-}
-
-func TestRegisterRejectsAProviderThatServesNothing(t *testing.T) {
-	err := New(lore.Host{}).Register(stubProvider{manifest: lore.Manifest{
-		Name:       "acme",
-		Kind:       lore.KindProvider,
-		APIVersion: lore.APIVersion,
-		Summary:    "a provider serving no capability",
-	}})
-	if err == nil {
-		t.Fatal("Register: want an error")
-	}
-	if !strings.Contains(err.Error(), "declares neither embed nor complete") {
-		t.Errorf("error %q does not say the provider serves nothing", err)
 	}
 }
 

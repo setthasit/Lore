@@ -2,8 +2,6 @@ package gitlab
 
 import "github.com/setthasit/Lore/sdk"
 
-var _ lore.SourcePlugin = plugin{}
-
 // Plugin is the official GitLab source plugin.
 func Plugin() lore.SourcePlugin { return plugin{} }
 

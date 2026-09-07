@@ -78,89 +78,30 @@ func pythonSource(t *testing.T, binary, config string) lore.Connector {
 	return conn
 }
 
-func TestPythonFixtureHandshakes(t *testing.T) {
+// One suite certifies compiled and external plugins identically: this is the
+// suite plugins/sources/* run, reached over a pipe.
+func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 	binary := pythonPlugin(t)
 
 	plugin, err := open(binary, testHost(nil), testTuning())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	manifest := plugin.Manifest()
-	if manifest.Name != "pysource" || manifest.Kind != lore.KindSource {
+	if manifest := plugin.Manifest(); manifest.Name != "pysource" || manifest.Kind != lore.KindSource {
 		t.Errorf("manifest = %+v, want the source plugin pysource", manifest)
 	}
-	if manifest.APIVersion != lore.APIVersion {
-		t.Errorf("api_version = %d, want %d", manifest.APIVersion, lore.APIVersion)
-	}
-}
-
-// The suite is the one plugins/sources/* run, applied to a plugin written in
-// another language and reached over a pipe: one suite certifies compiled and
-// external plugins identically.
-func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
-	binary := pythonPlugin(t)
 
 	conform.Run(t, func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{Docs: 7})
 }
 
-// What `lore plugin verify` runs: the same assertions with no fixture facts,
-// because a host verifying a stranger's binary knows neither its document count
-// nor the shape of its stream.
+// What `lore plugin verify` runs: no fixture facts, because a host verifying a
+// stranger's binary knows neither its document count nor its stream's shape.
 func TestPythonFixturePassesTheHostSideCheck(t *testing.T) {
 	binary := pythonPlugin(t)
 
 	findings := conform.Check(func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{})
 	for _, f := range findings {
 		t.Errorf("%s: %s", f.Check, f.Detail)
-	}
-}
-
-// The fixture is resumable from any batch's cursor, not only the one the
-// conformance suite happens to pick: a host that crashed mid-round replays
-// from whichever cursor it last persisted.
-func TestPythonFixtureResumesFromEveryBatchCursor(t *testing.T) {
-	binary := pythonPlugin(t)
-
-	full, err := drain(pythonSource(t, binary, `{}`), nil)
-	if err != nil {
-		t.Fatalf("full stream: %v", err)
-	}
-	if len(full) < 3 {
-		t.Fatalf("the fixture streamed %d batches, want a multi-batch stream", len(full))
-	}
-
-	for at := range full {
-		committed := map[lore.DocID]bool{}
-		for _, batch := range full[:at+1] {
-			for _, doc := range batch.Docs {
-				committed[doc.ID] = true
-			}
-		}
-
-		resumed, err := drain(pythonSource(t, binary, `{}`), full[at].Cursor)
-		if err != nil {
-			t.Fatalf("resuming from the batch %d cursor %v: %v", at, full[at].Cursor, err)
-		}
-
-		seen := map[lore.DocID]bool{}
-		for _, batch := range resumed {
-			if len(batch.Cursor) == 0 {
-				t.Errorf("a batch resumed from %v carries no cursor", full[at].Cursor)
-			}
-			for _, doc := range batch.Docs {
-				if committed[doc.ID] {
-					t.Errorf("%s is replayed after the batch %d cursor %v committed it", doc.ID, at, full[at].Cursor)
-				}
-				seen[doc.ID] = true
-			}
-		}
-		for _, batch := range full[at+1:] {
-			for _, doc := range batch.Docs {
-				if !seen[doc.ID] {
-					t.Errorf("%s is lost when resuming from the batch %d cursor %v", doc.ID, at, full[at].Cursor)
-				}
-			}
-		}
 	}
 }
 

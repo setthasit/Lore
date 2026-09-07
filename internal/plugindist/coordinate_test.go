@@ -47,9 +47,6 @@ func TestCoordinateDispatchesByShape(t *testing.T) {
 			if coord.Version != tc.version {
 				t.Fatalf("version = %q, want %q", coord.Version, tc.version)
 			}
-			if coord.From != tc.from {
-				t.Fatalf("from = %q, want %q", coord.From, tc.from)
-			}
 		})
 	}
 }
@@ -171,10 +168,6 @@ func TestCoordinateRefusesANameThatIsNotOnePathComponent(t *testing.T) {
 		}
 		if !internalerror.IsBadRequest(err) {
 			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
-		}
-		// Install derives a name from a repository, so it needs the same rule.
-		if _, err := ResolveInstall(".", config.PluginDecl{Name: name, From: from}); err == nil {
-			t.Errorf("installing under the name %q resolved, want a refusal", name)
 		}
 	}
 

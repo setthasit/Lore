@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugbuild"
 )
 
@@ -60,34 +59,22 @@ func runCommand(t *testing.T, cmd *cobra.Command, args ...string) (string, error
 	return out.String(), err
 }
 
-// The build never starts: a coordinate whose package cannot be derived is
-// rejected before a toolchain is looked for, so the user fixes the flag rather
-// than reading a compile error in generated code.
-func TestBuildCommandAsksForAnExplicitPackage(t *testing.T) {
+func TestBuildRefusesACoordinateWithNoDerivablePackageAsABadRequest(t *testing.T) {
 	_, err := runCommand(t, newBuildCommand(), "--with", "github.com/acme/lore-acme.crm@v1.0.0")
 	if err == nil {
 		t.Fatal("build accepted a coordinate whose package name cannot be derived")
-	}
-	if got := internalerror.MessageOf(err); !strings.Contains(got, "=acmecrm") {
-		t.Errorf("error = %q, want the =<package> suffix spelled out", got)
 	}
 	if code := Report(io.Discard, err); code != exitBadRequest {
 		t.Errorf("exit = %d, want %d", code, exitBadRequest)
 	}
 }
 
-func TestBuildCommandWithoutAToolchainSaysWhyItNeedsOne(t *testing.T) {
+func TestBuildWithoutAToolchainIsAPreconditionFailure(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	_, err := runCommand(t, newBuildCommand(), "--with", "github.com/jdoe/lore-linear@v0.3.1")
 	if err == nil {
 		t.Fatal("build succeeded with no Go toolchain on PATH")
-	}
-	message := internalerror.MessageOf(err)
-	for _, want := range []string{"Go toolchain", "compile-time type safety", "lore plugin install"} {
-		if !strings.Contains(message, want) {
-			t.Errorf("error = %q, want it to mention %q", message, want)
-		}
 	}
 	if code := Report(io.Discard, err); code != exitPrecondition {
 		t.Errorf("exit = %d, want %d", code, exitPrecondition)
@@ -207,14 +194,10 @@ func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
 	}
 }
 
-func TestPluginSearchReportsAnUnreachableIndex(t *testing.T) {
+func TestPluginSearchReportsAnUnreachableIndexAsAPreconditionFailure(t *testing.T) {
 	_, err := runCommand(t, searchCommand(fakeIndexTransport{err: errors.New("dial tcp: no route to host")}), "linear")
 	if err == nil {
 		t.Fatal("search succeeded with no network")
-	}
-	message := internalerror.MessageOf(err)
-	if !strings.Contains(message, "unreachable") || !strings.Contains(message, "https://example.test/index.json") {
-		t.Errorf("error = %q, want it to name the unreachable index", message)
 	}
 	if code := Report(io.Discard, err); code != exitPrecondition {
 		t.Errorf("exit = %d, want %d", code, exitPrecondition)

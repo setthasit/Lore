@@ -19,8 +19,8 @@
 //	sleep <ms>      answer late
 //	exit <code>     flush and die, which is how a crash is scripted
 //
-// Placeholders in emit, raw, stderr and partial: $ID, $OP, $NTEXTS, $PATH, $ENV{NAME},
-// $SECRET{key}, $CURSOR{key}, $CONFIG{key}.
+// Placeholders in emit, raw, stderr and partial: $ID, $OP, $NTEXTS, $PATH, $PID,
+// $ENV{NAME}, $SECRET{key}, $CURSOR{key}, $CONFIG{key}.
 package main
 
 import (
@@ -126,6 +126,7 @@ func expand(text string, req request) string {
 	text = strings.ReplaceAll(text, "$ID", req.ID)
 	text = strings.ReplaceAll(text, "$OP", req.Op)
 	text = strings.ReplaceAll(text, "$NTEXTS", strconv.Itoa(len(req.Texts)))
+	text = strings.ReplaceAll(text, "$PID", strconv.Itoa(os.Getpid()))
 	// The path is escaped because a Windows clone root arrives full of
 	// backslashes, and a script pasting one raw into a JSON string would emit a
 	// frame the host is right to reject.

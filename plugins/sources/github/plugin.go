@@ -2,8 +2,6 @@ package github
 
 import "github.com/setthasit/Lore/sdk"
 
-var _ lore.SourcePlugin = plugin{}
-
 // Plugin is the official GitHub source plugin.
 func Plugin() lore.SourcePlugin { return plugin{} }
 
