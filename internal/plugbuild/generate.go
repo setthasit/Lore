@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -82,12 +83,16 @@ func sortedByModule(coords []Coordinate) []Coordinate {
 	return sorted
 }
 
-// checkSet rejects a set that cannot be generated: the same module twice would
-// register its plugins twice, and two modules sharing a package name would
-// collide as import aliases.
+// checkSet rejects a set that cannot be generated: a duplicate module registers
+// twice, and a package name is both an import alias and a call in the source.
 func checkSet(coords []Coordinate) error {
 	modules, packages := make(map[string]string, len(coords)), make(map[string]string, len(coords))
 	for _, c := range coords {
+		if !isPackageName(c.Package) || reservedPackages[c.Package] || c.Package == "_" {
+			return internalerror.NewBadRequestError(
+				"--with "+c.String()+" wants the package name "+strconv.Quote(c.Package)+
+					", which the generated composition root cannot import — pick another with =<package>", nil)
+		}
 		if seen, ok := modules[c.Module]; ok {
 			return internalerror.NewBadRequestError(
 				"--with names "+c.Module+" twice, at "+seen+" and "+c.Version+" — one build compiles in one version", nil)

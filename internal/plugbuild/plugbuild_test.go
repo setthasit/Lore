@@ -67,6 +67,9 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 			}
 			generated = string(raw)
 		}
+		if len(run.args) > 0 && run.args[0] == "list" {
+			return "v0.4.1\n", nil
+		}
 		if run.program == output {
 			return listing, nil
 		}
@@ -95,6 +98,7 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 		"go get github.com/acme/lore-crm/v2@v2.0.1",
 		"go get github.com/jdoe/lore-linear@v0.3.1",
 		"go get .",
+		"go list -m -f {{.Version}} " + engineModule,
 		"go build -o " + output + " .",
 		filepath.Base(output) + " plugin list",
 	}
@@ -108,8 +112,8 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 	if result.Output != output {
 		t.Errorf("Output = %q, want %q", result.Output, output)
 	}
-	if result.Engine != "v0.4.0" {
-		t.Errorf("Engine = %q, want the requested engine version", result.Engine)
+	if result.Engine != "v0.4.1" {
+		t.Errorf("Engine = %q, want the version go list reported", result.Engine)
 	}
 	if result.Plugins != listing {
 		t.Errorf("Plugins = %q, want the artifact's own plugin list", result.Plugins)
@@ -246,14 +250,53 @@ func TestBuildWithoutAToolchainSaysWhatItNeedsAndWhy(t *testing.T) {
 	assertNoScratchModule(t, scratchParent)
 }
 
-func TestBuildNeedsAtLeastOnePlugin(t *testing.T) {
-	_, err := Build(context.Background(), Request{Runner: &fakeRunner{}, Go: fakeGo})
+func TestBuildComplainsAboutTheMissingFlagBeforeTheMissingToolchain(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := Build(context.Background(), Request{Runner: &fakeRunner{}})
 	if err == nil {
 		t.Fatal("Build() built a binary with nothing added to it")
 	}
 	if internalerror.KindOf(err) != internalerror.KindBadRequest {
 		t.Errorf("kind = %v, want bad request", internalerror.KindOf(err))
 	}
+}
+
+func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
+	scratchParent := t.TempDir()
+	output := filepath.Join(t.TempDir(), "lore")
+
+	listFailed := errors.New("exit status 1")
+	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
+		if len(run.args) > 0 && run.args[0] == "list" {
+			return "go: github.com/setthasit/Lore: missing go.sum entry", listFailed
+		}
+		return "", nil
+	}}
+
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+		Engine:      "latest",
+		TempDir:     scratchParent,
+		Runner:      runner,
+		Go:          fakeGo,
+	})
+	if err == nil {
+		t.Fatal("Build() reported an engine version it could not read")
+	}
+	if internalerror.KindOf(err) != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	if !errors.Is(err, listFailed) {
+		t.Errorf("error = %v, want it to wrap the toolchain failure", err)
+	}
+	for _, want := range []string{"engine version", "missing go.sum entry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	assertNoScratchModule(t, scratchParent)
 }
 
 // The slow proof: a real toolchain, the real engine and a real plugin module,

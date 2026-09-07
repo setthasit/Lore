@@ -114,6 +114,29 @@ func TestRenderRejectsCollidingSets(t *testing.T) {
 	}
 }
 
+// Render is handed coordinates by any caller, not only ParseCoordinate, and the
+// package name lands unquoted in the generated source.
+func TestRenderRejectsAPackageNameItCannotEmit(t *testing.T) {
+	cases := map[string]string{
+		"not an identifier":              "lore-linear",
+		"a keyword":                      "func",
+		"empty":                          "",
+		"an import the root already has": "os",
+		"package main":                   "main",
+		"a builtin the root calls":       "append",
+		"the blank identifier":           "_",
+	}
+
+	for name, pkg := range cases {
+		coords := []Coordinate{{Module: "github.com/jdoe/lore-linear", Version: "v0.3.1", Package: pkg}}
+		if _, err := Render(coords); err == nil {
+			t.Errorf("%s: Render() generated source that cannot compile", name)
+		} else if internalerror.KindOf(err) != internalerror.KindBadRequest {
+			t.Errorf("%s: kind = %v, want bad request", name, internalerror.KindOf(err))
+		}
+	}
+}
+
 func parseAll(t *testing.T, raws ...string) []Coordinate {
 	t.Helper()
 

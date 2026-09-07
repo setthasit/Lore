@@ -81,8 +81,8 @@ type Result struct {
 	// Output is the absolute path of the binary that was written.
 	Output string
 
-	// Engine is the engine version query the build resolved against, and Added
-	// the plugins compiled in on top of the official set, in the order the
+	// Engine is the version the engine module resolved to, and Added the
+	// plugins compiled in on top of the official set, in the order the
 	// generated composition root registers them.
 	Engine string
 	Added  []Coordinate
@@ -96,15 +96,6 @@ type Result struct {
 // Build generates, fetches, compiles and then asks the produced binary what it
 // contains. The scratch module is removed however the build ends.
 func Build(ctx context.Context, req Request) (Result, error) {
-	goBin := req.Go
-	if goBin == "" {
-		found, err := FindGo()
-		if err != nil {
-			return Result{}, err
-		}
-		goBin = found
-	}
-
 	if len(req.Coordinates) == 0 {
 		return Result{}, internalerror.NewBadRequestError(
 			"lore build needs at least one --with <module>@<version>: a binary with only the official plugins is the one you already have", nil)
@@ -113,6 +104,15 @@ func Build(ctx context.Context, req Request) (Result, error) {
 	source, err := Render(coords)
 	if err != nil {
 		return Result{}, err
+	}
+
+	goBin := req.Go
+	if goBin == "" {
+		found, err := FindGo()
+		if err != nil {
+			return Result{}, err
+		}
+		goBin = found
 	}
 
 	output, err := filepath.Abs(cmp.Or(req.Output, DefaultOutput))
@@ -124,69 +124,112 @@ func Build(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, internalerror.NewInternalError("lore build cannot create a scratch module", err)
 	}
-	// The scratch module holds nothing worth keeping, and a failed build that
-	// leaves one behind leaves generated code with somebody's plugin in it
-	// sitting in the temporary directory.
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	if err := os.WriteFile(filepath.Join(dir, generatedFile), source, 0o600); err != nil {
-		return Result{}, internalerror.NewInternalError("lore build cannot write the generated composition root", err)
+	if err := writeScratchModule(dir, source); err != nil {
+		return Result{}, err
 	}
 
-	engine := cmp.Or(req.Engine, engineVersion())
 	runner := cmp.Or(req.Runner, Runner(execRunner{}))
 	progress := progressWriter(req.Progress)
-
 	printStep(progress, "generated a composition root for "+strings.Join(names(coords), ", "))
 
 	if out, err := runner.Run(ctx, dir, goBin, "mod", "init", scratchModule); err != nil {
 		return Result{}, toolchainError("lore build cannot initialise the scratch module", out, err)
 	}
 
-	requirements := append([]Coordinate{{Module: engineModule, Version: engine}}, coords...)
+	query := cmp.Or(req.Engine, engineVersion())
+	requirements := append([]Coordinate{{Module: engineModule, Version: query}}, coords...)
+	if err := fetchRequirements(ctx, runner, goBin, dir, req.Replace, requirements, progress); err != nil {
+		return Result{}, err
+	}
+	if err := completeSums(ctx, runner, goBin, dir); err != nil {
+		return Result{}, err
+	}
+	engine, err := resolvedEngine(ctx, runner, goBin, dir)
+	if err != nil {
+		return Result{}, err
+	}
+
+	printStep(progress, "compiling "+output+" — this builds the engine and every plugin in it")
+	if err := compile(ctx, runner, goBin, dir, output); err != nil {
+		return Result{}, err
+	}
+
+	listing, err := readBackPlugins(ctx, runner, output)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Output: output, Engine: engine, Added: coords, Plugins: listing}, nil
+}
+
+func writeScratchModule(dir string, source []byte) error {
+	if err := os.WriteFile(filepath.Join(dir, generatedFile), source, 0o600); err != nil {
+		return internalerror.NewInternalError("lore build cannot write the generated composition root", err)
+	}
+	return nil
+}
+
+func fetchRequirements(
+	ctx context.Context,
+	runner Runner,
+	goBin, dir string,
+	replace map[string]string,
+	requirements []Coordinate,
+	progress io.Writer,
+) error {
 	for _, want := range requirements {
-		if local, ok := req.Replace[want.Module]; ok {
+		if local, ok := replace[want.Module]; ok {
 			printStep(progress, "using "+want.Module+" from "+local)
 			if out, err := runner.Run(ctx, dir, goBin, "mod", "edit",
 				"-require="+want.Module+"@"+replacedVersion(want.Version),
 				"-replace="+want.Module+"="+local); err != nil {
-				return Result{}, toolchainError("lore build cannot point the scratch module at "+local, out, err)
+				return toolchainError("lore build cannot point the scratch module at "+local, out, err)
 			}
 			continue
 		}
 
 		printStep(progress, "fetching "+want.String())
 		if out, err := runner.Run(ctx, dir, goBin, "get", want.String()); err != nil {
-			return Result{}, toolchainError("lore build cannot fetch "+want.String(), out, err)
+			return toolchainError("lore build cannot fetch "+want.String(), out, err)
 		}
 	}
+	return nil
+}
 
-	// The fetches above pin versions; they do not complete go.sum. `go get
-	// <module>@<version>` records the module it was asked about and nothing
-	// about what that module imports, and a build refuses to compile a package
-	// it has no sum for. Resolving the generated root itself is what completes
-	// the sums, and it keeps every version the fetches pinned. Not `mod tidy`,
-	// which would also resolve the test dependencies of every dependency; not
-	// `mod download`, which downloads the explicit requirements it already has
-	// and leaves everything they import unsummed.
+// Resolving the generated root completes go.sum: `mod tidy` would also pull every
+// dependency's test dependencies, and `mod download` leaves imports unsummed.
+func completeSums(ctx context.Context, runner Runner, goBin, dir string) error {
 	if out, err := runner.Run(ctx, dir, goBin, "get", "."); err != nil {
-		return Result{}, toolchainError("lore build cannot resolve the generated composition root's dependencies", out, err)
+		return toolchainError("lore build cannot resolve the generated composition root's dependencies", out, err)
 	}
+	return nil
+}
 
-	printStep(progress, "compiling "+output+" — this builds the engine and every plugin in it")
+func resolvedEngine(ctx context.Context, runner Runner, goBin, dir string) (string, error) {
+	out, err := runner.Run(ctx, dir, goBin, "list", "-m", "-f", "{{.Version}}", engineModule)
+	if err != nil {
+		return "", toolchainError("lore build cannot read the engine version the scratch module resolved to", out, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func compile(ctx context.Context, runner Runner, goBin, dir, output string) error {
 	if out, err := runner.Run(ctx, dir, goBin, "build", "-o", output, "."); err != nil {
-		return Result{}, toolchainError("lore build failed to compile: a plugin named here may not implement "+
+		return toolchainError("lore build failed to compile: a plugin named here may not implement "+
 			"api version "+strconv.Itoa(lore.APIVersion)+" of the SDK this engine speaks", out, err)
 	}
+	return nil
+}
 
-	// Registration validates every manifest against the interfaces it claims,
-	// so listing the plugins is also the cheapest proof that the artifact runs.
+// Registration validates every manifest against the interfaces it claims, so
+// listing the plugins is also the cheapest proof that the artifact runs.
+func readBackPlugins(ctx context.Context, runner Runner, output string) (string, error) {
 	listing, err := runner.Run(ctx, "", output, "plugin", "list")
 	if err != nil {
-		return Result{}, toolchainError("lore build produced "+output+" but it does not run: its plugin set failed to register", listing, err)
+		return "", toolchainError("lore build produced "+output+" but it does not run: its plugin set failed to register", listing, err)
 	}
-
-	return Result{Output: output, Engine: engine, Added: coords, Plugins: listing}, nil
+	return listing, nil
 }
 
 // FindGo locates the Go toolchain. Its absence is reported as the trade it is:
