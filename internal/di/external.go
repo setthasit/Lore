@@ -48,7 +48,7 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 			return externals{}, err
 		}
 
-		binary, err := plugindist.Binary(decl.Name, coord, lock)
+		binary, err := plugindist.Binary(coord, lock)
 		if err != nil {
 			return externals{}, err
 		}

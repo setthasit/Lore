@@ -175,9 +175,6 @@ func assertCapability(b Binding, id string, manifest lore.Manifest, built lore.P
 		_, ok = built.(lore.Embedder)
 	case lore.CapabilityComplete:
 		_, ok = built.(lore.Completer)
-	default:
-		return internalerror.NewInternalError(fmt.Sprintf(
-			"%s asked provider %q for unknown capability %q", b.Field, id, b.Capability), nil)
 	}
 	if !ok {
 		return internalerror.NewInternalError(fmt.Sprintf(

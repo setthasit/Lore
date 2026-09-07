@@ -431,7 +431,7 @@ func runLore(t *testing.T, args ...string) (exitCode int, stderr string) {
 	os.Args, os.Stderr = append([]string{"lore"}, args...), captured
 
 	returned := make(chan int, 1)
-	go func() { returned <- app.Run(app.With(plugins.Official()...)) }()
+	go func() { returned <- app.Run(plugins.Official()...) }()
 
 	select {
 	case exitCode = <-returned:

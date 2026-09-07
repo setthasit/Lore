@@ -298,15 +298,15 @@ func TestAPIVersionMismatchNamesBothVersions(t *testing.T) {
 
 func TestManifestIsRequiredBeforeAnyOperation(t *testing.T) {
 	// The plugin answers the handshake with an error, so no operation may run.
-	refuse := `manifest emit {"v":1,"id":"$ID","error":{"message":"cannot read my own manifest","retryable":false,"kind":"internal"}}`
+	refuse := `manifest emit {"v":1,"id":"$ID","error":{"message":"cannot read my own manifest","kind":"internal"}}`
 
 	_, err := openScript(t, script(refuse, shutdownOK))
-	var pluginErr *Error
+	var pluginErr *pluginError
 	if !errors.As(err, &pluginErr) {
-		t.Fatalf("open error = %v (%T), want a *plugexec.Error", err, err)
+		t.Fatalf("open error = %v (%T), want a *pluginError", err, err)
 	}
-	if pluginErr.Op != opManifest || pluginErr.Kind != KindInternal {
-		t.Errorf("error = %+v, want op %q kind %q", pluginErr, opManifest, KindInternal)
+	if pluginErr.op != opManifest || pluginErr.kind != kindInternal {
+		t.Errorf("error = %+v, want op %q kind %q", pluginErr, opManifest, kindInternal)
 	}
 }
 
@@ -323,7 +323,7 @@ func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 		{name: "the instance does not", answer: `{"v":1,"id":"$ID","ok":true,"matches":false}`, matches: false},
 		{
 			name:    "the plugin cannot answer",
-			answer:  `{"v":1,"id":"$ID","error":{"message":"no idea","retryable":false,"kind":"internal"}}`,
+			answer:  `{"v":1,"id":"$ID","error":{"message":"no idea","kind":"internal"}}`,
 			matches: false,
 		},
 	}
@@ -517,44 +517,36 @@ func TestTheDefaultTimeoutsAreTheProtocolsOwn(t *testing.T) {
 	}
 }
 
-func TestErrorKindsDecideWhetherSchedulingRetries(t *testing.T) {
+func TestAnErrorFrameKeepsTheKindThePluginReported(t *testing.T) {
 	tests := []struct {
-		name          string
-		frame         string
-		wantKind      ErrorKind
-		wantRetryable bool
+		name     string
+		frame    string
+		wantKind errorKind
 	}{
 		{
-			name:     "auth is never retried because credentials do not fix themselves",
-			frame:    `{"message":"token lacks read:issues","retryable":false,"kind":"auth"}`,
-			wantKind: KindAuth,
+			name:     "auth",
+			frame:    `{"message":"token lacks read:issues","kind":"auth"}`,
+			wantKind: kindAuth,
 		},
 		{
-			name:     "invalid_config is never retried",
-			frame:    `{"message":"teams is empty","retryable":false,"kind":"invalid_config"}`,
-			wantKind: KindInvalidConfig,
+			name:     "invalid_config",
+			frame:    `{"message":"teams is empty","kind":"invalid_config"}`,
+			wantKind: kindInvalidConfig,
 		},
 		{
-			name:          "rate_limit implies retryable even unstated",
-			frame:         `{"message":"slow down","retryable":false,"kind":"rate_limit"}`,
-			wantKind:      KindRateLimit,
-			wantRetryable: true,
+			name:     "rate_limit",
+			frame:    `{"message":"slow down","kind":"rate_limit"}`,
+			wantKind: kindRateLimit,
 		},
 		{
-			name:     "not_found fails the instance",
-			frame:    `{"message":"no such team","retryable":false,"kind":"not_found"}`,
-			wantKind: KindNotFound,
+			name:     "not_found",
+			frame:    `{"message":"no such team","kind":"not_found"}`,
+			wantKind: kindNotFound,
 		},
 		{
 			name:     "an unknown kind is treated as internal",
-			frame:    `{"message":"tea leaves unreadable","retryable":false,"kind":"astrological"}`,
-			wantKind: KindInternal,
-		},
-		{
-			name:          "retryable is authoritative whatever the kind",
-			frame:         `{"message":"transient DNS failure","retryable":true,"kind":"internal"}`,
-			wantKind:      KindInternal,
-			wantRetryable: true,
+			frame:    `{"message":"tea leaves unreadable","kind":"astrological"}`,
+			wantKind: kindInternal,
 		},
 	}
 
@@ -567,17 +559,14 @@ func TestErrorKindsDecideWhetherSchedulingRetries(t *testing.T) {
 			)
 
 			_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
-			var pluginErr *Error
+			var pluginErr *pluginError
 			if !errors.As(err, &pluginErr) {
-				t.Fatalf("error = %v (%T), want a *plugexec.Error", err, err)
+				t.Fatalf("error = %v (%T), want a *pluginError", err, err)
 			}
-			if pluginErr.Kind != tt.wantKind {
-				t.Errorf("kind = %q, want %q", pluginErr.Kind, tt.wantKind)
+			if pluginErr.kind != tt.wantKind {
+				t.Errorf("kind = %q, want %q", pluginErr.kind, tt.wantKind)
 			}
-			if got := Retryable(err); got != tt.wantRetryable {
-				t.Errorf("Retryable = %v, want %v", got, tt.wantRetryable)
-			}
-			if pluginErr.Instance != "linear" || pluginErr.Op != opChanges {
+			if pluginErr.instance != "linear" || pluginErr.op != opChanges {
 				t.Errorf("error = %+v, want instance linear and op changes", pluginErr)
 			}
 		})
@@ -602,17 +591,14 @@ func TestErrorFrameIsAPluginErrorNotACrash(t *testing.T) {
 	// when it sent one, which is what keeps it out of the crash path.
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","retryable":true,"kind":"rate_limit"}}`,
+		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","kind":"rate_limit"}}`,
 		shutdownOK+"\nshutdown exit 0",
 	)
 
 	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
-	var crash *CrashError
+	var crash *crashError
 	if errors.As(err, &crash) {
 		t.Fatalf("an error frame was reported as a crash: %v", crash)
-	}
-	if !Retryable(err) {
-		t.Errorf("error %v is not retryable, want the rate limit backed off", err)
 	}
 }
 
@@ -623,7 +609,7 @@ func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 	// would leave this process running for as long as the host itself lives.
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","retryable":true,"kind":"rate_limit"}}`,
+		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","kind":"rate_limit"}}`,
 		shutdownOK+"\nshutdown exit 0",
 	)
 
@@ -641,7 +627,7 @@ func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 		t.Fatalf("send changes: %v", err)
 	}
 
-	var plugin *Error
+	var plugin *pluginError
 	if _, err := session.await(ctx, env, tune.unary); !errors.As(err, &plugin) {
 		t.Fatalf("await = %v (%T), want the plugin's error frame", err, err)
 	}
@@ -667,19 +653,15 @@ func TestNonZeroExitIsACrashNamingInstanceAndOp(t *testing.T) {
 		t.Fatalf("got %d batches before the crash, want the one that was sent", len(batches))
 	}
 
-	var crash *CrashError
+	var crash *crashError
 	if !errors.As(err, &crash) {
-		t.Fatalf("error = %v (%T), want a *plugexec.CrashError", err, err)
+		t.Fatalf("error = %v (%T), want a *crashError", err, err)
 	}
-	if crash.Instance != "linear" || crash.Op != opChanges {
+	if crash.instance != "linear" || crash.op != opChanges {
 		t.Errorf("crash = %+v, want instance linear and op changes", crash)
 	}
 	if !strings.Contains(crash.Error(), "exit status 3") {
 		t.Errorf("crash %q does not report the exit status", crash)
-	}
-	// A crash is not a business error, so nothing schedules a retry off it.
-	if Retryable(err) {
-		t.Error("a crash was reported as retryable")
 	}
 }
 
@@ -802,9 +784,9 @@ func TestTheLastStderrLineOfACrashReachesTheLogger(t *testing.T) {
 	conn, logs := connectorWithLogs(t, text, lore.SourceConfig{Instance: "linear"})
 	_, err := drain(conn, nil)
 
-	var crash *CrashError
+	var crash *crashError
 	if !errors.As(err, &crash) {
-		t.Fatalf("error = %v (%T), want a *plugexec.CrashError", err, err)
+		t.Fatalf("error = %v (%T), want a *crashError", err, err)
 	}
 	if out := logs.String(); !strings.Contains(out, `msg="linear: panic: assignment to entry in nil map"`) {
 		t.Errorf("the plugin's unterminated last line never reached the logger:\n%s", out)

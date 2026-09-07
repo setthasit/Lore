@@ -25,11 +25,6 @@ const (
 	// caught too — not only a mutated download.
 	digestFileName = ".digest"
 
-	// manifestFileName caches what the `manifest` handshake returned. It is a
-	// cache and never an authority: deleting it costs one exec, and a stale
-	// copy can never outvote the binary, which is re-asked every launch.
-	manifestFileName = "manifest.json"
-
 	pluginsDirName = "plugins"
 )
 
@@ -44,19 +39,19 @@ type Store struct {
 
 // NewStore roots a cache at an explicit directory.
 func NewStore(root string) *Store {
-	return &Store{root: root, platform: HostPlatform()}
+	return &Store{root: root, platform: hostPlatform()}
 }
 
 // DefaultStore roots the cache where the rest of Lore keeps its state.
 func DefaultStore() (*Store, error) {
-	root, err := DefaultRoot()
+	root, err := defaultRoot()
 	if err != nil {
 		return nil, err
 	}
 	return NewStore(root), nil
 }
 
-func DefaultRoot() (string, error) {
+func defaultRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv(RootEnv)); root != "" {
 		return root, nil
 	}
@@ -69,23 +64,6 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".lore"), nil
 }
 
-// WithPlatform returns a store that reads and writes another platform's slot.
-// Installing for a platform other than the running one is not a supported
-// workflow; this exists so the platform-dependent paths are testable.
-func (s *Store) WithPlatform(p Platform) *Store {
-	clone := *s
-	clone.platform = p
-	return &clone
-}
-
-func (s *Store) Platform() Platform {
-	return s.platform
-}
-
-func (s *Store) Root() string {
-	return s.root
-}
-
 func (s *Store) Dir(name, version string) (string, error) {
 	if err := checkName(name); err != nil {
 		return "", err
@@ -96,29 +74,6 @@ func (s *Store) Dir(name, version string) (string, error) {
 			" that neither starts with a dot nor contains a path separator", nil)
 	}
 	return filepath.Join(s.root, pluginsDirName, name, version), nil
-}
-
-func (s *Store) ManifestPath(name, version string) (string, error) {
-	dir, err := s.Dir(name, version)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, manifestFileName), nil
-}
-
-// WriteManifest caches the handshake's answer beside the binary.
-func (s *Store) WriteManifest(name, version string, raw []byte) error {
-	if err := checkName(name); err != nil {
-		return err
-	}
-	path, err := s.ManifestPath(name, version)
-	if err != nil {
-		return err
-	}
-	if err := fsx.WriteAtomic(path, raw, 0o644); err != nil {
-		return internalerror.NewInternalError("cannot cache the manifest at "+path, err)
-	}
-	return nil
 }
 
 // Report is what is known about an installed plugin: the binary that will run,
@@ -135,23 +90,22 @@ type Report struct {
 	LockedDigest string // the artifact digest lore.lock pins
 	BinaryDigest string // the re-verified digest of the binary on disk
 
-	Manifest bool   // a manifest.json is cached beside the binary
-	Warning  string // what the host must say at startup, empty when there is nothing to say
+	Warning string // what the host must say at startup, empty when there is nothing to say
 }
 
 // Binary is the installed, digest-checked binary for a declared plugin, or an
 // error naming the exact command that fixes it. Nothing here downloads: a
 // declared-but-uninstalled plugin is a startup error, never a silent fetch.
-func Binary(name string, coord Coordinate, lock *Lock) (string, error) {
+func Binary(coord Coordinate, lock *Lock) (string, error) {
 	store, err := DefaultStore()
 	if err != nil {
 		return "", err
 	}
-	return store.Binary(name, coord, lock)
+	return store.Binary(coord, lock)
 }
 
-func (s *Store) Binary(name string, coord Coordinate, lock *Lock) (string, error) {
-	report, err := s.Locate(name, coord, lock)
+func (s *Store) Binary(coord Coordinate, lock *Lock) (string, error) {
+	report, err := s.Locate(coord, lock)
 	if err != nil {
 		return "", err
 	}
@@ -161,10 +115,8 @@ func (s *Store) Binary(name string, coord Coordinate, lock *Lock) (string, error
 // Locate resolves a declaration to the binary that will run and re-verifies it.
 // A digest mismatch refuses: it never warns and continues, and no flag makes it
 // continue, because the thing being launched is code from someone else.
-func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error) {
-	if name == "" {
-		name = coord.Name
-	}
+func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
+	name := coord.Name
 	if err := checkName(name); err != nil {
 		return Report{}, err
 	}
@@ -176,7 +128,7 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 			return Report{}, internalerror.NewPreconditionError(Label(name)+" runs "+coord.Path+
 				" in place, but there is no file there", err)
 		}
-		report.Binary, report.Version = coord.Path, OriginLocal.String()
+		report.Binary, report.Version = coord.Path, string(OriginLocal)
 		return report, nil
 	}
 
@@ -212,25 +164,14 @@ func (s *Store) Locate(name string, coord Coordinate, lock *Lock) (Report, error
 		return Report{}, err
 	}
 	if expected := strings.TrimSpace(string(recorded)); expected != actual {
-		return Report{}, internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+s.platform.Key()+
-			" (expected "+expected+", got "+actual+")", nil)
+		return Report{}, digestMismatch(name, s.platform, expected, actual)
 	}
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
 	report.LockedURL, report.LockedDigest = artifact.URL, artifact.Digest
-	manifest, err := s.ManifestPath(name, entry.Version)
-	if err != nil {
-		return Report{}, err
-	}
-	if _, err := os.Stat(manifest); err == nil {
-		report.Manifest = true
-	}
 	return report, nil
 }
 
-// binaryIn finds the executable in a version directory. The binary is not named
-// in the lockfile because the archive names it, so the directory's own contents
-// are the record: one file that is neither the digest nor the cached manifest.
 func (s *Store) binaryIn(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -260,7 +201,7 @@ func (s *Store) binaryIn(dir string) (string, error) {
 
 func isCacheEntryName(name string) bool {
 	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`) &&
-		filepath.Base(name) == name && name != manifestFileName
+		filepath.Base(name) == name
 }
 
 // write stores an unpacked binary and the digest re-checked at every launch.
@@ -268,7 +209,7 @@ func (s *Store) write(name, version, binaryName string, body []byte) (path, dige
 	if !isCacheEntryName(binaryName) {
 		return "", "", internalerror.NewPreconditionError(Label(name)+": the artifact names its binary "+
 			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
-			" must be a single name that neither starts with a dot nor is the cached "+manifestFileName, nil)
+			" must be a single name that does not start with a dot", nil)
 	}
 
 	dir, err := s.Dir(name, version)
@@ -324,6 +265,11 @@ func (s *Store) Remove(name string) (int, error) {
 
 func notInstalled(name string) error {
 	return internalerror.NewPreconditionError(Label(name)+" is not installed — run: lore plugin install "+name, nil)
+}
+
+func digestMismatch(name string, p Platform, expected, actual string) error {
+	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
+		" (expected "+expected+", got "+actual+")", nil)
 }
 
 // A digest carries its algorithm, so a lockfile written today stays readable

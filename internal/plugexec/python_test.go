@@ -174,11 +174,11 @@ func TestAPluginKilledMidStreamResumesWithoutDuplicates(t *testing.T) {
 	if err == nil {
 		t.Fatal("the crashing fixture ended its stream cleanly")
 	}
-	var crash *CrashError
+	var crash *crashError
 	if !errors.As(err, &crash) {
-		t.Fatalf("error = %v (%T), want a *plugexec.CrashError", err, err)
+		t.Fatalf("error = %v (%T), want a *crashError", err, err)
 	}
-	if crash.Instance != "pysource" || crash.Op != opChanges {
+	if crash.instance != "pysource" || crash.op != opChanges {
 		t.Errorf("crash = %+v, want instance pysource and op changes", crash)
 	}
 	if len(committed) != 2 {

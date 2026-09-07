@@ -97,7 +97,6 @@ func TestCoordinateRefusesUnpinnedAndMalformed(t *testing.T) {
 		{name: "bare token", from: "lore-linear", want: "is not a coordinate"},
 		{name: "unversioned url", from: "https://artifacts.example.com/", want: "ends in no version"},
 		{name: "dot-leading url version", from: "https://artifacts.example.com/lore/linear/.foo.tar.gz", want: "ends in no version"},
-		{name: "url version named after the cached manifest", from: "https://artifacts.example.com/lore/linear/manifest.json", want: "ends in no version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -124,7 +123,7 @@ func TestCoordinateAssetNameFollowsConvention(t *testing.T) {
 	}
 
 	const want = "lore-linear_0.3.1_darwin_arm64.tar.gz"
-	if got := coord.AssetName(Platform{OS: "darwin", Arch: "arm64"}); got != want {
+	if got := coord.assetName(Platform{OS: "darwin", Arch: "arm64"}); got != want {
 		t.Fatalf("asset = %q, want %q", got, want)
 	}
 	if got := coord.binaryName(Platform{OS: "windows", Arch: "amd64"}); got != "lore-linear.exe" {
@@ -140,9 +139,6 @@ func TestCoordinateLocalWarnsAndIsNotLocked(t *testing.T) {
 	coord, err := Resolve(".", config.PluginDecl{Name: "scratch", From: "./bin/lore-scratch"})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
-	}
-	if coord.Remote() {
-		t.Fatal("a local coordinate reports itself remote")
 	}
 	for _, want := range []string{"plugins[scratch]", "unpinned", "development only"} {
 		if !strings.Contains(coord.Warning(), want) {

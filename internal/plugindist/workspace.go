@@ -58,7 +58,7 @@ func (w *Workspace) Installed(decl config.PluginDecl) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	binary, err := w.store.Binary(decl.Name, coord, w.lock)
+	binary, err := w.store.Binary(coord, w.lock)
 	if err != nil {
 		return "", nil
 	}
@@ -191,7 +191,7 @@ func (w *Workspace) Verify(name string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	return w.store.Locate(name, coord, w.lock)
+	return w.store.Locate(coord, w.lock)
 }
 
 // The second result is the name the argument introduces, empty when lore.yaml

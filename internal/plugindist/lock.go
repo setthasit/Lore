@@ -21,10 +21,10 @@ import (
 // nobody edits them by hand, and a hand-written file nobody edits invites edits.
 const LockFileName = "lore.lock"
 
-// LockVersion is the only shape this build reads. A file from the future is
+// lockVersion is the only shape this build reads. A file from the future is
 // refused rather than half-understood, since the thing it pins is code that
 // will be executed.
-const LockVersion = 1
+const lockVersion = 1
 
 const lockHeader = "# " + LockFileName + " — generated; written by `lore plugin install|update`\n"
 
@@ -57,7 +57,7 @@ func LoadLock(dir string) (*Lock, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return &Lock{Version: LockVersion, Plugins: map[string]LockEntry{}}, nil
+			return &Lock{Version: lockVersion, Plugins: map[string]LockEntry{}}, nil
 		}
 		return nil, internalerror.NewInternalError("cannot read "+path, err)
 	}
@@ -74,11 +74,11 @@ func LoadLock(dir string) (*Lock, error) {
 		lock.Plugins = map[string]LockEntry{}
 	}
 	if lock.Version == 0 {
-		lock.Version = LockVersion
+		lock.Version = lockVersion
 	}
-	if lock.Version != LockVersion {
+	if lock.Version != lockVersion {
 		return nil, internalerror.NewPreconditionError(path+" is version "+strconv.Itoa(lock.Version)+
-			", but this build reads version "+strconv.Itoa(LockVersion)+" — upgrade lore", nil)
+			", but this build reads version "+strconv.Itoa(lockVersion)+" — upgrade lore", nil)
 	}
 	return &lock, nil
 }
@@ -103,7 +103,7 @@ func (l *Lock) encode() (string, error) {
 	if l.Plugins == nil {
 		l.Plugins = map[string]LockEntry{}
 	}
-	l.Version = LockVersion
+	l.Version = lockVersion
 
 	var body bytes.Buffer
 	encoder := yaml.NewEncoder(&body)

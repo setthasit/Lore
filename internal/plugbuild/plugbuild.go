@@ -36,6 +36,8 @@ const scratchModule = "lorecustom"
 // checkout. It is not a version query anything can resolve.
 const develVersion = "(devel)"
 
+const goCommand = "go"
+
 // Runner runs one external program and returns its combined output. It is an
 // interface so a test can assert the exact command sequence without a
 // toolchain, a network or a minute of compilation.
@@ -57,23 +59,15 @@ type Request struct {
 	Engine string
 
 	// Replace maps a module path to a local directory, written into the scratch
-	// module as a replace directive. Without it a build from an unpublished
-	// checkout has no engine version to fetch, which is exactly the situation of
-	// anyone developing a plugin against an unreleased engine.
+	// module as a replace directive instead of being fetched by version.
 	Replace map[string]string
-
-	// TempDir is the parent of the scratch module; empty means the system
-	// temporary directory.
-	TempDir string
 
 	// Progress receives one line per step. A custom build compiles the whole
 	// engine, so silence for a minute would read as a hang.
 	Progress io.Writer
 
-	// Runner runs the go command and the produced binary; nil means the real
-	// one. Go is the path to the go command; empty means the one on PATH.
+	// Runner runs the go command and the produced binary; nil means the real one.
 	Runner Runner
-	Go     string
 }
 
 // Result reports what was built.
@@ -106,13 +100,13 @@ func Build(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	goBin := req.Go
-	if goBin == "" {
-		found, err := FindGo()
+	runner := req.Runner
+	if runner == nil {
+		toolchain, err := newExecRunner()
 		if err != nil {
 			return Result{}, err
 		}
-		goBin = found
+		runner = toolchain
 	}
 
 	output, err := filepath.Abs(cmp.Or(req.Output, DefaultOutput))
@@ -120,7 +114,7 @@ func Build(ctx context.Context, req Request) (Result, error) {
 		return Result{}, internalerror.NewInternalError("lore build cannot resolve the output path", err)
 	}
 
-	dir, err := os.MkdirTemp(req.TempDir, "lore-build-")
+	dir, err := os.MkdirTemp("", "lore-build-")
 	if err != nil {
 		return Result{}, internalerror.NewInternalError("lore build cannot create a scratch module", err)
 	}
@@ -130,29 +124,28 @@ func Build(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	runner := cmp.Or(req.Runner, Runner(execRunner{}))
-	progress := progressWriter(req.Progress)
+	progress := cmp.Or(req.Progress, io.Discard)
 	printStep(progress, "generated a composition root for "+strings.Join(names(coords), ", "))
 
-	if out, err := runner.Run(ctx, dir, goBin, "mod", "init", scratchModule); err != nil {
+	if out, err := runner.Run(ctx, dir, goCommand, "mod", "init", scratchModule); err != nil {
 		return Result{}, toolchainError("lore build cannot initialise the scratch module", out, err)
 	}
 
 	query := cmp.Or(req.Engine, engineVersion())
 	requirements := append([]Coordinate{{Module: engineModule, Version: query}}, coords...)
-	if err := fetchRequirements(ctx, runner, goBin, dir, req.Replace, requirements, progress); err != nil {
+	if err := fetchRequirements(ctx, runner, dir, req.Replace, requirements, progress); err != nil {
 		return Result{}, err
 	}
-	if err := completeSums(ctx, runner, goBin, dir); err != nil {
+	if err := completeSums(ctx, runner, dir); err != nil {
 		return Result{}, err
 	}
-	engine, err := resolvedEngine(ctx, runner, goBin, dir)
+	engine, err := resolvedEngine(ctx, runner, dir)
 	if err != nil {
 		return Result{}, err
 	}
 
 	printStep(progress, "compiling "+output+" — this builds the engine and every plugin in it")
-	if err := compile(ctx, runner, goBin, dir, output); err != nil {
+	if err := compile(ctx, runner, dir, output); err != nil {
 		return Result{}, err
 	}
 
@@ -173,7 +166,7 @@ func writeScratchModule(dir string, source []byte) error {
 func fetchRequirements(
 	ctx context.Context,
 	runner Runner,
-	goBin, dir string,
+	dir string,
 	replace map[string]string,
 	requirements []Coordinate,
 	progress io.Writer,
@@ -181,7 +174,7 @@ func fetchRequirements(
 	for _, want := range requirements {
 		if local, ok := replace[want.Module]; ok {
 			printStep(progress, "using "+want.Module+" from "+local)
-			if out, err := runner.Run(ctx, dir, goBin, "mod", "edit",
+			if out, err := runner.Run(ctx, dir, goCommand, "mod", "edit",
 				"-require="+want.Module+"@"+replacedVersion(want.Version),
 				"-replace="+want.Module+"="+local); err != nil {
 				return toolchainError("lore build cannot point the scratch module at "+local, out, err)
@@ -190,7 +183,7 @@ func fetchRequirements(
 		}
 
 		printStep(progress, "fetching "+want.String())
-		if out, err := runner.Run(ctx, dir, goBin, "get", want.String()); err != nil {
+		if out, err := runner.Run(ctx, dir, goCommand, "get", want.String()); err != nil {
 			return toolchainError("lore build cannot fetch "+want.String(), out, err)
 		}
 	}
@@ -199,23 +192,23 @@ func fetchRequirements(
 
 // Resolving the generated root completes go.sum: `mod tidy` would also pull every
 // dependency's test dependencies, and `mod download` leaves imports unsummed.
-func completeSums(ctx context.Context, runner Runner, goBin, dir string) error {
-	if out, err := runner.Run(ctx, dir, goBin, "get", "."); err != nil {
+func completeSums(ctx context.Context, runner Runner, dir string) error {
+	if out, err := runner.Run(ctx, dir, goCommand, "get", "."); err != nil {
 		return toolchainError("lore build cannot resolve the generated composition root's dependencies", out, err)
 	}
 	return nil
 }
 
-func resolvedEngine(ctx context.Context, runner Runner, goBin, dir string) (string, error) {
-	out, err := runner.Run(ctx, dir, goBin, "list", "-m", "-f", "{{.Version}}", engineModule)
+func resolvedEngine(ctx context.Context, runner Runner, dir string) (string, error) {
+	out, err := runner.Run(ctx, dir, goCommand, "list", "-m", "-f", "{{.Version}}", engineModule)
 	if err != nil {
 		return "", toolchainError("lore build cannot read the engine version the scratch module resolved to", out, err)
 	}
 	return strings.TrimSpace(out), nil
 }
 
-func compile(ctx context.Context, runner Runner, goBin, dir, output string) error {
-	if out, err := runner.Run(ctx, dir, goBin, "build", "-o", output, "."); err != nil {
+func compile(ctx context.Context, runner Runner, dir, output string) error {
+	if out, err := runner.Run(ctx, dir, goCommand, "build", "-o", output, "."); err != nil {
 		return toolchainError("lore build failed to compile: a plugin named here may not implement "+
 			"api version "+strconv.Itoa(lore.APIVersion)+" of the SDK this engine speaks", out, err)
 	}
@@ -232,24 +225,19 @@ func readBackPlugins(ctx context.Context, runner Runner, output string) (string,
 	return listing, nil
 }
 
-// FindGo locates the Go toolchain. Its absence is reported as the trade it is:
-// an external plugin needs nothing installed, and compiling one in is what buys
-// in-process calls and compile-time type safety.
-func FindGo() (string, error) {
-	path, err := exec.LookPath("go")
-	if err != nil {
-		return "", internalerror.NewPreconditionError(
+// The go command needs the user's own GOPATH, GOPROXY, GOMODCACHE and
+// credentials, so execRunner inherits the environment.
+type execRunner struct{}
+
+func newExecRunner() (execRunner, error) {
+	if _, err := exec.LookPath(goCommand); err != nil {
+		return execRunner{}, internalerror.NewPreconditionError(
 			"lore build needs a Go toolchain on PATH and found none — compiling a plugin in is what buys "+
 				"in-process calls and compile-time type safety, so it needs a compiler: install Go from "+
 				"https://go.dev/dl/, or run the plugin out of process with `lore plugin install` instead", err)
 	}
-	return path, nil
+	return execRunner{}, nil
 }
-
-// execRunner is the real runner. The environment is inherited: the go command
-// needs the user's own GOPATH, GOPROXY, GOMODCACHE and credentials, and this is
-// the user's toolchain building the user's code, not a plugin being launched.
-type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, dir, program string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, program, args...)
@@ -285,10 +273,6 @@ func toolchainError(message, output string, cause error) error {
 		message += ":\n" + trimmed
 	}
 	return internalerror.NewPreconditionError(message, cause)
-}
-
-func progressWriter(w io.Writer) io.Writer {
-	return cmp.Or(w, io.Discard)
 }
 
 func printStep(w io.Writer, line string) {

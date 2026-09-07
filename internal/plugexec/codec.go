@@ -127,9 +127,8 @@ type wireBatch struct {
 }
 
 type wireError struct {
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
-	Kind      string `json:"kind"`
+	Message string `json:"message"`
+	Kind    string `json:"kind"`
 }
 
 // emptyObject is what an absent config becomes on the wire. json.RawMessage(nil)

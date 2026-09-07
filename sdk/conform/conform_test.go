@@ -280,10 +280,3 @@ func TestASingleBatchStreamCannotProveResumability(t *testing.T) {
 		t.Fatalf("findings = %+v, want the resume check to report that it could not run", findings)
 	}
 }
-
-func TestNoConnectorIsAFinding(t *testing.T) {
-	findings := conform.Check(nil, conform.Fixture{})
-	if len(findings) != 1 || findings[0].Check != stream {
-		t.Fatalf("findings = %+v, want one finding about having nothing to certify", findings)
-	}
-}

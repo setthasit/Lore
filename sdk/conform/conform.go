@@ -55,10 +55,6 @@ type Finding struct {
 // code path a plugin author runs locally. newConnector is called once per
 // stream and must open the same unchanged source every time.
 func Check(newConnector func() lore.Connector, fixture Fixture) []Finding {
-	if newConnector == nil {
-		return []Finding{{Check: checkStream, Detail: "no connector constructor: there is nothing to certify"}}
-	}
-
 	conn := newConnector()
 	full, err := collect(conn, nil)
 	if err != nil {
@@ -207,7 +203,7 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 		return []Finding{{checkResumable, fmt.Sprintf(
 			"the full stream has %d batch(es): a mid-stream resume needs at least two", len(full))}}
 	}
-	at := resumePoint(fixture)
+	at := fixture.ResumeAfterBatch
 	if at < 0 || at >= len(full)-1 {
 		return []Finding{{checkResumable, fmt.Sprintf(
 			"ResumeAfterBatch %d has to name a batch of the %d-batch stream with at least one batch after it",
@@ -265,17 +261,6 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 		}
 	}
 	return findings
-}
-
-// A host verifying a stranger's binary knows nothing about the shape of its
-// stream, so an unset ResumeAfterBatch derives the resume point: the first
-// batch that has a successor, the earliest position at which "replay from
-// batch n yields batch n+1 onward" is observable at all.
-func resumePoint(fixture Fixture) int {
-	if fixture.ResumeAfterBatch != 0 {
-		return fixture.ResumeAfterBatch
-	}
-	return 0
 }
 
 func collect(c lore.Connector, cursor lore.Cursor) ([]lore.Batch, error) {

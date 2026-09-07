@@ -78,14 +78,14 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, protocolError(instance, opManifest, "cannot open the plugin's stdin: %v", err)
+		return nil, protocolError(instance, opManifest, nil, "cannot open the plugin's stdin: %v", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, protocolError(instance, opManifest, "cannot open the plugin's stdout: %v", err)
+		return nil, protocolError(instance, opManifest, nil, "cannot open the plugin's stdout: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, protocolError(instance, opManifest, "cannot execute the plugin binary %s: %v", binary, err)
+		return nil, protocolError(instance, opManifest, nil, "cannot execute the plugin binary %s: %v", binary, err)
 	}
 
 	return &session{
@@ -119,24 +119,24 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 	}
 	if f.Manifest == nil {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, "answered the handshake without a manifest")
+		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil, "answered the handshake without a manifest")
 	}
 
 	manifest := *f.Manifest
 	if manifest.APIVersion != lore.APIVersion {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest,
+		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil,
 			"plugin %q speaks api_version %d, host speaks %d", manifest.Name, manifest.APIVersion, lore.APIVersion)
 	}
 	if manifest.Name == "" {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, "manifest declares no name")
+		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil, "manifest declares no name")
 	}
 	switch manifest.Kind {
 	case lore.KindSource, lore.KindProvider, lore.KindCode:
 	default:
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest,
+		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil,
 			"plugin %q declares kind %q, which is none of %q, %q, %q",
 			manifest.Name, manifest.Kind, lore.KindSource, lore.KindProvider, lore.KindCode)
 	}
@@ -155,7 +155,7 @@ func (s *session) send(ctx context.Context, env envelope, req any, timeout time.
 	line, err := json.Marshal(req)
 	if err != nil {
 		s.abort()
-		return wrapProtocolError(s.instance, env.Op, err, "cannot encode the %s request", env.Op)
+		return protocolError(s.instance, env.Op, err, "cannot encode the %s request", env.Op)
 	}
 	// encoding/json escapes control characters inside strings, so a request is
 	// always exactly one line however a secret or a document body is spelled.
@@ -177,10 +177,10 @@ func (s *session) send(ctx context.Context, env envelope, req any, timeout time.
 		return nil
 	case <-timer.C:
 		s.abort()
-		return protocolError(s.instance, env.Op, "did not read the %s request within %s", env.Op, timeout)
+		return protocolError(s.instance, env.Op, nil, "did not read the %s request within %s", env.Op, timeout)
 	case <-ctx.Done():
 		s.abort()
-		return wrapProtocolError(s.instance, env.Op, ctx.Err(), "cancelled while sending %s", env.Op)
+		return protocolError(s.instance, env.Op, ctx.Err(), "cancelled while sending %s", env.Op)
 	}
 }
 
@@ -196,7 +196,7 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 	}
 	if f.ID != env.ID {
 		s.abort()
-		return nil, protocolError(s.instance, env.Op,
+		return nil, protocolError(s.instance, env.Op, nil,
 			"answered %s with id %q, host sent id %q, so no frame can be correlated any more", env.Op, f.ID, env.ID)
 	}
 	// The error frame is read before the version check: a plugin that rejects
@@ -208,7 +208,7 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 	}
 	if f.V != lore.APIVersion {
 		s.abort()
-		return nil, protocolError(s.instance, env.Op,
+		return nil, protocolError(s.instance, env.Op, nil,
 			"answered %s with protocol version %d, host speaks %d", env.Op, f.V, lore.APIVersion)
 	}
 	return f, nil
@@ -252,7 +252,7 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		switch {
 		case errors.Is(r.err, errLineTooLong):
 			s.abort()
-			return nil, protocolError(s.instance, op,
+			return nil, protocolError(s.instance, op, nil,
 				"answered %s with a line over the %d MiB limit; a batch too large to frame must be split", op, maxLineBytes>>20)
 		case r.err != nil:
 			return nil, s.crashed(op, r.err)
@@ -261,16 +261,16 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		var f frame
 		if err := json.Unmarshal(r.line, &f); err != nil {
 			s.abort()
-			return nil, wrapProtocolError(s.instance, op, err,
+			return nil, protocolError(s.instance, op, err,
 				"wrote a line on stdout that is not a protocol frame during %s: %s", op, excerpt(r.line))
 		}
 		return &f, nil
 	case <-timer.C:
 		s.abort()
-		return nil, protocolError(s.instance, op, "did not answer %s within %s", op, timeout)
+		return nil, protocolError(s.instance, op, nil, "did not answer %s within %s", op, timeout)
 	case <-ctx.Done():
 		s.abort()
-		return nil, wrapProtocolError(s.instance, op, ctx.Err(), "cancelled while waiting for %s", op)
+		return nil, protocolError(s.instance, op, ctx.Err(), "cancelled while waiting for %s", op)
 	}
 }
 
@@ -312,7 +312,7 @@ func (s *session) close(ctx context.Context) error {
 	}
 	if !f.OK {
 		s.abort()
-		return protocolError(s.instance, opShutdown, "answered shutdown without ok")
+		return protocolError(s.instance, opShutdown, nil, "answered shutdown without ok")
 	}
 
 	// Closing stdin is the plugin's cancel signal, and after shutdown there is
@@ -320,7 +320,7 @@ func (s *session) close(ctx context.Context) error {
 	// escalated exactly as a cancellation is.
 	_ = s.stdin.Close()
 	if err := s.waitWithin(s.tuning.shutdown); err != nil {
-		return &CrashError{Instance: s.instance, Op: opShutdown, Detail: err.Error(), cause: err}
+		return &crashError{instance: s.instance, op: opShutdown, detail: err.Error(), cause: err}
 	}
 	return nil
 }
@@ -386,7 +386,7 @@ func (s *session) crashed(op string, cause error) error {
 	default:
 		detail += " though the process exited 0"
 	}
-	return &CrashError{Instance: s.instance, Op: op, Detail: detail, cause: waitErr}
+	return &crashError{instance: s.instance, op: op, detail: detail, cause: waitErr}
 }
 
 // excerpt keeps a malformed line quotable in an error message without pasting a

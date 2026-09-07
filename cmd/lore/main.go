@@ -1,6 +1,5 @@
 // Command lore is the composition root: the only file in the repository that
-// names a plugin. A distribution with extra plugins compiled in is this file
-// with more arguments to app.With.
+// names a plugin.
 package main
 
 import (
@@ -11,5 +10,5 @@ import (
 )
 
 func main() {
-	os.Exit(app.Run(app.With(plugins.Official()...)))
+	os.Exit(app.Run(plugins.Official()...))
 }

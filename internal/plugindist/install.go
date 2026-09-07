@@ -18,13 +18,17 @@ const downloadTimeout = 5 * time.Minute
 // inside a sync round fetches a plugin, because a background scheduler must not
 // download and execute code on a timer.
 type Installer struct {
-	Store   *Store
-	HTTP    *http.Client
-	APIBase string
+	store   *Store
+	client  *http.Client
+	fetcher fetcher
 }
 
 func NewInstaller(store *Store) *Installer {
-	return &Installer{Store: store, HTTP: &http.Client{Timeout: downloadTimeout}, APIBase: DefaultAPIBase()}
+	return newInstaller(store, &http.Client{Timeout: downloadTimeout}, DefaultAPIBase())
+}
+
+func newInstaller(store *Store, client *http.Client, apiBase string) *Installer {
+	return &Installer{store: store, client: client, fetcher: fetcher{client: client, apiBase: apiBase}}
 }
 
 // Request is one plugin to install. Rewrite is what separates `update` from
@@ -38,37 +42,12 @@ type Request struct {
 // Result is what an install did, in the terms the CLI reports and the caller
 // needs to hand the binary to the protocol layer for its manifest handshake.
 type Result struct {
-	Name     string
-	Origin   Origin
-	Platform string
-	Version  string
-	From     string
-	Binary   string
+	Report
 
-	ArtifactURL    string
-	ArtifactDigest string
-	BinaryDigest   string
-
-	Signed  bool // a declared pubkey verified the material the digest came from
-	Locked  bool // the digest was already pinned, and this install matched it
-	Pinned  bool // this install wrote the pin, so the lockfile changed
-	Trust   bool // nothing vouched for the artifact but the artifact itself
-	Warning string
-}
-
-func (ins *Installer) client() *http.Client {
-	if ins.HTTP != nil {
-		return ins.HTTP
-	}
-	return &http.Client{Timeout: downloadTimeout}
-}
-
-func (ins *Installer) fetcher() fetcher {
-	base := ins.APIBase
-	if base == "" {
-		base = DefaultAPIBase()
-	}
-	return fetcher{client: ins.client(), apiBase: base}
+	Signed bool // a declared pubkey verified the material the digest came from
+	Locked bool // the digest was already pinned, and this install matched it
+	Pinned bool // this install wrote the pin, so the lockfile changed
+	Trust  bool // nothing vouched for the artifact but the artifact itself
 }
 
 // Pin turns @latest into the version it resolves to now. It is separate from
@@ -79,7 +58,7 @@ func (ins *Installer) Pin(ctx context.Context, coord Coordinate) (Coordinate, er
 		return coord, nil
 	}
 
-	latest, err := ins.fetcher().latestRelease(ctx, coord)
+	latest, err := ins.fetcher.latestRelease(ctx, coord)
 	if err != nil {
 		return Coordinate{}, err
 	}
@@ -100,24 +79,23 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 			LatestVersion, nil)
 	}
 
-	result := Result{
-		Name: coord.Name, Origin: coord.Origin, Platform: ins.Store.platform.Key(),
-		Version: coord.Version, From: coord.From, Warning: coord.Warning(),
-	}
-
 	if coord.Origin == OriginLocal {
 		// A local plugin is executed in place: there is nothing to download, and
 		// by construction nothing to lock. That is the whole cost of the
 		// development escape hatch, and Warning says so.
-		report, err := ins.Store.Locate(coord.Name, coord, lock)
+		report, err := ins.store.Locate(coord, lock)
 		if err != nil {
 			return Result{}, err
 		}
-		result.Version, result.Binary = report.Version, report.Binary
-		return result, nil
+		return Result{Report: report}, nil
 	}
 
-	platform := ins.Store.platform
+	result := Result{Report: Report{
+		Name: coord.Name, Origin: coord.Origin, Platform: ins.store.platform.Key(),
+		Version: coord.Version, Warning: coord.Warning(),
+	}}
+
+	platform := ins.store.platform
 	entry, hasEntry := lock.Entry(coord.Name)
 	if hasEntry && !req.Rewrite && entry.Version != coord.Version {
 		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
@@ -130,9 +108,9 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	result.ArtifactURL = artifactURL
+	result.LockedURL = artifactURL
 
-	artifact, err := BoundedGet(ctx, ins.client(), artifactURL, maxArtifactBytes)
+	artifact, err := BoundedGet(ctx, ins.client, artifactURL, maxArtifactBytes)
 	if err != nil {
 		return Result{}, resolveFailure(coord, "downloading "+safeTarget(artifactURL), err)
 	}
@@ -146,21 +124,19 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 
 	digest := digestOf(artifact)
 	if expected != "" && expected != digest {
-		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+": digest mismatch for "+
-			platform.Key()+" (expected "+expected+", got "+digest+")", nil)
+		return Result{}, digestMismatch(coord.Name, platform, expected, digest)
 	}
 	if pinned && locked.Digest != digest {
-		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+": digest mismatch for "+
-			platform.Key()+" (expected "+locked.Digest+", got "+digest+")", nil)
+		return Result{}, digestMismatch(coord.Name, platform, locked.Digest, digest)
 	}
-	result.ArtifactDigest, result.Locked = digest, pinned
+	result.LockedDigest, result.Locked = digest, pinned
 	result.Trust = expected == "" && !pinned
 
 	binaryName, body, err := unpack(coord, platform, fileName, artifact)
 	if err != nil {
 		return Result{}, err
 	}
-	path, binaryDigest, err := ins.Store.write(coord.Name, coord.Version, binaryName, body)
+	path, binaryDigest, err := ins.store.write(coord.Name, coord.Version, binaryName, body)
 	if err != nil {
 		return Result{}, err
 	}
@@ -200,11 +176,11 @@ func (ins *Installer) locate(
 		return artifactURL, checksumsURL, nil
 	}
 
-	published, err := ins.fetcher().releaseByTag(ctx, coord)
+	published, err := ins.fetcher.releaseByTag(ctx, coord)
 	if err != nil {
 		return "", "", err
 	}
-	if artifactURL, err = published.asset(coord, coord.AssetName(platform)); err != nil {
+	if artifactURL, err = published.asset(coord, coord.assetName(platform)); err != nil {
 		return "", "", err
 	}
 	// An unpinned install has nothing to compare a download against, so the
@@ -226,7 +202,7 @@ func (ins *Installer) expected(
 	artifact []byte,
 	checksumsURL string,
 ) (digest string, signed bool, err error) {
-	client := ins.client()
+	client := ins.client
 
 	checksums := []byte(nil)
 	if checksumsURL != "" {

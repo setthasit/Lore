@@ -18,7 +18,7 @@ func Open(binary string, host lore.Host) (lore.Plugin, error) {
 
 func open(binary string, host lore.Host, tune tuning) (lore.Plugin, error) {
 	if binary == "" {
-		return nil, protocolError("", opManifest, "no plugin binary to execute")
+		return nil, protocolError("", opManifest, nil, "no plugin binary to execute")
 	}
 
 	// The handshake has no instance yet, so the binary's own name is what errors
@@ -73,7 +73,7 @@ func (e external) dial(ctx context.Context, instance string) (*session, error) {
 	// the last one that can still refuse.
 	if manifest.Name != e.manifest.Name || manifest.Kind != e.manifest.Kind {
 		session.abort()
-		return nil, protocolError(instance, opManifest,
+		return nil, protocolError(instance, opManifest, nil,
 			"answered the handshake as %q (%s) after registering as %q (%s)",
 			manifest.Name, manifest.Kind, e.manifest.Name, e.manifest.Kind)
 	}
@@ -98,7 +98,7 @@ func (e external) unary(ctx context.Context, instance, op string, timeout time.D
 	}
 	if !frame.OK {
 		session.abort()
-		return nil, protocolError(instance, op, "answered %s with neither ok nor an error", op)
+		return nil, protocolError(instance, op, nil, "answered %s with neither ok nor an error", op)
 	}
 	if err := session.close(ctx); err != nil {
 		return nil, err
@@ -111,9 +111,6 @@ type sourcePlugin struct {
 }
 
 func (p *sourcePlugin) NewSource(cfg lore.SourceConfig) (lore.Connector, error) {
-	if cfg.Instance == "" {
-		return nil, protocolError(p.manifest.Name, opChanges, "a source instance needs an id: it is the cursor key and the document namespace")
-	}
 	return &connector{
 		external: p.withHost(cfg.Host),
 		instance: cfg.Instance,
@@ -127,11 +124,8 @@ type providerPlugin struct {
 }
 
 func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, error) {
-	if cfg.Instance == "" {
-		return nil, protocolError(p.manifest.Name, opEmbed, "a provider instance needs an id")
-	}
 	if !p.manifest.Capabilities.Declares(cfg.Capability) {
-		return nil, protocolError(cfg.Instance, opManifest,
+		return nil, protocolError(cfg.Instance, opManifest, nil,
 			"plugin %q does not declare %s", p.manifest.Name, cfg.Capability)
 	}
 
@@ -150,7 +144,7 @@ func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, er
 	case lore.CapabilityComplete:
 		return &completer{call: call}, nil
 	default:
-		return nil, protocolError(cfg.Instance, opManifest, "unknown capability %q", cfg.Capability)
+		return nil, protocolError(cfg.Instance, opManifest, nil, "unknown capability %q", cfg.Capability)
 	}
 }
 
@@ -160,7 +154,7 @@ type codePlugin struct {
 
 func (p *codePlugin) NewCode(cfg lore.CodeConfig) (lore.CodeRepo, error) {
 	if cfg.Root == "" {
-		return nil, protocolError(p.manifest.Name, opBlame, "a code instance needs a clone root")
+		return nil, protocolError(p.manifest.Name, opBlame, nil, "a code instance needs a clone root")
 	}
 	return &codeRepo{external: p.withHost(cfg.Host), root: cfg.Root}, nil
 }

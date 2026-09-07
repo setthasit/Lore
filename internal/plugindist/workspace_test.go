@@ -42,10 +42,10 @@ func TestInstallDeclaresAnUndeclaredCoordinateAtTheResolvedVersion(t *testing.T)
 	if err != nil {
 		t.Fatalf("resolve the published coordinate: %v", err)
 	}
-	platform := workspace.store.Platform()
+	platform := workspace.store.platform
 	fake := newFakeGitHub(t, "jdoe", "lore-linear")
 	fake.publish("v0.4.2", map[string][]byte{
-		coord.AssetName(platform): archiveWith(t, coord.binaryName(platform), []byte(stubBinary)),
+		coord.assetName(platform): archiveWith(t, coord.binaryName(platform), []byte(stubBinary)),
 	})
 	workspace.installer = fake.installer(workspace.store)
 
@@ -189,7 +189,7 @@ func TestRemoveKeepsTheCacheWhenTheLockfileCannotBeWritten(t *testing.T) {
 	dir := filepath.Dir(path)
 
 	locked := &Lock{}
-	locked.Set("linear", "v0.3.1", "github.com/jdoe/lore-linear@v0.3.1", HostPlatform(),
+	locked.Set("linear", "v0.3.1", "github.com/jdoe/lore-linear@v0.3.1", hostPlatform(),
 		LockArtifact{URL: "https://artifacts.invalid/lore-linear.tar.gz", Digest: "sha256:fake"})
 	if err := locked.Save(dir); err != nil {
 		t.Fatalf("seed a lockfile: %v", err)

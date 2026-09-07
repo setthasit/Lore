@@ -80,7 +80,7 @@ func (g *fakeGitHub) asset(tag, name string) []byte {
 }
 
 func (g *fakeGitHub) installer(store *Store) *Installer {
-	return &Installer{Store: store, HTTP: g.server.Client(), APIBase: g.server.URL}
+	return newInstaller(store, g.server.Client(), g.server.URL)
 }
 
 func (g *fakeGitHub) downloadURL(tag, name string) string {

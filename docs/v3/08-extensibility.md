@@ -342,13 +342,13 @@ capability it does not implement fails the binding, naming the broken claim.
 code rather than exiting, so a whole binary stays testable:
 
 ```go
-func main() { os.Exit(app.Run(app.With(plugins.Official()...))) }
+func main() { os.Exit(app.Run(plugins.Official()...)) }
 ```
 
 A third-party distribution is the same file with one more argument:
 
 ```go
-os.Exit(app.Run(app.With(append(plugins.Official(), acmecrm.Plugin(), myjira.Plugin())...)))
+os.Exit(app.Run(append(plugins.Official(), acmecrm.Plugin(), myjira.Plugin())...))
 ```
 
 Compiled plugins and external plugins ([09](09-plugin-protocol.md)) both end up

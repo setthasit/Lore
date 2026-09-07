@@ -205,7 +205,7 @@ lore build --with github.com/jdoe/lore-linear@v0.3.1 [--with …] [-o lore]
 ```
 
 It generates a composition root that imports the named modules and passes them
-to `app.With`, runs `go build`, and emits a binary with those plugins compiled
+to `app.Run`, runs `go build`, and emits a binary with those plugins compiled
 in. It requires a Go toolchain on the machine; that is the whole trade for
 in-process calls and compile-time type safety.
 

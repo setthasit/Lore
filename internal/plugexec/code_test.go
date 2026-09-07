@@ -167,7 +167,7 @@ func TestHasFileAtHEADAnswersFalseWithoutFailing(t *testing.T) {
 
 func TestAFailureToReadTheCloneIsAnError(t *testing.T) {
 	text := script(codeManifest,
-		`has_file emit {"v":1,"id":"$ID","error":{"message":"not a git repository","retryable":false,"kind":"invalid_config"}}`,
+		`has_file emit {"v":1,"id":"$ID","error":{"message":"not a git repository","kind":"invalid_config"}}`,
 		shutdownOK)
 
 	if _, err := codeOf(t, text, t.TempDir()).HasFileAtHEAD(context.Background(), "auth.go"); err == nil {

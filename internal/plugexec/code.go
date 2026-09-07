@@ -73,19 +73,19 @@ func (r *codeRepo) HasFileAtHEAD(ctx context.Context, path string) (bool, error)
 // Paths crossing the protocol are slash-separated whatever the host is.
 func (r *codeRepo) resolve(op, path string) (string, error) {
 	if path == "" {
-		return "", protocolError(r.manifest.Name, op, "no path to read in the clone at %s", r.root)
+		return "", protocolError(r.manifest.Name, op, nil, "no path to read in the clone at %s", r.root)
 	}
 	if strings.ContainsRune(path, '\\') {
-		return "", protocolError(r.manifest.Name, op, "path %q separates components with \\, want /", path)
+		return "", protocolError(r.manifest.Name, op, nil, "path %q separates components with \\, want /", path)
 	}
 	if strings.HasPrefix(path, "/") || filepath.IsAbs(path) {
-		return "", protocolError(r.manifest.Name, op, "path %q is absolute, want one relative to the clone at %s", path, r.root)
+		return "", protocolError(r.manifest.Name, op, nil, "path %q is absolute, want one relative to the clone at %s", path, r.root)
 	}
 
 	absolute := filepath.Join(r.root, filepath.FromSlash(path))
 	relative, err := filepath.Rel(r.root, absolute)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", protocolError(r.manifest.Name, op, "path %q climbs out of the clone at %s", path, r.root)
+		return "", protocolError(r.manifest.Name, op, nil, "path %q climbs out of the clone at %s", path, r.root)
 	}
 	return absolute, nil
 }

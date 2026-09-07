@@ -172,9 +172,9 @@ func TestAWidthNobodyDeclaredIsRefusedWithoutEmbedding(t *testing.T) {
 	if !strings.Contains(err.Error(), "embedder.dimensions must be set") {
 		t.Errorf("error %q does not name the width that is missing", err)
 	}
-	var pluginErr *Error
-	if !errors.As(err, &pluginErr) || pluginErr.Op != opEmbed {
-		t.Fatalf("error = %v, want a *plugexec.Error naming %s", err, opEmbed)
+	var pluginErr *pluginError
+	if !errors.As(err, &pluginErr) || pluginErr.op != opEmbed {
+		t.Fatalf("error = %v, want a *pluginError naming %s", err, opEmbed)
 	}
 	if strings.Contains(logs.String(), reached) {
 		t.Error("construction sent an embed request instead of trusting the configured width")
@@ -225,12 +225,12 @@ func TestAnEmptyCompletionIsAnError(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Complete returned %q with no error", got)
 			}
-			var pluginErr *Error
-			if !errors.As(err, &pluginErr) || pluginErr.Kind != KindInternal {
-				t.Fatalf("error = %v, want an internal *plugexec.Error", err)
+			var pluginErr *pluginError
+			if !errors.As(err, &pluginErr) || pluginErr.kind != kindInternal {
+				t.Fatalf("error = %v, want an internal *pluginError", err)
 			}
-			if pluginErr.Op != opComplete {
-				t.Errorf("error names op %q, want %q", pluginErr.Op, opComplete)
+			if pluginErr.op != opComplete {
+				t.Errorf("error names op %q, want %q", pluginErr.op, opComplete)
 			}
 		})
 	}

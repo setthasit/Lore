@@ -52,10 +52,9 @@ type verifier struct {
 	format string
 	suffix string
 
-	cosign   crypto.PublicKey
-	pub      ed25519.PublicKey
-	keyID    [8]byte
-	hasKeyID bool
+	cosign crypto.PublicKey
+	pub    ed25519.PublicKey
+	keyID  [8]byte
 }
 
 // loadVerifier reads the resolved `pubkey:` and decides the format from the
@@ -101,7 +100,7 @@ func loadMinisignKey(name, pubkeyPath string, raw []byte) (verifier, error) {
 
 	loaded := verifier{
 		name: name, format: "minisign", suffix: minisignSuffix,
-		pub: ed25519.PublicKey(decoded[10:]), hasKeyID: true,
+		pub: ed25519.PublicKey(decoded[10:]),
 	}
 	copy(loaded.keyID[:], decoded[2:10])
 	return loaded, nil
@@ -181,7 +180,7 @@ func (v verifier) verifyMinisign(signedName string, signed, signature []byte) er
 		return v.refuse(signedName, "the signature names algorithm "+algorithm+", which is not Ed25519")
 	}
 
-	if v.hasKeyID && string(decoded[2:10]) != string(v.keyID[:]) {
+	if string(decoded[2:10]) != string(v.keyID[:]) {
 		return v.refuse(signedName, "the signature was made by another key than the declared one")
 	}
 	if !ed25519.Verify(v.pub, signed, decoded[10:]) {

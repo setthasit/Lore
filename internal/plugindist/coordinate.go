@@ -25,10 +25,6 @@ const (
 	OriginURL    Origin = "url"
 )
 
-func (o Origin) String() string {
-	return string(o)
-}
-
 // LatestVersion is the one floating version the supply chain understands, and
 // `lore plugin install` is the only place it may appear: install resolves it
 // and writes the concrete version back, because a floating version means two
@@ -260,11 +256,6 @@ func (c Coordinate) SafeFrom() string {
 	return safeTarget(c.From)
 }
 
-// Remote reports whether the coordinate must be fetched, verified and locked.
-func (c Coordinate) Remote() bool {
-	return c.Origin != OriginLocal
-}
-
 // Floating reports a coordinate that still has to be pinned, so nothing
 // unpinned can reach the lockfile or the cache.
 func (c Coordinate) Floating() bool {
@@ -282,12 +273,12 @@ func (c Coordinate) Warning() string {
 		" has no lore.lock entry and no digest, and is for development only"
 }
 
-// AssetName is the archive the goreleaser default naming publishes for one
+// assetName is the archive the goreleaser default naming publishes for one
 // platform. It is constructed rather than guessed at from a release's
 // attachments, so a release that does not follow the convention fails to
 // resolve with the exact name that was looked for instead of running something
 // that merely looked close.
-func (c Coordinate) AssetName(p Platform) string {
+func (c Coordinate) assetName(p Platform) string {
 	return c.Repo + "_" + strings.TrimPrefix(c.Version, "v") + "_" + p.OS + "_" + p.Arch + ".tar.gz"
 }
 
@@ -311,16 +302,12 @@ type Platform struct {
 	Arch string
 }
 
-func HostPlatform() Platform {
+func hostPlatform() Platform {
 	return Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
 }
 
 func (p Platform) Key() string {
 	return p.OS + "/" + p.Arch
-}
-
-func (p Platform) String() string {
-	return p.Key()
 }
 
 // Label spells a plugin the way lore.yaml does, so an error points at the line

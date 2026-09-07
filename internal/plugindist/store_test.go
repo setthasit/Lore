@@ -22,14 +22,14 @@ func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
 		t.Fatalf("rewrite the cached binary: %v", err)
 	}
 
-	_, err := scene.store.Binary("linear", scene.coord, lock)
+	_, err := scene.store.Binary(scene.coord, lock)
 	if err == nil {
 		t.Fatal("launching a rewritten cached binary succeeded, want a refusal")
 	}
 	if !internalerror.IsPrecondition(err) {
 		t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
 	}
-	for _, want := range []string{"plugins[linear]", "digest mismatch", scene.store.Platform().Key(), result.BinaryDigest} {
+	for _, want := range []string{"plugins[linear]", "digest mismatch", scene.store.platform.Key(), result.BinaryDigest} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}
@@ -44,8 +44,9 @@ func TestPluginBinaryWithoutALockEntryFailsAtStartup(t *testing.T) {
 	scene := newScene(t)
 	lock, _ := scene.installed(t)
 
-	elsewhere := scene.store.WithPlatform(Platform{OS: "plan9", Arch: "mips"})
-	_, err := elsewhere.Binary("linear", scene.coord, lock)
+	elsewhere := NewStore(scene.store.root)
+	elsewhere.platform = Platform{OS: "plan9", Arch: "mips"}
+	_, err := elsewhere.Binary(scene.coord, lock)
 	if err == nil {
 		t.Fatal("launching a plugin locked for another platform succeeded, want a refusal")
 	}
@@ -63,10 +64,10 @@ func TestPluginBinaryNotInstalledNamesTheInstallCommand(t *testing.T) {
 
 	scene := newScene(t)
 	lock := &Lock{}
-	lock.Set("linear", "v0.3.1", scene.coord.From, scene.store.Platform(),
+	lock.Set("linear", "v0.3.1", scene.coord.From, scene.store.platform,
 		LockArtifact{URL: "https://example.test/x.tar.gz", Digest: "sha256:aaaa"})
 
-	_, err := scene.store.Binary("linear", scene.coord, lock)
+	_, err := scene.store.Binary(scene.coord, lock)
 	if err == nil {
 		t.Fatal("launching an uninstalled plugin succeeded, want a refusal")
 	}
@@ -83,7 +84,7 @@ func TestVerifyReportsTheReVerifiedDigestAndTheBinary(t *testing.T) {
 	scene := newScene(t)
 	lock, result := scene.installed(t)
 
-	report, err := scene.store.Locate("linear", scene.coord, lock)
+	report, err := scene.store.Locate(scene.coord, lock)
 	if err != nil {
 		t.Fatalf("locate: %v", err)
 	}
@@ -93,20 +94,8 @@ func TestVerifyReportsTheReVerifiedDigestAndTheBinary(t *testing.T) {
 	if report.BinaryDigest != result.BinaryDigest {
 		t.Fatalf("binary digest = %q, want %q", report.BinaryDigest, result.BinaryDigest)
 	}
-	if report.LockedDigest != result.ArtifactDigest {
-		t.Fatalf("locked digest = %q, want %q", report.LockedDigest, result.ArtifactDigest)
-	}
-	if report.Manifest {
-		t.Fatal("a manifest is reported cached before any handshake happened")
-	}
-
-	// The manifest is cached by whoever performs the handshake; this package
-	// only says whether it is there.
-	if err := scene.store.WriteManifest("linear", "v0.3.1", []byte(`{"name":"linear"}`)); err != nil {
-		t.Fatalf("cache a manifest: %v", err)
-	}
-	if report, err = scene.store.Locate("linear", scene.coord, lock); err != nil || !report.Manifest {
-		t.Fatalf("manifest = %v, err = %v; want a cached manifest to be reported", report.Manifest, err)
+	if report.LockedDigest != result.LockedDigest {
+		t.Fatalf("locked digest = %q, want %q", report.LockedDigest, result.LockedDigest)
 	}
 }
 
@@ -116,12 +105,12 @@ func TestPluginRemoveDeletesEveryCachedVersion(t *testing.T) {
 	scene := newScene(t)
 	lock, _ := scene.installed(t)
 
-	next := archiveWith(t, scene.coord.binaryName(scene.store.Platform()), []byte("#!/bin/sh\necho v0.4.0\n"))
+	next := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
 	moved, err := scene.coord.AtVersion("v0.4.0")
 	if err != nil {
 		t.Fatalf("move the coordinate: %v", err)
 	}
-	scene.fake.publish("v0.4.0", map[string][]byte{moved.AssetName(scene.store.Platform()): next})
+	scene.fake.publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
 	scene.coord = moved
 	if _, err := scene.install(t, lock, true); err != nil {
 		t.Fatalf("install v0.4.0: %v", err)
@@ -134,7 +123,7 @@ func TestPluginRemoveDeletesEveryCachedVersion(t *testing.T) {
 	if versions != 2 {
 		t.Fatalf("removed %d versions, want 2", versions)
 	}
-	if _, err := os.Stat(filepath.Join(scene.store.Root(), "plugins", "linear")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(scene.store.root, "plugins", "linear")); !os.IsNotExist(err) {
 		t.Fatal("the plugin cache survived a removal")
 	}
 
@@ -155,7 +144,7 @@ func TestPluginBinaryLocalMissingFileIsRefused(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if _, err := NewStore(t.TempDir()).Binary("scratch", coord, &Lock{}); err == nil {
+	if _, err := NewStore(t.TempDir()).Binary(coord, &Lock{}); err == nil {
 		t.Fatal("locating an absent local plugin succeeded, want a refusal")
 	} else if !strings.Contains(err.Error(), "no file there") {
 		t.Fatalf("error %q does not say the file is missing", err)
@@ -165,7 +154,7 @@ func TestPluginBinaryLocalMissingFileIsRefused(t *testing.T) {
 func TestPluginStoreRootIsOverridable(t *testing.T) {
 	t.Setenv(RootEnv, filepath.Join(t.TempDir(), "state"))
 
-	root, err := DefaultRoot()
+	root, err := defaultRoot()
 	if err != nil {
 		t.Fatalf("default root: %v", err)
 	}
@@ -182,7 +171,7 @@ func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	sentinel := filepath.Join(scene.store.Root(), "myproject.db")
+	sentinel := filepath.Join(scene.store.root, "myproject.db")
 	if err := os.WriteFile(sentinel, []byte("an index the cache sits beside"), 0o600); err != nil {
 		t.Fatalf("write the sentinel: %v", err)
 	}
@@ -202,13 +191,13 @@ func TestPluginRemoveRefusesANameThatLeavesTheCache(t *testing.T) {
 	if _, err := os.Stat(sentinel); err != nil {
 		t.Fatalf("a file beside the plugin cache was deleted: %v", err)
 	}
-	if _, err := os.Stat(scene.store.Root()); err != nil {
+	if _, err := os.Stat(scene.store.root); err != nil {
 		t.Fatalf("the cache root was deleted: %v", err)
 	}
 }
 
-// The store owns .digest and manifest.json in every version directory, so an
-// archive that names its binary after one of them is refused at the sink.
+// The store owns .digest in every version directory, so an archive that names
+// its binary after it is refused at the sink.
 func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	t.Parallel()
 
@@ -216,7 +205,7 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	_, result := scene.installed(t)
 	dir := filepath.Dir(result.Binary)
 
-	for _, binaryName := range []string{digestFileName, manifestFileName, `..\..\evil.exe`, "sub/evil", ".."} {
+	for _, binaryName := range []string{digestFileName, `..\..\evil.exe`, "sub/evil", ".."} {
 		path, digest, err := scene.store.write("linear", "v0.3.1", binaryName, []byte("evil\n"))
 		if err == nil {
 			t.Errorf("writing a binary named %q succeeded, want a refusal", binaryName)
@@ -259,7 +248,7 @@ func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	lock, _ := scene.installed(t)
 
 	const escape = "../../evil"
-	planted := filepath.Join(scene.store.Root(), "plugins", "linear", escape)
+	planted := filepath.Join(scene.store.root, "plugins", "linear", escape)
 	if err := os.MkdirAll(planted, 0o750); err != nil {
 		t.Fatalf("plant the escape target: %v", err)
 	}
@@ -277,7 +266,7 @@ func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	entry.Version = escape
 	lock.Plugins["linear"] = entry
 
-	path, err := scene.store.Binary("linear", scene.coord, lock)
+	path, err := scene.store.Binary(scene.coord, lock)
 	if err == nil {
 		t.Fatalf("a locked version that climbs out of the cache resolved to %q, want a refusal", path)
 	}
@@ -320,12 +309,6 @@ func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
 		}
 		if path != "" || digest != "" {
 			t.Errorf("write of version %q reported path %q and digest %q", version, path, digest)
-		}
-
-		if err := store.WriteManifest("linear", version, []byte(`{"name":"linear"}`)); err == nil {
-			t.Errorf("WriteManifest accepted the version %q", version)
-		} else if !internalerror.IsBadRequest(err) {
-			t.Errorf("WriteManifest of version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
 		}
 	}
 

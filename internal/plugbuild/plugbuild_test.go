@@ -13,8 +13,6 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
-const fakeGo = "/nonexistent/bin/go"
-
 type recordedRun struct {
 	dir     string
 	program string
@@ -50,8 +48,7 @@ func (f *fakeRunner) commands() []string {
 }
 
 func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
-	scratchParent, outputDir := t.TempDir(), t.TempDir()
-	output := filepath.Join(outputDir, "lore")
+	scratchParent, output := buildDirs(t, "lore")
 
 	const listing = "NAME    KIND    ORIGIN   SUMMARY\nlinear  source  builtin  Linear issues\n"
 	var generated string
@@ -60,7 +57,7 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 	runner.answer = func(run recordedRun) (string, error) {
 		// Reading the file at compile time proves the generated root reached the
 		// scratch module, not merely that Render was called.
-		if run.program == fakeGo && len(run.args) > 0 && run.args[0] == "build" {
+		if run.program == goCommand && len(run.args) > 0 && run.args[0] == "build" {
 			raw, err := os.ReadFile(filepath.Join(run.dir, generatedFile))
 			if err != nil {
 				return "", err
@@ -83,10 +80,8 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 			"github.com/acme/lore-crm/v2@v2.0.1=acmecrm"),
 		Output:   output,
 		Engine:   "v0.4.0",
-		TempDir:  scratchParent,
 		Progress: &progress,
 		Runner:   runner,
-		Go:       fakeGo,
 	})
 	if err != nil {
 		t.Fatalf("Build() = %v", err)
@@ -128,8 +123,7 @@ func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
 }
 
 func TestBuildRemovesTheScratchModuleWhenTheCompileFails(t *testing.T) {
-	scratchParent := t.TempDir()
-	output := filepath.Join(t.TempDir(), "lore")
+	scratchParent, output := buildDirs(t, "lore")
 
 	compileFailed := errors.New("exit status 1")
 	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
@@ -143,9 +137,7 @@ func TestBuildRemovesTheScratchModuleWhenTheCompileFails(t *testing.T) {
 		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
 		Output:      output,
 		Engine:      "v0.4.0",
-		TempDir:     scratchParent,
 		Runner:      runner,
-		Go:          fakeGo,
 	})
 	if err == nil {
 		t.Fatal("Build() succeeded although the compile failed")
@@ -167,8 +159,7 @@ func TestBuildRemovesTheScratchModuleWhenTheCompileFails(t *testing.T) {
 // A binary whose plugin set fails to register is not a build that succeeded:
 // registration is where a misdeclared plugin is supposed to surface.
 func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
-	scratchParent := t.TempDir()
-	output := filepath.Join(t.TempDir(), "lore")
+	scratchParent, output := buildDirs(t, "lore")
 
 	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
 		if run.program == output {
@@ -181,9 +172,7 @@ func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
 		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
 		Output:      output,
 		Engine:      "v0.4.0",
-		TempDir:     scratchParent,
 		Runner:      runner,
-		Go:          fakeGo,
 	})
 	if err == nil {
 		t.Fatal("Build() reported success for a binary that does not run")
@@ -195,8 +184,8 @@ func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
 }
 
 func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
-	scratchParent, local := t.TempDir(), t.TempDir()
-	output := filepath.Join(t.TempDir(), "lore")
+	local := t.TempDir()
+	scratchParent, output := buildDirs(t, "lore")
 
 	runner := &fakeRunner{}
 	_, err := Build(context.Background(), Request{
@@ -204,9 +193,7 @@ func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
 		Output:      output,
 		Engine:      develVersion,
 		Replace:     map[string]string{engineModule: local},
-		TempDir:     scratchParent,
 		Runner:      runner,
-		Go:          fakeGo,
 	})
 	if err != nil {
 		t.Fatalf("Build() = %v", err)
@@ -228,13 +215,12 @@ func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
 // The message is the whole trade stated out loud: an external plugin needs no
 // toolchain, and this is what compiling one in costs.
 func TestBuildWithoutAToolchainSaysWhatItNeedsAndWhy(t *testing.T) {
-	scratchParent := t.TempDir()
 	t.Setenv("PATH", t.TempDir())
+	scratchParent, output := buildDirs(t, "lore")
 
 	_, err := Build(context.Background(), Request{
 		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
-		TempDir:     scratchParent,
-		Runner:      &fakeRunner{},
+		Output:      output,
 	})
 	if err == nil {
 		t.Fatal("Build() succeeded with no Go toolchain on PATH")
@@ -253,7 +239,7 @@ func TestBuildWithoutAToolchainSaysWhatItNeedsAndWhy(t *testing.T) {
 func TestBuildComplainsAboutTheMissingFlagBeforeTheMissingToolchain(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := Build(context.Background(), Request{Runner: &fakeRunner{}})
+	_, err := Build(context.Background(), Request{})
 	if err == nil {
 		t.Fatal("Build() built a binary with nothing added to it")
 	}
@@ -263,8 +249,7 @@ func TestBuildComplainsAboutTheMissingFlagBeforeTheMissingToolchain(t *testing.T
 }
 
 func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
-	scratchParent := t.TempDir()
-	output := filepath.Join(t.TempDir(), "lore")
+	scratchParent, output := buildDirs(t, "lore")
 
 	listFailed := errors.New("exit status 1")
 	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
@@ -278,9 +263,7 @@ func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
 		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
 		Output:      output,
 		Engine:      "latest",
-		TempDir:     scratchParent,
 		Runner:      runner,
-		Go:          fakeGo,
 	})
 	if err == nil {
 		t.Fatal("Build() reported an engine version it could not read")
@@ -314,17 +297,16 @@ func TestBuildProducesARunnableBinary(t *testing.T) {
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")
 
-	scratchParent := t.TempDir()
-	output := filepath.Join(t.TempDir(), "lore-custom")
+	fakePlugin := writeFakePlugin(t)
+	scratchParent, output := buildDirs(t, "lore-custom")
 
 	result, err := Build(context.Background(), Request{
 		Coordinates: []Coordinate{{Module: "example.com/loreconform", Version: "v0.1.0", Package: "conform"}},
 		Output:      output,
 		Replace: map[string]string{
 			engineModule:              repoRoot(t),
-			"example.com/loreconform": writeFakePlugin(t),
+			"example.com/loreconform": fakePlugin,
 		},
-		TempDir: scratchParent,
 	})
 	if err != nil {
 		t.Fatalf("Build() = %v", err)
@@ -417,4 +399,15 @@ func assertNoScratchModule(t *testing.T, parent string) {
 		}
 		t.Errorf("%s still holds %v, want the scratch module removed", parent, names)
 	}
+}
+
+// buildDirs points the system temporary directory at a parent of its own, so
+// the scratch module a build creates and removes is visible to a test.
+func buildDirs(t *testing.T, name string) (scratchParent, output string) {
+	t.Helper()
+
+	output = filepath.Join(t.TempDir(), name)
+	scratchParent = t.TempDir()
+	t.Setenv("TMPDIR", scratchParent)
+	return scratchParent, output
 }

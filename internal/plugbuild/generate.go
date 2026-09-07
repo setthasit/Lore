@@ -32,13 +32,9 @@ package main
 
 `
 
-// Render generates the composition root for a set of coordinates. The plugins
-// are emitted in module order rather than command-line order so that two builds
-// of the same set produce the same source, and therefore the same registration
-// order in the binary they compile.
+// Render generates the composition root, registering the plugins in the order given.
 func Render(coords []Coordinate) ([]byte, error) {
-	sorted := sortedByModule(coords)
-	if err := checkSet(sorted); err != nil {
+	if err := checkSet(coords); err != nil {
 		return nil, err
 	}
 
@@ -46,11 +42,8 @@ func Render(coords []Coordinate) ([]byte, error) {
 	src.WriteString(generatedHeader)
 
 	src.WriteString("import (\n\t\"os\"\n\n")
-	fmt.Fprintf(&src, "\t%q\n\t%q\n", engineModule+"/app", engineModule+"/plugins")
-	if len(sorted) > 0 {
-		src.WriteString("\n")
-	}
-	for _, c := range sorted {
+	fmt.Fprintf(&src, "\t%q\n\t%q\n\n", engineModule+"/app", engineModule+"/plugins")
+	for _, c := range coords {
 		// The alias is written even when it equals the package's own name: the
 		// generator knows the name it was given, never the name the module
 		// declares, and an alias makes the two agree by construction.
@@ -58,11 +51,11 @@ func Render(coords []Coordinate) ([]byte, error) {
 	}
 	src.WriteString(")\n\n")
 
-	src.WriteString("func main() {\n\tos.Exit(app.Run(app.With(append(\n\t\tplugins.Official(),\n")
-	for _, c := range sorted {
+	src.WriteString("func main() {\n\tos.Exit(app.Run(append(\n\t\tplugins.Official(),\n")
+	for _, c := range coords {
 		fmt.Fprintf(&src, "\t\t%s.Plugin(),\n", c.Package)
 	}
-	src.WriteString("\t)...)))\n}\n")
+	src.WriteString("\t)...))\n}\n")
 
 	// A malformed template must fail here rather than emit source the go
 	// command rejects with a diagnostic about generated code.
@@ -74,9 +67,6 @@ func Render(coords []Coordinate) ([]byte, error) {
 	return formatted, nil
 }
 
-// sortedByModule is the canonical order of a coordinate set: the generated
-// source, the fetch sequence and the report all use it, so a build reads the
-// same however the flags were ordered.
 func sortedByModule(coords []Coordinate) []Coordinate {
 	sorted := slices.Clone(coords)
 	slices.SortFunc(sorted, func(a, b Coordinate) int { return cmp.Compare(a.Module, b.Module) })

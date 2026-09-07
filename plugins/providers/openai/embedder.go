@@ -36,27 +36,17 @@ type Embedder struct {
 	sleep func(context.Context, time.Duration) error
 }
 
-type EmbedderOption func(*Embedder)
-
-func WithEmbedderHTTPClient(client *http.Client) EmbedderOption {
-	return func(e *Embedder) {
-		if client != nil {
-			e.client = client
-		}
-	}
-}
-
 // NewEmbedder builds an Embedder for model at baseURL; empty baseURL means DefaultBaseURL.
-func NewEmbedder(apiKey, model, baseURL string, dims int, opts ...EmbedderOption) (*Embedder, error) {
+func NewEmbedder(apiKey, model, baseURL string, dims int) (*Embedder, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("%s: api key is empty", providerName)
 	}
-	return NewEmbedderAt(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, embeddingsPath), dims, opts...)
+	return NewEmbedderAt(providerName, apiKey, model, httpx.Endpoint(baseURL, DefaultBaseURL, embeddingsPath), dims)
 }
 
 // NewEmbedderAt builds an Embedder for another provider serving this same
 // protocol at endpoint, naming it provider in errors.
-func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int, opts ...EmbedderOption) (*Embedder, error) {
+func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int) (*Embedder, error) {
 	if model == "" {
 		return nil, fmt.Errorf("%s: model is empty", provider)
 	}
@@ -72,9 +62,6 @@ func NewEmbedderAt(provider, apiKey, model, endpoint string, dims int, opts ...E
 		endpoint: endpoint,
 		header:   requestHeader(apiKey),
 		client:   &http.Client{Timeout: embedTimeout},
-	}
-	for _, opt := range opts {
-		opt(e)
 	}
 	return e, nil
 }

@@ -65,7 +65,7 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 				return
 			case frame.Batch == nil:
 				session.abort()
-				yield(lore.Batch{}, protocolError(c.instance, opChanges,
+				yield(lore.Batch{}, protocolError(c.instance, opChanges, nil,
 					"answered changes with a frame carrying neither a batch nor done"))
 				return
 			case frame.Batch.Cursor == nil || len(*frame.Batch.Cursor) == 0:
@@ -74,7 +74,7 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 				// crash-safe resume unimplementable, so it is refused rather than
 				// committed against the cursor of an earlier batch.
 				session.abort()
-				yield(lore.Batch{}, protocolError(c.instance, opChanges,
+				yield(lore.Batch{}, protocolError(c.instance, opChanges, nil,
 					"sent a batch of %d documents without a cursor, so committing it would checkpoint nothing",
 					len(frame.Batch.Docs)))
 				return

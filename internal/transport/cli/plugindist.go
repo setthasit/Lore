@@ -159,7 +159,7 @@ func renderInstall(out io.Writer, result plugindist.Result) {
 
 	printfln(out, "installed %s %s for %s", plugindist.Label(result.Name), result.Version, result.Platform)
 	printfln(out, "  binary:  %s", result.Binary)
-	printfln(out, "  digest:  %s", result.ArtifactDigest)
+	printfln(out, "  digest:  %s", result.LockedDigest)
 	switch {
 	case result.Locked:
 		printfln(out, "  matches the digest %s already pinned for %s", plugindist.LockFileName, result.Platform)
@@ -186,11 +186,6 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  digest:  %s (re-checked now)", report.BinaryDigest)
 	printfln(out, "  locked:  %s", report.LockedDigest)
 	printfln(out, "  from:    %s", urlx.RedactIfUserinfo(report.LockedURL))
-	if report.Manifest {
-		printfln(out, "  manifest: cached beside the binary")
-		return
-	}
-	printfln(out, "  manifest: not cached — the handshake reads it from the binary anyway")
 }
 
 func renderCertification(out io.Writer, name string, certification plugexec.Certification) error {

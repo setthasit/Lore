@@ -34,7 +34,7 @@ var (
 
 func newEmbedder(c call, declared int) (*embedder, error) {
 	if declared <= 0 {
-		return nil, protocolError(c.instance, opEmbed,
+		return nil, protocolError(c.instance, opEmbed, nil,
 			"embedder.dimensions must be set: the protocol reports a width only in an embed response, "+
 				"and the index's vector column is created before the first document is embedded")
 	}
@@ -63,21 +63,21 @@ func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 // document's vector under another's id.
 func (e *embedder) aligned(frame *frame, texts []string) ([][]float32, error) {
 	if len(frame.Vectors) != len(texts) {
-		return nil, protocolError(e.instance, opEmbed,
+		return nil, protocolError(e.instance, opEmbed, nil,
 			"answered %d texts with %d vectors; a short, reordered or filtered result is not a partial success",
 			len(texts), len(frame.Vectors))
 	}
 	if frame.Dimensions <= 0 {
-		return nil, protocolError(e.instance, opEmbed, "reported dimensions %d, which is not a vector width", frame.Dimensions)
+		return nil, protocolError(e.instance, opEmbed, nil, "reported dimensions %d, which is not a vector width", frame.Dimensions)
 	}
 	// A width that moves under a live index cannot be reinterpreted afterwards.
 	if frame.Dimensions != e.dims {
-		return nil, protocolError(e.instance, opEmbed,
+		return nil, protocolError(e.instance, opEmbed, nil,
 			"reported dimensions %d, but this instance's vector space is %d wide", frame.Dimensions, e.dims)
 	}
 	for i, vector := range frame.Vectors {
 		if len(vector) != frame.Dimensions {
-			return nil, protocolError(e.instance, opEmbed,
+			return nil, protocolError(e.instance, opEmbed, nil,
 				"vectors[%d] holds %d values, but the response reports %d dimensions", i, len(vector), frame.Dimensions)
 		}
 	}
@@ -98,17 +98,12 @@ func (c *completer) Complete(ctx context.Context, system, user string) (string, 
 	if err != nil {
 		return "", err
 	}
-	// An empty completion is indistinguishable from a dropped request, so it is
-	// an error rather than an answer nobody can cite.
 	if strings.TrimSpace(frame.Text) == "" {
-		return "", protocolError(c.instance, opComplete, "answered complete with %s text", emptiness(frame.Text))
+		adjective := "whitespace-only"
+		if frame.Text == "" {
+			adjective = "empty"
+		}
+		return "", protocolError(c.instance, opComplete, nil, "answered complete with %s text", adjective)
 	}
 	return frame.Text, nil
-}
-
-func emptiness(text string) string {
-	if text == "" {
-		return "empty"
-	}
-	return "whitespace-only"
 }

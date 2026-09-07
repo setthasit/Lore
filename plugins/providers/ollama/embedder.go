@@ -32,19 +32,9 @@ type Embedder struct {
 	sleep func(context.Context, time.Duration) error
 }
 
-type EmbedderOption func(*Embedder)
-
-func WithEmbedderHTTPClient(client *http.Client) EmbedderOption {
-	return func(e *Embedder) {
-		if client != nil {
-			e.client = client
-		}
-	}
-}
-
 // NewEmbedder builds an Embedder for model at baseURL; empty baseURL means
 // DefaultBaseURL. The daemon is unauthenticated, so there is no credential to pass.
-func NewEmbedder(model, baseURL string, dims int, opts ...EmbedderOption) (*Embedder, error) {
+func NewEmbedder(model, baseURL string, dims int) (*Embedder, error) {
 	if model == "" {
 		return nil, errors.New("ollama: model is empty")
 	}
@@ -58,9 +48,6 @@ func NewEmbedder(model, baseURL string, dims int, opts ...EmbedderOption) (*Embe
 		endpoint: httpx.Endpoint(baseURL, DefaultBaseURL, embedPath),
 		header:   http.Header{"Content-Type": {"application/json"}},
 		client:   &http.Client{Timeout: embedTimeout},
-	}
-	for _, opt := range opts {
-		opt(e)
 	}
 	return e, nil
 }
