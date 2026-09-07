@@ -2,11 +2,11 @@ package openai
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 func testConfig(capability lore.Capability, model string) lore.ProviderConfig {
@@ -19,55 +19,19 @@ func testConfig(capability lore.Capability, model string) lore.ProviderConfig {
 	}
 }
 
-// Every capability the manifest declares must build a value satisfying the SDK
-// interface the host will assert it against, or the manifest is a lie.
 func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
-	tests := []struct {
-		capability lore.Capability
-		model      string
-		check      func(t *testing.T, provider lore.Provider)
-	}{
-		{
-			capability: lore.CapabilityEmbed,
-			model:      "text-embedding-3-large",
-			check: func(t *testing.T, provider lore.Provider) {
-				embedder, ok := provider.(lore.Embedder)
-				if !ok {
-					t.Fatalf("provider %T does not implement lore.Embedder", provider)
-				}
-				if got := embedder.Dimensions(); got != 3072 {
-					t.Errorf("Dimensions() = %d, want 3072", got)
-				}
-			},
-		},
-		{
-			capability: lore.CapabilityComplete,
-			model:      "gpt-4o-mini",
-			check: func(t *testing.T, provider lore.Provider) {
-				if _, ok := provider.(lore.Completer); !ok {
-					t.Fatalf("provider %T does not implement lore.Completer", provider)
-				}
-			},
-		},
+	conform.Provider(t, Plugin(), func(capability lore.Capability) lore.ProviderConfig {
+		return testConfig(capability, Plugin().Manifest().DefaultModels[capability])
+	})
+}
+
+func TestEmbedderWidthFollowsTheModel(t *testing.T) {
+	provider, err := Plugin().NewProvider(testConfig(lore.CapabilityEmbed, "text-embedding-3-large"))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
 	}
-
-	declared := Plugin().Manifest().Capabilities.Names()
-	for _, tt := range tests {
-		if !slices.Contains(declared, tt.capability) {
-			t.Errorf("capability %s is tested but not declared", tt.capability)
-		}
-
-		t.Run(string(tt.capability), func(t *testing.T) {
-			provider, err := Plugin().NewProvider(testConfig(tt.capability, tt.model))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
-			tt.check(t, provider)
-		})
-	}
-
-	if len(tests) != len(declared) {
-		t.Errorf("declared capabilities %v, but %d are covered", declared, len(tests))
+	if got := provider.(lore.Embedder).Dimensions(); got != 3072 {
+		t.Errorf("Dimensions() = %d, want 3072", got)
 	}
 }
 

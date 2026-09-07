@@ -44,16 +44,21 @@ type result struct {
 func run(t *testing.T, rt *Runtime, args ...string) result {
 	t.Helper()
 
-	return runWithInput(t, rt, "", args...)
+	return runOn(t, registry.New(lore.Host{}), rt, "", args...)
 }
 
-func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) result {
+// A nil runtime belongs to a command that must not build one; resolving one
+// then fails the test rather than the assertion after it.
+func runOn(t *testing.T, reg *registry.Registry, rt *Runtime, stdin string, args ...string) result {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 	res := result{}
 
 	resolve := func(_ context.Context, _ string, modules ...fx.Option) (*Runtime, func() error, error) {
+		if rt == nil {
+			t.Fatalf("%v built a runtime, and this test provided none", args)
+		}
 		if rt.Config == nil {
 			rt.Config = new(config.Config)
 		}
@@ -61,7 +66,7 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 		return rt, func() error { res.released = true; return nil }, nil
 	}
 
-	root := newRootCommand(resolve, registry.New(lore.Host{}))
+	root := newRootCommand(resolve, reg)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&errOut)

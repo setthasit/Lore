@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/sdk/httpx"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 const (
@@ -27,9 +28,8 @@ const (
 type testServer struct {
 	*httptest.Server
 
-	mu      sync.Mutex
-	inputs  [][]string
-	headers []http.Header
+	mu     sync.Mutex
+	inputs [][]string
 }
 
 // newTestServer starts a server whose handler is called with the 1-based attempt
@@ -64,7 +64,6 @@ func newTestServer(t *testing.T, handler func(w http.ResponseWriter, attempt int
 
 		ts.mu.Lock()
 		ts.inputs = append(ts.inputs, req.Input)
-		ts.headers = append(ts.headers, r.Header.Clone())
 		attempt := len(ts.inputs)
 		ts.mu.Unlock()
 
@@ -80,35 +79,15 @@ func (ts *testServer) requests() int {
 	return len(ts.inputs)
 }
 
-// waitRecorder stands in for the backoff sleep so tests observe the computed
-// delays without spending them.
-type waitRecorder struct {
-	mu    sync.Mutex
-	waits []time.Duration
-}
-
-func (r *waitRecorder) sleep(ctx context.Context, d time.Duration) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.waits = append(r.waits, d)
-	return ctx.Err()
-}
-
-func (r *waitRecorder) recorded() []time.Duration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.waits)
-}
-
-func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *waitRecorder) {
+func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *httpxtest.WaitRecorder) {
 	t.Helper()
 
 	e, err := NewEmbedder(testEmbedModel, baseURL, dims)
 	if err != nil {
 		t.Fatalf("NewEmbedder: %v", err)
 	}
-	rec := &waitRecorder{}
-	e.sleep = rec.sleep
+	rec := &httpxtest.WaitRecorder{}
+	e.sleep = rec.Sleep
 	return e, rec
 }
 
@@ -167,7 +146,7 @@ func TestEmbedBatchesInputsAndPreservesOrder(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1 (the whole batch travels in one call)", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 }
@@ -190,7 +169,7 @@ func TestEmbedRejectsVectorCountMismatch(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1 (a protocol violation is not transient)", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 }
@@ -227,7 +206,7 @@ func TestEmbedRejectsDimensionMismatch(t *testing.T) {
 			if n := ts.requests(); n != 1 {
 				t.Errorf("requests = %d, want 1 (a wrong width is not transient)", n)
 			}
-			if waits := rec.recorded(); len(waits) != 0 {
+			if waits := rec.Recorded(); len(waits) != 0 {
 				t.Errorf("waits = %v, want none", waits)
 			}
 		})
@@ -272,7 +251,7 @@ func TestEmbedSurfacesDaemonErrorForUnknownModel(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1 (a missing model is not retried)", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 }
@@ -294,7 +273,7 @@ func TestEmbedRetriesADeadDaemonThenReports(t *testing.T) {
 	if want := fmt.Sprintf("after %d attempts", httpx.MaxAttempts); !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err, want)
 	}
-	if waits := rec.recorded(); len(waits) != httpx.MaxAttempts-1 {
+	if waits := rec.Recorded(); len(waits) != httpx.MaxAttempts-1 {
 		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
 }

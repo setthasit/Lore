@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
@@ -33,53 +33,10 @@ func testConfig(capability lore.Capability, model, with string) lore.ProviderCon
 	return c
 }
 
-// Every capability the manifest declares must build a value satisfying the SDK
-// interface the host will assert it against, or the manifest is a lie.
 func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
-	tests := []struct {
-		capability lore.Capability
-		check      func(t *testing.T, provider lore.Provider)
-	}{
-		{
-			capability: lore.CapabilityEmbed,
-			check: func(t *testing.T, provider lore.Provider) {
-				embedder, ok := provider.(lore.Embedder)
-				if !ok {
-					t.Fatalf("provider %T does not implement lore.Embedder", provider)
-				}
-				if got := embedder.Dimensions(); got != 1024 {
-					t.Errorf("Dimensions() = %d, want 1024", got)
-				}
-			},
-		},
-		{
-			capability: lore.CapabilityComplete,
-			check: func(t *testing.T, provider lore.Provider) {
-				if _, ok := provider.(lore.Completer); !ok {
-					t.Fatalf("provider %T does not implement lore.Completer", provider)
-				}
-			},
-		},
-	}
-
-	declared := Plugin().Manifest().Capabilities.Names()
-	for _, tt := range tests {
-		if !slices.Contains(declared, tt.capability) {
-			t.Errorf("capability %s is tested but not declared", tt.capability)
-		}
-
-		t.Run(string(tt.capability), func(t *testing.T) {
-			provider, err := Plugin().NewProvider(testConfig(tt.capability, "some-model", `{"preset":"together"}`))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
-			tt.check(t, provider)
-		})
-	}
-
-	if len(tests) != len(declared) {
-		t.Errorf("declared capabilities %v, but %d are covered", declared, len(tests))
-	}
+	conform.Provider(t, Plugin(), func(capability lore.Capability) lore.ProviderConfig {
+		return testConfig(capability, "some-model", `{"preset":"together"}`)
+	})
 }
 
 func TestPluginRefusesUndeclaredCapability(t *testing.T) {

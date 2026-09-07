@@ -92,8 +92,8 @@ func TestInstallVerifiesAMinisignSignature(t *testing.T) {
 
 	scene := newScene(t)
 	key := newMinisignKey(t)
-	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
-		key.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix,
+		key.sign(t, minisignLegacy, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
 
 	result, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
@@ -116,9 +116,9 @@ func TestInstallRefusesABadSignatureBeforeComparingDigests(t *testing.T) {
 
 	// The checksums file is rewritten after it was signed: both the signature
 	// and the digest it records are now wrong.
-	signature := key.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset))
-	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix, signature)
-	scene.fake.attach("v0.3.1", ChecksumsAsset,
+	signature := key.sign(t, minisignLegacy, scene.fake.Asset("v0.3.1", ChecksumsAsset))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix, signature)
+	scene.fake.Attach("v0.3.1", ChecksumsAsset,
 		[]byte(strings.Repeat("0", 64)+"  "+scene.asset+"\n"))
 
 	_, err := scene.installer.Install(context.Background(),
@@ -142,8 +142,8 @@ func TestInstallRefusesASignatureFromAnotherKey(t *testing.T) {
 
 	scene := newScene(t)
 	declared, attacker := newMinisignKey(t), newMinisignKey(t)
-	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
-		attacker.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix,
+		attacker.sign(t, minisignLegacy, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
 
 	_, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(declared.publicKeyFile(t))}, &Lock{})
@@ -163,8 +163,8 @@ func TestInstallRefusesAPrehashedMinisignSignature(t *testing.T) {
 
 	scene := newScene(t)
 	key := newMinisignKey(t)
-	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
-		key.sign(t, minisignPrehash, scene.fake.asset("v0.3.1", ChecksumsAsset)))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix,
+		key.sign(t, minisignPrehash, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
 
 	_, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(key.publicKeyFile(t))}, &Lock{})
@@ -202,8 +202,8 @@ func TestInstallRefusesAMissingSignature(t *testing.T) {
 func TestInstallVerifiesAgainstTheKeyBesideTheConfiguration(t *testing.T) {
 	scene := newScene(t)
 	signer, decoy := newMinisignKey(t), newMinisignKey(t)
-	scene.fake.attach("v0.3.1", ChecksumsAsset+minisignSuffix,
-		signer.sign(t, minisignLegacy, scene.fake.asset("v0.3.1", ChecksumsAsset)))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+minisignSuffix,
+		signer.sign(t, minisignLegacy, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
 
 	const declared = "./keys/signer.pub"
 	configDir, elsewhere := t.TempDir(), t.TempDir()
@@ -232,8 +232,8 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 
 	scene := newScene(t)
 	key, pubkeyPath := newCosignKey(t)
-	checksums := scene.fake.asset("v0.3.1", ChecksumsAsset)
-	scene.fake.attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, checksums))
+	checksums := scene.fake.Asset("v0.3.1", ChecksumsAsset)
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, checksums))
 
 	result, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{})
@@ -245,7 +245,7 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 	}
 
 	// The same key over other bytes must not verify.
-	scene.fake.attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, []byte("something else")))
+	scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, []byte("something else")))
 	if _, err := scene.installer.Install(context.Background(),
 		Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{}); err == nil {
 		t.Fatal("a signature over other bytes verified, want a refusal")

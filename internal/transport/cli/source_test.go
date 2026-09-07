@@ -41,7 +41,7 @@ const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
 func TestSourceAddAppendsASequenceItem(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
@@ -112,7 +112,7 @@ embedder:
 func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), "forge-infra\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, "forge-infra\n"+forgeAnswers, "source", "add", "forge", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
@@ -161,7 +161,7 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 func TestSourceAddRefusesAnIDAlreadyInUse(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), "forge\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, "forge\n"+forgeAnswers, "source", "add", "forge", "--config", path)
 	if res.exitCode != exitBadRequest {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
@@ -176,7 +176,7 @@ func TestSourceAddRefusesAnIDAlreadyInUse(t *testing.T) {
 func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), "", "source", "add", "nosuchforge", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
 	if res.exitCode != exitBadRequest {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
@@ -203,7 +203,7 @@ repos: []
 `
 	path := writeConfigFile(t, inline)
 
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitPrecondition {
 		t.Fatalf("exit = %d, want %d, stderr = %q", res.exitCode, exitPrecondition, res.stderr)
 	}
@@ -221,7 +221,7 @@ func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
 	const pasted = "glpat-Pasted!Credential"
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitBadRequest {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
@@ -243,7 +243,7 @@ func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
 func TestSourceAddWritesOnlyVariableNamesForSecrets(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runPlugins(t, sourceRegistry(t), "TRACKER_PAT\nhttps://tracker.example\nPROJ\n",
+	res := runOn(t, sourceRegistry(t), nil, "TRACKER_PAT\nhttps://tracker.example\nPROJ\n",
 		"source", "add", "tracker", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
@@ -329,7 +329,7 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			if test.plugin != "" {
 				args = append(args, test.plugin)
 			}
-			res := runPlugins(t, sourceRegistry(t), test.answers, append(args, "--config", path)...)
+			res := runOn(t, sourceRegistry(t), nil, test.answers, append(args, "--config", path)...)
 
 			if res.exitCode != exitBadRequest {
 				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
@@ -347,7 +347,7 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 func TestSourceAddWithoutAConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lore.yaml")
 
-	res := runPlugins(t, sourceRegistry(t), trackerAnswers, "source", "add", "tracker", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitNotFound {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitNotFound, res.stderr)
 	}
@@ -360,7 +360,7 @@ func TestSourceAddWithoutAConfigFile(t *testing.T) {
 }
 
 func TestSourceAddUsageListsTheRegisteredSourcePlugins(t *testing.T) {
-	res := runPlugins(t, sourceRegistry(t), "", "source", "add", "--help")
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "--help")
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}

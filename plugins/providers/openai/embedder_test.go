@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/setthasit/Lore/sdk/httpx"
+	"github.com/setthasit/Lore/sdk/httpx/httpxtest"
 )
 
 const (
@@ -94,35 +97,15 @@ func (ts *testServer) authorization() string {
 	return ts.headers[0].Get("Authorization")
 }
 
-// waitRecorder stands in for the backoff sleep so tests observe the computed
-// delays without spending them.
-type waitRecorder struct {
-	mu    sync.Mutex
-	waits []time.Duration
-}
-
-func (r *waitRecorder) sleep(ctx context.Context, d time.Duration) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.waits = append(r.waits, d)
-	return ctx.Err()
-}
-
-func (r *waitRecorder) recorded() []time.Duration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.waits)
-}
-
-func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *waitRecorder) {
+func newTestEmbedder(t *testing.T, baseURL string, dims int) (*Embedder, *httpxtest.WaitRecorder) {
 	t.Helper()
 
 	e, err := NewEmbedder(fakeKey, testEmbedModel, baseURL, dims)
 	if err != nil {
 		t.Fatalf("NewEmbedder: %v", err)
 	}
-	rec := &waitRecorder{}
-	e.sleep = rec.sleep
+	rec := &httpxtest.WaitRecorder{}
+	e.sleep = rec.Sleep
 	return e, rec
 }
 
@@ -193,7 +176,7 @@ func TestEmbedPreservesInputOrder(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 	if want := "Bearer " + fakeKey; ts.authorization() != want {
@@ -250,7 +233,7 @@ func TestEmbedRetriesRateLimitHonoringRetryAfter(t *testing.T) {
 		if n := ts.requests(); n != 2 {
 			t.Errorf("requests = %d, want 2", n)
 		}
-		if waits := rec.recorded(); !slices.Equal(waits, []time.Duration{2 * time.Second}) {
+		if waits := rec.Recorded(); !slices.Equal(waits, []time.Duration{2 * time.Second}) {
 			t.Errorf("waits = %v, want [2s]", waits)
 		}
 	})
@@ -270,7 +253,7 @@ func TestEmbedRetriesRateLimitHonoringRetryAfter(t *testing.T) {
 			t.Fatalf("Embed: %v", err)
 		}
 
-		waits := rec.recorded()
+		waits := rec.Recorded()
 		if len(waits) != 1 {
 			t.Fatalf("waits = %v, want one entry", waits)
 		}
@@ -303,13 +286,13 @@ func TestEmbedRetriesServerError(t *testing.T) {
 	if n := ts.requests(); n != 2 {
 		t.Errorf("requests = %d, want 2", n)
 	}
-	waits := rec.recorded()
+	waits := rec.Recorded()
 	if len(waits) != 1 {
 		t.Fatalf("waits = %v, want one entry", waits)
 	}
-	// No Retry-After: the first window is baseBackoff with equal jitter.
-	if waits[0] < baseBackoff/2 || waits[0] > baseBackoff {
-		t.Errorf("wait = %v, want within [%v, %v]", waits[0], baseBackoff/2, baseBackoff)
+	// No Retry-After: the first window is BaseBackoff with equal jitter.
+	if waits[0] < httpx.BaseBackoff/2 || waits[0] > httpx.BaseBackoff {
+		t.Errorf("wait = %v, want within [%v, %v]", waits[0], httpx.BaseBackoff/2, httpx.BaseBackoff)
 	}
 }
 
@@ -328,7 +311,7 @@ func TestEmbedFailsFastOnClientError(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1 (4xx is not retried)", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 	for _, want := range []string{"400", "invalid_request_error", "'$.input' is invalid"} {
@@ -349,13 +332,13 @@ func TestEmbedExhaustsRetries(t *testing.T) {
 		t.Fatal("Embed succeeded, want error")
 	}
 
-	if n := ts.requests(); n != maxAttempts {
-		t.Errorf("requests = %d, want %d", n, maxAttempts)
+	if n := ts.requests(); n != httpx.MaxAttempts {
+		t.Errorf("requests = %d, want %d", n, httpx.MaxAttempts)
 	}
-	if waits := rec.recorded(); len(waits) != maxAttempts-1 {
-		t.Errorf("waits = %v, want %d entries", waits, maxAttempts-1)
+	if waits := rec.Recorded(); len(waits) != httpx.MaxAttempts-1 {
+		t.Errorf("waits = %v, want %d entries", waits, httpx.MaxAttempts-1)
 	}
-	for _, want := range []string{fmt.Sprintf("after %d attempts", maxAttempts), "503"} {
+	for _, want := range []string{fmt.Sprintf("after %d attempts", httpx.MaxAttempts), "503"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -410,7 +393,7 @@ func TestEmbedRejectsDimensionMismatch(t *testing.T) {
 	if n := ts.requests(); n != 1 {
 		t.Errorf("requests = %d, want 1 (a wrong width is not transient)", n)
 	}
-	if waits := rec.recorded(); len(waits) != 0 {
+	if waits := rec.Recorded(); len(waits) != 0 {
 		t.Errorf("waits = %v, want none", waits)
 	}
 }

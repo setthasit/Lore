@@ -2,14 +2,11 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/plugbuild"
 )
@@ -40,167 +37,164 @@ const searchIndexBody = `{
   ]
 }`
 
-func searchCommand(transport http.RoundTripper) *cobra.Command {
-	return newPluginSearchCommand(plugbuild.Index{
-		HTTP: &http.Client{Transport: transport},
-		URL:  "https://example.test/index.json",
-	})
-}
-
-func runCommand(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
+// plugin search reads DefaultIndexURL through http.DefaultClient, so the fake transport goes on that client.
+func fakeIndex(t *testing.T, index fakeIndexTransport) {
 	t.Helper()
 
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs(args)
-	cmd.SilenceUsage, cmd.SilenceErrors = true, true
-	err := cmd.ExecuteContext(context.Background())
-	return out.String(), err
+	previous := http.DefaultClient.Transport
+	http.DefaultClient.Transport = index
+	t.Cleanup(func() { http.DefaultClient.Transport = previous })
 }
 
 func TestBuildRefusesACoordinateWithNoDerivablePackageAsABadRequest(t *testing.T) {
-	_, err := runCommand(t, newBuildCommand(), "--with", "github.com/acme/lore-acme.crm@v1.0.0")
-	if err == nil {
-		t.Fatal("build accepted a coordinate whose package name cannot be derived")
-	}
-	if code := Report(io.Discard, err); code != exitBadRequest {
-		t.Errorf("exit = %d, want %d", code, exitBadRequest)
+	res := run(t, nil, "build", "--with", "github.com/acme/lore-acme.crm@v1.0.0")
+	if res.exitCode != exitBadRequest {
+		t.Errorf("exit = %d, want %d; stderr = %q", res.exitCode, exitBadRequest, res.stderr)
 	}
 }
 
 func TestBuildWithoutAToolchainIsAPreconditionFailure(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := runCommand(t, newBuildCommand(), "--with", "github.com/jdoe/lore-linear@v0.3.1")
-	if err == nil {
-		t.Fatal("build succeeded with no Go toolchain on PATH")
-	}
-	if code := Report(io.Discard, err); code != exitPrecondition {
-		t.Errorf("exit = %d, want %d", code, exitPrecondition)
+	res := run(t, nil, "build", "--with", "github.com/jdoe/lore-linear@v0.3.1")
+	if res.exitCode != exitPrecondition {
+		t.Errorf("exit = %d, want %d; stderr = %q", res.exitCode, exitPrecondition, res.stderr)
 	}
 }
 
 func TestPluginSearchPrintsEveryColumnAMatchNeeds(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "linear")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+	fakeIndex(t, fakeIndexTransport{body: searchIndexBody})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 	for _, want := range []string{
 		"linear", "source", "Linear issues and comments", "github.com/jdoe/lore-linear@v0.3.1",
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
 		}
 	}
-	if strings.Contains(out, "together") {
-		t.Errorf("stdout = %q, want only the matching plugin", out)
+	if strings.Contains(res.stdout, "together") {
+		t.Errorf("stdout = %q, want only the matching plugin", res.stdout)
 	}
 }
 
 // A user knows one of three things about the plugin they want: what it is
 // called, what it does, or what it has to be. All three are matched.
 func TestPluginSearchMatchesNameSummaryAndKind(t *testing.T) {
+	fakeIndex(t, fakeIndexTransport{body: searchIndexBody})
+
 	for query, want := range map[string]string{
 		"LINEAR":     "linear",   // name, case folded
 		"embeddings": "together", // summary
 		"provider":   "together", // kind
 	} {
-		out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), query)
-		if err != nil {
-			t.Errorf("search %q = %v", query, err)
+		res := run(t, nil, "plugin", "search", query)
+		if res.exitCode != exitOK {
+			t.Errorf("search %q: exit = %d, stderr = %q", query, res.exitCode, res.stderr)
 			continue
 		}
-		if !strings.Contains(out, want) {
-			t.Errorf("search %q printed %q, want %q listed", query, out, want)
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("search %q printed %q, want %q listed", query, res.stdout, want)
 		}
 	}
 }
 
 func TestPluginSearchReportsNoMatch(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "jira")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+	fakeIndex(t, fakeIndexTransport{body: searchIndexBody})
+
+	res := run(t, nil, "plugin", "search", "jira")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	if !strings.Contains(out, "no plugin matches") || !strings.Contains(out, "2 plugins") {
-		t.Errorf("stdout = %q, want it to say nothing matched and how much was searched", out)
+	if !strings.Contains(res.stdout, "no plugin matches") || !strings.Contains(res.stdout, "2 plugins") {
+		t.Errorf("stdout = %q, want it to say nothing matched and how much was searched", res.stdout)
 	}
 }
 
 // An empty index is the honest state of a young ecosystem, and printing nothing
 // would read as a broken command.
 func TestPluginSearchReportsAnEmptyIndex(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{"version": 1, "plugins": []}`}), "linear")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+	fakeIndex(t, fakeIndexTransport{body: `{"version": 1, "plugins": []}`})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	if !strings.Contains(out, "the plugin index is empty") {
-		t.Errorf("stdout = %q, want it to say the index is empty", out)
+	if !strings.Contains(res.stdout, "the plugin index is empty") {
+		t.Errorf("stdout = %q, want it to say the index is empty", res.stdout)
 	}
 }
 
 // The index is fetched from a first-party host, but every entry in it describes
 // somebody else's plugin, so a refused entry is news the operator needs.
 func TestPluginSearchSaysHowManyEntriesItLeftOut(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{
+	fakeIndex(t, fakeIndexTransport{body: `{
   "version": 1,
   "plugins": [
     {"name": "linear", "kind": "source", "summary": "Linear issues and comments", "coordinate": "github.com/jdoe/lore-linear@v0.3.1"},
     {"name": "linear", "kind": "source", "summary": "Linear issues\r linear  source  github.com/evil/lore-linear@v9", "coordinate": "github.com/evil/lore-linear@v9"},
     {"name": "LINEAR-SHOUT", "kind": "source", "summary": "Bad name", "coordinate": "github.com/evil/lore-shout@v9"}
   ]
-}`}), "linear")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+}`})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	if !strings.Contains(out, "left out 2 entries") {
-		t.Errorf("stdout = %q, want it to say how many entries were left out", out)
+	if !strings.Contains(res.stdout, "left out 2 entries") {
+		t.Errorf("stdout = %q, want it to say how many entries were left out", res.stdout)
 	}
-	if strings.Contains(out, "github.com/evil/lore-linear@v9") {
-		t.Errorf("stdout = %q, want the refused entry absent from the table", out)
+	if strings.Contains(res.stdout, "github.com/evil/lore-linear@v9") {
+		t.Errorf("stdout = %q, want the refused entry absent from the table", res.stdout)
 	}
-	if !strings.Contains(out, "github.com/jdoe/lore-linear@v0.3.1") {
-		t.Errorf("stdout = %q, want the usable entry still listed", out)
+	if !strings.Contains(res.stdout, "github.com/jdoe/lore-linear@v0.3.1") {
+		t.Errorf("stdout = %q, want the usable entry still listed", res.stdout)
 	}
 }
 
 func TestPluginSearchSaysNothingAboutSkippedEntriesWhenNoneAre(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: searchIndexBody}), "linear")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+	fakeIndex(t, fakeIndexTransport{body: searchIndexBody})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	if strings.Contains(out, "left out") {
-		t.Errorf("stdout = %q, want no notice for a well-formed index", out)
+	if strings.Contains(res.stdout, "left out") {
+		t.Errorf("stdout = %q, want no notice for a well-formed index", res.stdout)
 	}
 }
 
 // "nothing is published yet" would be a lie about an index that published
 // entries this build refused: the operator must be told which of the two it is.
 func TestPluginSearchDoesNotCallAnAllRefusedIndexEmpty(t *testing.T) {
-	out, err := runCommand(t, searchCommand(fakeIndexTransport{body: `{
+	fakeIndex(t, fakeIndexTransport{body: `{
   "version": 1,
   "plugins": [
     {"name": "linear", "kind": "source", "summary": "Linear issues\r spoofed", "coordinate": "github.com/evil/lore-linear@v9"}
   ]
-}`}), "linear")
-	if err != nil {
-		t.Fatalf("search = %v", err)
+}`})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	if !strings.Contains(out, "left out 1 entry") {
-		t.Errorf("stdout = %q, want it to say the entry was left out", out)
+	if !strings.Contains(res.stdout, "left out 1 entry") {
+		t.Errorf("stdout = %q, want it to say the entry was left out", res.stdout)
 	}
-	if strings.Contains(out, "the plugin index is empty") {
-		t.Errorf("stdout = %q, want no claim that nothing is published", out)
+	if strings.Contains(res.stdout, "the plugin index is empty") {
+		t.Errorf("stdout = %q, want no claim that nothing is published", res.stdout)
 	}
 }
 
 func TestPluginSearchReportsAnUnreachableIndexAsAPreconditionFailure(t *testing.T) {
-	_, err := runCommand(t, searchCommand(fakeIndexTransport{err: errors.New("dial tcp: no route to host")}), "linear")
-	if err == nil {
-		t.Fatal("search succeeded with no network")
-	}
-	if code := Report(io.Discard, err); code != exitPrecondition {
-		t.Errorf("exit = %d, want %d", code, exitPrecondition)
+	fakeIndex(t, fakeIndexTransport{err: errors.New("dial tcp: no route to host")})
+
+	res := run(t, nil, "plugin", "search", "linear")
+	if res.exitCode != exitPrecondition {
+		t.Errorf("exit = %d, want %d; stderr = %q", res.exitCode, exitPrecondition, res.stderr)
 	}
 }
 

@@ -2,11 +2,11 @@ package ollama
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 func testProviderConfig(capability lore.Capability, model string) lore.ProviderConfig {
@@ -18,61 +18,14 @@ func testProviderConfig(capability lore.Capability, model string) lore.ProviderC
 	}
 }
 
-// Every capability the manifest declares must build a value satisfying the SDK
-// interface the host will assert it against, or the manifest is a lie.
 func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
-	tests := []struct {
-		capability lore.Capability
-		model      string
-		dimensions int
-		check      func(t *testing.T, provider lore.Provider)
-	}{
-		{
-			capability: lore.CapabilityEmbed,
-			model:      testEmbedModel,
-			dimensions: 768,
-			check: func(t *testing.T, provider lore.Provider) {
-				embedder, ok := provider.(lore.Embedder)
-				if !ok {
-					t.Fatalf("provider %T does not implement lore.Embedder", provider)
-				}
-				if got := embedder.Dimensions(); got != 768 {
-					t.Errorf("Dimensions() = %d, want 768", got)
-				}
-			},
-		},
-		{
-			capability: lore.CapabilityComplete,
-			model:      "llama3.1",
-			check: func(t *testing.T, provider lore.Provider) {
-				if _, ok := provider.(lore.Completer); !ok {
-					t.Fatalf("provider %T does not implement lore.Completer", provider)
-				}
-			},
-		},
-	}
-
-	declared := Plugin().Manifest().Capabilities.Names()
-	for _, tt := range tests {
-		if !slices.Contains(declared, tt.capability) {
-			t.Errorf("capability %s is tested but not declared", tt.capability)
+	conform.Provider(t, Plugin(), func(capability lore.Capability) lore.ProviderConfig {
+		cfg := testProviderConfig(capability, Plugin().Manifest().DefaultModels[capability])
+		if capability == lore.CapabilityEmbed {
+			cfg.Dimensions = 768
 		}
-
-		t.Run(string(tt.capability), func(t *testing.T) {
-			cfg := testProviderConfig(tt.capability, tt.model)
-			cfg.Dimensions = tt.dimensions
-
-			provider, err := Plugin().NewProvider(cfg)
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
-			tt.check(t, provider)
-		})
-	}
-
-	if len(tests) != len(declared) {
-		t.Errorf("declared capabilities %v, but %d are covered", declared, len(tests))
-	}
+		return cfg
+	})
 }
 
 func TestPluginRequiresDimensionsForEmbed(t *testing.T) {

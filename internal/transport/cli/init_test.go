@@ -1,15 +1,11 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
@@ -129,42 +125,12 @@ func stubRegistry(t *testing.T, pluginSet ...lore.Plugin) *registry.Registry {
 	return reg
 }
 
-type pluginResult struct {
-	stdout   string
-	stderr   string
-	exitCode int
-}
-
-// runPlugins drives the two manifest-driven commands over a registry of the
-// caller's choosing, which is the whole point of them taking one.
-func runPlugins(t *testing.T, reg *registry.Registry, stdin string, args ...string) pluginResult {
-	t.Helper()
-
-	var out, errOut bytes.Buffer
-	configPath := new(string)
-
-	root := &cobra.Command{Use: "lore", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().StringVar(configPath, "config", defaultConfigPath, "path to lore.yaml")
-	root.AddCommand(newInitCommand(configPath, reg), newSourceCommand(configPath, reg))
-	root.SetIn(strings.NewReader(stdin))
-	root.SetOut(&out)
-	root.SetErr(&errOut)
-	root.SetArgs(args)
-
-	res := pluginResult{}
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		res.exitCode = Report(&errOut, err)
-	}
-	res.stdout, res.stderr = out.String(), errOut.String()
-	return res
-}
-
 func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lore.yaml")
 	reg := stubRegistry(t, forgePlugin(), trackerPlugin(), vectorsPlugin(), chatterPlugin())
 
-	res := runPlugins(t, reg, "", "init", "--config", path)
+	res := runOn(t, reg, nil, "", "init", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
@@ -260,7 +226,7 @@ func TestInitRefusesABuildItCannotScaffold(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "lore.yaml")
 
-			res := runPlugins(t, stubRegistry(t, test.plugins...), "", "init", "--config", path)
+			res := runOn(t, stubRegistry(t, test.plugins...), nil, "", "init", "--config", path)
 			if res.exitCode != exitPrecondition {
 				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitPrecondition, res.stderr)
 			}
@@ -282,8 +248,8 @@ func TestInitRefusesToOverwrite(t *testing.T) {
 		t.Fatalf("seed configuration: %v", err)
 	}
 
-	res := runPlugins(t, stubRegistry(t, forgePlugin(), trackerPlugin(), vectorsPlugin(), chatterPlugin()),
-		"", "init", "--config", path)
+	res := runOn(t, stubRegistry(t, forgePlugin(), trackerPlugin(), vectorsPlugin(), chatterPlugin()),
+		nil, "", "init", "--config", path)
 	if res.exitCode != exitPrecondition {
 		t.Fatalf("exit = %d, want %d", res.exitCode, exitPrecondition)
 	}

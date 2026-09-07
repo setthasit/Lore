@@ -2,10 +2,10 @@ package anthropic
 
 import (
 	"encoding/json"
-	"slices"
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 func testProviderConfig(capability lore.Capability) lore.ProviderConfig {
@@ -18,41 +18,8 @@ func testProviderConfig(capability lore.Capability) lore.ProviderConfig {
 	}
 }
 
-// Every capability the manifest declares must build a value satisfying the SDK
-// interface the host will assert it against, or the manifest is a lie.
 func TestPluginBuildsEveryDeclaredCapability(t *testing.T) {
-	tests := []struct {
-		capability lore.Capability
-		check      func(t *testing.T, provider lore.Provider)
-	}{
-		{
-			capability: lore.CapabilityComplete,
-			check: func(t *testing.T, provider lore.Provider) {
-				if _, ok := provider.(lore.Completer); !ok {
-					t.Fatalf("provider %T does not implement lore.Completer", provider)
-				}
-			},
-		},
-	}
-
-	declared := Plugin().Manifest().Capabilities.Names()
-	for _, tt := range tests {
-		if !slices.Contains(declared, tt.capability) {
-			t.Errorf("capability %s is tested but not declared", tt.capability)
-		}
-
-		t.Run(string(tt.capability), func(t *testing.T) {
-			provider, err := Plugin().NewProvider(testProviderConfig(tt.capability))
-			if err != nil {
-				t.Fatalf("NewProvider: %v", err)
-			}
-			tt.check(t, provider)
-		})
-	}
-
-	if len(tests) != len(declared) {
-		t.Errorf("declared capabilities %v, but %d are covered", declared, len(tests))
-	}
+	conform.Provider(t, Plugin(), testProviderConfig)
 }
 
 // `lore init` scaffolds a model from this map, so a missing suggestion writes an

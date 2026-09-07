@@ -8,6 +8,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
 // Tampering with a cached binary after installation is caught too: the digest
@@ -85,12 +86,12 @@ func TestPluginRemoveDeletesEveryCachedVersion(t *testing.T) {
 	scene := newScene(t)
 	lock, _ := scene.installed(t)
 
-	next := archiveWith(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
+	next := plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n"))
 	moved, err := scene.coord.AtVersion("v0.4.0")
 	if err != nil {
 		t.Fatalf("move the coordinate: %v", err)
 	}
-	scene.fake.publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
+	scene.fake.Publish("v0.4.0", map[string][]byte{moved.assetName(scene.store.platform): next})
 	scene.coord = moved
 	if _, err := scene.install(t, lock, true); err != nil {
 		t.Fatalf("install v0.4.0: %v", err)
