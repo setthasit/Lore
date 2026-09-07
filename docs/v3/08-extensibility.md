@@ -27,8 +27,8 @@ Measured against that test:
 |---|---|---|
 | Sources (GitHub, GitLab, Notion, Jira, …) | **Plugin** — `KindSource` | Passes all three; the `Connector` contract was already data-in/data-out |
 | Model providers (embedding, completion) | **Plugin** — `KindProvider` | Passes all three; the OpenAI-compatible driver already proved one package can serve many vendors |
-| Code access (blame, log) | **Plugin** — `KindCode` | Two-method contract over a local clone; Mercurial, Jujutsu and remote forges are real alternative implementations |
-| Secret resolution | **Deferred** — `KindSecrets` | Passes the test (1Password, Vault, keychain) but has no second implementation yet. The seam is already forced: plugins never read the environment, the host injects |
+| Code access (blame, log) | **Plugin** — `KindCode` | `Blame`, `Log` and `HasFileAtHEAD` over a local clone; Mercurial, Jujutsu and remote forges are real alternative implementations |
+| Secret resolution | **Deferred** — no kind of its own | Passes the test (1Password, Vault, keychain) but has no second implementation yet. The seam is already forced: a plugin declares what it needs in `Manifest.Secrets`, never reads the environment, and the host injects |
 | Chunking strategy | **Not a plugin** | Fails (3) softly — chunking decides index quality and interacts with ranking. A per-source hint on `KindSource` is the cheaper answer if it is ever needed |
 | IndexStore (SQLite) | **Not a plugin** | Passes (1) and (3), fails (2): one implementation, and an alternative must also reproduce lease semantics and the fixed vector width. Revisit only with a second real candidate |
 | Query engine, graph walk, ranking, RRF, LinkResolver | **Never a plugin** | Fails (3) hard — this *is* the engine, and it is the differentiator. Extensibility here freezes everything and buys nothing |
@@ -42,7 +42,7 @@ later without breaking other people's code.
 ## Layout
 
 ```
-cmd/lore/             # composition root — the ONLY place that names plugins
+cmd/lore/             # composition root — chooses the plugin set this binary ships
 app/                  # package app — composable wiring; takes []lore.Plugin
 sdk/                  # package lore — the public contract. stdlib only.
 ├── document.go       #   Document, DocID, DocType, RawRef, RefKind, Batch, Cursor
@@ -92,9 +92,9 @@ flowchart LR
 
 A plugin may build on a sibling plugin — the OpenAI-compatible driver is preset
 rows over the OpenAI wire client, which is the whole reason it is one package
-and not nine. What the rules forbid is reaching into the engine. Each rule is
-proven to fire by a deliberate forbidden import before it is trusted: a
-depguard rule with a wrong glob silently passes.
+and not nine. What the rules forbid is reaching into the engine. Each rule was
+checked once by hand, with a deliberate forbidden import, because a depguard
+rule with a wrong glob silently passes; nothing re-checks that on every run.
 
 `sdk` being stdlib-only is why plugin configuration is delivered as JSON bytes
 rather than a YAML node: YAML stays a host concern, and the same bytes work
@@ -338,8 +338,12 @@ not during a user's sync. Manifest-versus-built capabilities are checked where
 the value exists — when an instance is built — and a provider that declares a
 capability it does not implement fails the binding, naming the broken claim.
 
-`cmd/lore/main.go` is the only file that names plugins. `Run` returns the exit
-code rather than exiting, so a whole binary stays testable:
+`cmd/lore/main.go` is where a distribution names its plugin set — this binary
+passes `plugins.Official()`, the package that imports the nine official plugins,
+and `lore build` generates a composition root of the same shape. What no file
+under `internal/` does is import a plugin: that is the boundary depguard
+enforces ([Layout](#layout)). `Run` returns the exit code rather than exiting,
+so a whole binary stays testable:
 
 ```go
 func main() { os.Exit(app.Run(plugins.Official()...)) }

@@ -165,6 +165,9 @@ one runs; the cache never picks. `.digest` holds the verified digest of the
 unpacked binary and is re-checked at launch, so tampering with a cached binary
 after installation is caught too.
 
+`$LORE_HOME` relocates the plugin cache root: unset, it is `~/.lore`, and the
+`plugins/` tree sits directly under whichever root applies.
+
 ## No network at sync time
 
 Installation is explicit and never implicit. Auto-install defaults to off
@@ -184,7 +187,7 @@ Same shape as the rest of the surface ([06](06-interfaces-and-config.md#cli)):
 
 | Command | Semantics |
 |---|---|
-| `lore plugin list` | every plugin this build can use: name, kind, version, and origin — `builtin` or `external <path>` |
+| `lore plugin list` | every plugin this build can use, in a `NAME`, `KIND`, `ORIGIN`, `SUMMARY` table — origin is `builtin` or `external <path>`. There is no version column. A declared external plugin that is not compiled in is not a row: it prints after the table as two lines, `declared from <coordinate>` and its state — the installed binary's origin, `not installed — run: lore plugin install <name>`, or why it is unresolvable |
 | `lore plugin install [<name> \| <coordinate>[@latest]]` | resolve, download, verify, unpack, handshake, write `lore.lock`; no argument installs everything declared |
 | `lore plugin update <name>[@<version>]` | re-resolve and rewrite the locked version, URLs and digests |
 | `lore plugin remove <name>` | drop the declaration, the lock entry and the cached versions |

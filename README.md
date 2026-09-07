@@ -339,7 +339,7 @@ make build         # go build ./...
 make bin           # stamped, static binary at bin/lore
 make build.matrix  # cross-compile linux/darwin/windows × amd64/arm64 with CGO_ENABLED=0
 make test          # go test ./...
-make lint          # golangci-lint run    — errcheck, govet, gosec, staticcheck
+make lint          # golangci-lint run    — depguard, errcheck, gosec, govet, staticcheck
 make gen.mock      # go generate ./...    — gomock doubles under internal/mocks
 make gen.proto     # regenerate the lore.v1 stubs from api/proto
 make certs.dev     # local certificate authority + server/client pairs for mTLS

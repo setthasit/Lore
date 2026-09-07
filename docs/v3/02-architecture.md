@@ -274,9 +274,14 @@ internal/
 ├── repositories/           # IndexStore (SQLite via ncruces/go-sqlite3)
 ├── registry/               # plugin registration, manifest validation, instances
 ├── plugexec/               # out-of-process plugin host (see 09)
+├── plugindist/             # fetch, verify and cache external plugin binaries (see 10)
+├── plugbuild/              # `lore build` — a custom binary with plugins compiled in
 ├── di/                     # Uber FX modules
 ├── entities/               # Edge, Anchor, EvidenceBundle, IndexStats, SyncEvent, …
 ├── errors/internalerror/
+├── fsx/                    # filesystem helpers shared across layers
+├── urlx/                   # URL redaction — strips userinfo and query before a URL is logged or reported
+├── mocks/                  # gomock doubles, generated
 └── config/                 # lore.yaml loading + validation
 api/proto/lore/v1/          # gRPC contract
 test/e2e/                   # composes the real binary, so it sits outside internal/

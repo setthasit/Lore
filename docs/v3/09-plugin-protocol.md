@@ -119,11 +119,14 @@ frames, then exactly one `done`. An empty `cursor` object means full backfill.
 { "v": 1, "id": "2", "done": true }
 ```
 
-Every `batch` frame MUST carry a `cursor`, including one whose `docs` is empty.
-The host commits the documents, **then** persists that frame's cursor — the
-batch is the checkpoint unit, exactly as for in-process connectors
-([04](04-connectors-and-sync.md)). A stream that emits documents and defers its
-cursor to `done` is malformed: it makes crash-safe resume unimplementable.
+Every `batch` frame MUST carry a non-empty `cursor`, including one whose `docs`
+is empty: the host refuses a frame whose `cursor` is absent or an empty object,
+naming the count of documents that would have been checkpointed by nothing, and
+aborts the stream. The host commits the documents, **then** persists that
+frame's cursor — the batch is the checkpoint unit, exactly as for in-process
+connectors ([04](04-connectors-and-sync.md)). A stream that emits documents and
+defers its cursor to `done` is malformed: it makes crash-safe resume
+unimplementable.
 
 ### matches_remote
 
@@ -253,20 +256,26 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
 { "v": 1, "id": "2", "error": { "message": "token lacks read:issues", "retryable": false, "kind": "auth" } }
 ```
 
-| `kind` | Host action |
+| `kind` | What the plugin is reporting |
 |---|---|
-| `invalid_config` | fail this instance immediately; no retry, no backoff |
-| `auth` | fail this instance immediately; credentials do not fix themselves |
-| `rate_limit` | back off, resume from the last committed cursor |
-| `not_found` | fail this instance |
-| `internal` | fail this instance |
+| `invalid_config` | the instance's configuration cannot produce a stream; the same config fails the same way |
+| `auth` | the credentials were rejected or lack a scope; credentials do not fix themselves |
+| `rate_limit` | the upstream API is throttling this instance |
+| `not_found` | a configured resource does not exist upstream |
+| `internal` | anything else, including every protocol violation the host detects itself |
 
-Any error with `retryable: true` is backed off and resumed from the last
-committed cursor whatever its `kind`; `rate_limit` implies it, an unknown
-`kind` is treated as `internal`, and `retryable` is authoritative for
-scheduling. A failing instance never stops the others — instances fail
-independently ([04](04-connectors-and-sync.md#sync-round)) and the round
-reports partial failure.
+The host action is the same for every kind: the instance fails for the round,
+and the next round asks the plugin for changes from the last cursor the host
+committed. No kind delays the round, retries the operation, or re-dials the
+plugin. `kind` reaches the operator inside the reported error rather than
+steering the host, and an unknown `kind` is reported as `internal` with the
+value the plugin sent quoted in the message.
+
+`retryable` is a field the host accepts and does not act on: it is absent from
+the host's error decoder, so nothing branches on it and nothing round-trips it.
+A failing instance never stops the others — instances fail independently
+([04](04-connectors-and-sync.md#sync-round)) and the round reports partial
+failure.
 
 A plugin MUST NOT exit non-zero as its way of reporting a business
 error: a non-zero exit means *the process died*, and the host reports it as a
