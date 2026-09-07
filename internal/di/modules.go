@@ -276,12 +276,12 @@ func instances(declared []config.Instance, block string) ([]registry.Instance, e
 	return out, nil
 }
 
-type clones []registry.Clone
+type clones []registry.LocalClone
 
 func newClones(cfg *config.Config) clones {
 	out := make(clones, 0, len(cfg.Repos))
 	for i, repo := range cfg.Repos {
-		out = append(out, registry.Clone{
+		out = append(out, registry.LocalClone{
 			Path:   repo.Path,
 			Use:    repo.Use,
 			Remote: repo.Remote,

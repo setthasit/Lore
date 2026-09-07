@@ -1,18 +1,12 @@
 package registry
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
-	"net/url"
-	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -46,8 +40,7 @@ type Binding struct {
 	Field string
 }
 
-// Clone is a registered local clone a code plugin is bound to.
-type Clone struct {
+type LocalClone struct {
 	Path   string
 	Use    string
 	Remote string
@@ -81,7 +74,7 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 		return nil, err
 	}
 
-	cfg, secrets, err := r.prepare(manifest, in)
+	cfg, secrets, err := prepare(manifest, in)
 	if err != nil {
 		return nil, err
 	}
@@ -114,10 +107,8 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 	return conn, nil
 }
 
-// Provider is a built provider together with the two names the host needs from
-// it: the plugin, which is the first component of the vector-space identity the
-// host composes, and the instance the operator configured.
-type Provider struct {
+type BuiltProvider struct {
+	// Plugin is the first component of the vector-space identity the host composes.
 	Plugin   string
 	Instance string
 	Value    lore.Provider
@@ -127,34 +118,34 @@ type Provider struct {
 // declared instance but does name a registered plugin is built with that
 // plugin's defaults, which is what keeps a two-line starter configuration
 // working without a providers: block.
-func (r *Registry) BuildProvider(b Binding, instances []Instance) (Provider, error) {
+func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider, error) {
 	if b.Provider == "" {
-		return Provider{}, internalerror.NewBadRequestError(b.Field+".provider must name a provider", nil)
+		return BuiltProvider{}, internalerror.NewBadRequestError(b.Field+".provider must name a provider", nil)
 	}
 	if b.Model == "" {
-		return Provider{}, internalerror.NewBadRequestError(b.Field+".model must name a model", nil)
+		return BuiltProvider{}, internalerror.NewBadRequestError(b.Field+".model must name a model", nil)
 	}
 
 	in, declared := findInstance(instances, b.Provider)
 	if !declared {
 		if _, known := r.entries[b.Provider]; !known {
-			return Provider{}, r.unresolved(b.Field+".provider", b.Provider, lore.KindProvider, instances)
+			return BuiltProvider{}, r.unresolved(b.Field+".provider", b.Provider, lore.KindProvider, instances)
 		}
 		in = Instance{Use: b.Provider, Field: b.Field + ".provider"}
 	}
 
 	id, plugin, manifest, err := r.resolve(in, lore.KindProvider)
 	if err != nil {
-		return Provider{}, err
+		return BuiltProvider{}, err
 	}
 	if !manifest.Capabilities.Declares(b.Capability) {
-		return Provider{}, internalerror.NewBadRequestError(fmt.Sprintf(
+		return BuiltProvider{}, internalerror.NewBadRequestError(fmt.Sprintf(
 			"%s binds provider %q, which does not serve %s; %s", b.Field, id, b.Capability, serves(manifest)), nil)
 	}
 
-	cfg, secrets, err := r.prepare(manifest, in)
+	cfg, secrets, err := prepare(manifest, in)
 	if err != nil {
-		return Provider{}, err
+		return BuiltProvider{}, err
 	}
 
 	built, err := plugin.(lore.ProviderPlugin).NewProvider(lore.ProviderConfig{
@@ -167,12 +158,12 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (Provider, err
 		Host:       r.Host(id),
 	})
 	if err != nil {
-		return Provider{}, unbuildable(b.Field, id, err)
+		return BuiltProvider{}, unbuildable(b.Field, id, err)
 	}
 	if err := assertCapability(b, id, manifest, built); err != nil {
-		return Provider{}, err
+		return BuiltProvider{}, err
 	}
-	return Provider{Plugin: manifest.Name, Instance: id, Value: built}, nil
+	return BuiltProvider{Plugin: manifest.Name, Instance: id, Value: built}, nil
 }
 
 // A manifest that claims a capability the built value does not implement would
@@ -204,7 +195,7 @@ func serves(manifest lore.Manifest) string {
 
 // BuildCode builds one accessor per registered clone. Root is already absolute:
 // path expansion is the configuration's job, not a plugin's.
-func (r *Registry) BuildCode(clones []Clone) ([]Code, error) {
+func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 	out := make([]Code, 0, len(clones))
 	for _, clone := range clones {
 		in := Instance{Use: clone.Use, Field: clone.Field}
@@ -223,35 +214,6 @@ func (r *Registry) BuildCode(clones []Clone) ([]Code, error) {
 		out = append(out, Code{Path: clone.Path, Remote: clone.Remote, Repo: repo})
 	}
 	return out, nil
-}
-
-// Warnings are configuration facts that degrade answers without being errors.
-// It is a named type so the wiring can inject it without colliding with every
-// other list of strings in the graph.
-type Warnings []string
-
-// UnmatchedRemotes reports clones whose remote no ingesting source claims. It
-// asks the connectors rather than switching on a forge name, so a third-party
-// forge plugin keeps the warning working by implementing lore.RemoteMatcher.
-func UnmatchedRemotes(clones []Clone, sources []lore.Connector) Warnings {
-	var warnings Warnings
-	for _, clone := range clones {
-		if clone.Remote == "" || ingested(sources, clone.Remote) {
-			continue
-		}
-		warnings = append(warnings, "repos path "+clone.Path+" has remote "+clone.Remote+
-			", which names no configured source repo — blame still works, but chains stop at the commit layer")
-	}
-	return warnings
-}
-
-func ingested(sources []lore.Connector, remote string) bool {
-	for _, source := range sources {
-		if matcher, ok := source.(lore.RemoteMatcher); ok && matcher.MatchesRemote(remote) {
-			return true
-		}
-	}
-	return false
 }
 
 func findInstance(instances []Instance, id string) (Instance, bool) {
@@ -330,222 +292,4 @@ func (r *Registry) Host(instance string) lore.Host {
 	}
 	host.Log = host.Log.With(slog.String("instance", instance))
 	return host
-}
-
-// prepare turns a `with:` block into the two things a plugin is built from: the
-// configuration JSON it decodes itself, and the resolved secrets the host
-// injects. A plugin never reads the environment, so this is the only place an
-// environment variable is looked up on its behalf.
-func (r *Registry) prepare(manifest lore.Manifest, in Instance) ([]byte, map[string]string, error) {
-	if err := checkKeys(manifest, in); err != nil {
-		return nil, nil, err
-	}
-
-	secrets, err := resolveSecrets(manifest, in)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	cfg, err := configJSON(manifest, in)
-	if err != nil {
-		return nil, nil, err
-	}
-	return cfg, secrets, nil
-}
-
-func checkKeys(manifest lore.Manifest, in Instance) error {
-	known := make(map[string]lore.Field, len(manifest.Fields))
-	for _, f := range manifest.Fields {
-		known[f.Name] = f
-	}
-	secretFields := make(map[string]struct{}, len(manifest.Secrets))
-	for _, s := range manifest.Secrets {
-		secretFields[s.ConfigField] = struct{}{}
-	}
-
-	for _, key := range slices.Sorted(maps.Keys(in.With)) {
-		if _, ok := secretFields[key]; ok {
-			continue
-		}
-		field, ok := known[key]
-		if !ok {
-			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s is not a key plugin %q accepts; it accepts %s",
-				in.Field, key, manifest.Name, accepted(manifest)), nil)
-		}
-		if err := checkType(in.Field+".with."+key, field, in.With[key]); err != nil {
-			return err
-		}
-	}
-
-	for _, f := range manifest.Fields {
-		if !f.Required {
-			continue
-		}
-		if _, set := in.With[f.Name]; !set {
-			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must be set%s", in.Field, f.Name, doc(f.Doc)), nil)
-		}
-	}
-	return nil
-}
-
-func doc(text string) string {
-	if text == "" {
-		return ""
-	}
-	return " — " + text
-}
-
-func accepted(manifest lore.Manifest) string {
-	keys := make([]string, 0, len(manifest.Fields)+len(manifest.Secrets))
-	for _, f := range manifest.Fields {
-		keys = append(keys, f.Name)
-	}
-	for _, s := range manifest.Secrets {
-		keys = append(keys, s.ConfigField)
-	}
-	if len(keys) == 0 {
-		return "no keys at all"
-	}
-	slices.Sort(keys)
-	return strings.Join(keys, ", ")
-}
-
-func checkType(field string, declared lore.Field, value any) error {
-	switch declared.Type {
-	case lore.FieldString:
-		if _, ok := value.(string); !ok {
-			return typeError(field, "a string", value)
-		}
-	case lore.FieldURL:
-		raw, ok := value.(string)
-		if !ok {
-			return typeError(field, "an absolute http(s) URL", value)
-		}
-		return CheckURL(field, raw, declared.Default)
-	case lore.FieldInt:
-		if !integral(value) {
-			return typeError(field, "a whole number", value)
-		}
-	case lore.FieldBool:
-		if _, ok := value.(bool); !ok {
-			return typeError(field, "true or false", value)
-		}
-	case lore.FieldStringList:
-		items, ok := value.([]any)
-		if !ok {
-			return typeError(field, "a list of strings", value)
-		}
-		for i, item := range items {
-			if _, ok := item.(string); !ok {
-				return typeError(field+"["+strconv.Itoa(i)+"]", "a string", item)
-			}
-		}
-	case lore.FieldDuration:
-		raw, ok := value.(string)
-		if !ok {
-			return typeError(field, `a duration like "30m" or "30d"`, value)
-		}
-		if _, err := lore.ParseDuration(raw); err != nil {
-			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s is not a duration: %s", field, raw), err)
-		}
-	}
-	return nil
-}
-
-func CheckURL(field, raw, example string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return internalerror.NewBadRequestError(field+" is not a URL", err)
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		want := "an absolute http(s) URL"
-		if example != "" {
-			want += " like " + example
-		}
-		return internalerror.NewBadRequestError(fmt.Sprintf("%s must be %s, got %s", field, want, urlx.Redact(parsed)), nil)
-	}
-	return nil
-}
-
-// YAML resolves an integer to int, but a value that arrived through JSON is a
-// float64; both are whole numbers and both are accepted.
-func integral(value any) bool {
-	switch n := value.(type) {
-	case int:
-		return true
-	case int64:
-		return true
-	case float64:
-		return n == float64(int64(n))
-	}
-	return false
-}
-
-func typeError(field, want string, got any) error {
-	return internalerror.NewBadRequestError(fmt.Sprintf(
-		"%s must be %s, got %v", field, want, got), nil)
-}
-
-func resolveSecrets(manifest lore.Manifest, in Instance) (map[string]string, error) {
-	if len(manifest.Secrets) == 0 {
-		return nil, nil
-	}
-
-	secrets := make(map[string]string, len(manifest.Secrets))
-	for _, s := range manifest.Secrets {
-		name := s.DefaultEnv
-		if declared, set := in.With[s.ConfigField]; set {
-			named, ok := declared.(string)
-			if !ok || named == "" {
-				return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-					"%s.with.%s must name an environment variable", in.Field, s.ConfigField), nil)
-			}
-			name = named
-		}
-		if name == "" {
-			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must name the environment variable holding the %s", in.Field, s.ConfigField, secretDoc(s)), nil)
-		}
-		if !envPattern.MatchString(name) {
-			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must be an environment variable name, got %s", in.Field, s.ConfigField, name), nil)
-		}
-
-		value := os.Getenv(name)
-		if value == "" {
-			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s names %s, but that environment variable is not set", in.Field, s.ConfigField, name), nil)
-		}
-		secrets[s.Key] = value
-	}
-	return secrets, nil
-}
-
-func secretDoc(s lore.Secret) string {
-	if s.Doc != "" {
-		return s.Doc
-	}
-	return s.Key
-}
-
-// The keys that name environment variables are stripped: a plugin receives
-// resolved values under its own secret keys and never sees the operator's
-// variable names, which is what keeps its key names independent of them.
-func configJSON(manifest lore.Manifest, in Instance) ([]byte, error) {
-	declared := make(map[string]any, len(manifest.Fields))
-	for _, f := range manifest.Fields {
-		if value, set := in.With[f.Name]; set {
-			declared[f.Name] = value
-		}
-	}
-
-	raw, err := json.Marshal(declared)
-	if err != nil {
-		return nil, internalerror.NewInternalError(fmt.Sprintf(
-			"cannot encode the configuration of %s for plugin %q", in.Field, manifest.Name), err)
-	}
-	return raw, nil
 }

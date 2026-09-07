@@ -436,7 +436,7 @@ func TestUnmatchedRemotesAsksTheConnectorsRatherThanNamingAForge(t *testing.T) {
 		matchingConnector{stubConnector: stubConnector{name: "forge"}, remote: "forge:acme/app"},
 		stubConnector{name: "notion"},
 	}
-	clones := []Clone{
+	clones := []LocalClone{
 		{Path: "/w/app", Remote: "forge:acme/app"},
 		{Path: "/w/infra", Remote: "forge:acme/infra"},
 		{Path: "/w/scratch"},

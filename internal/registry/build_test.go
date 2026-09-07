@@ -397,7 +397,7 @@ func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 		},
 	})
 
-	built, err := r.BuildCode([]Clone{
+	built, err := r.BuildCode([]LocalClone{
 		{Path: "/w/app", Use: "git", Remote: "github:acme/app", Field: "repos[0]"},
 		{Path: "/w/infra", Use: "git", Field: "repos[1]"},
 	})
@@ -423,7 +423,7 @@ func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
 		},
 	})
 
-	if _, err := r.BuildCode([]Clone{{Path: "/w/app", Use: "git", Field: "repos[0]"}}); err != nil {
+	if _, err := r.BuildCode([]LocalClone{{Path: "/w/app", Use: "git", Field: "repos[0]"}}); err != nil {
 		t.Fatalf("BuildCode: %v", err)
 	}
 	if !logged {
