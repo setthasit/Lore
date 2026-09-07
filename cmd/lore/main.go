@@ -1,5 +1,3 @@
-// Command lore is the composition root: the only file in the repository that
-// names a plugin.
 package main
 
 import (

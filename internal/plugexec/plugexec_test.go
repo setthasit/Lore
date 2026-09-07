@@ -63,7 +63,7 @@ var exeSuffix = func() string {
 }()
 
 func newReader(text string) *bufio.Reader {
-	return bufio.NewReaderSize(strings.NewReader(text), 64<<10)
+	return bufio.NewReaderSize(strings.NewReader(text), outputChunkBytes)
 }
 
 // The manifest lines every script starts with, one per kind. They are separate

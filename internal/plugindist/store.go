@@ -14,35 +14,24 @@ import (
 	"github.com/setthasit/Lore/internal/fsx"
 )
 
-// RootEnv overrides where installed plugins live. It exists so a machine that
-// keeps its state somewhere other than the home directory can say so, and so a
-// test never writes to a real home.
 const RootEnv = "LORE_HOME"
 
 const (
-	// digestFileName holds the digest of the unpacked binary and is re-checked
-	// at every launch, so a cached binary rewritten after installation is
-	// caught too — not only a mutated download.
+	// digestFileName holds the digest re-checked at every launch, so a binary rewritten after install is caught too.
 	digestFileName = ".digest"
 
 	pluginsDirName = "plugins"
 )
 
-// Store is the on-disk cache of installed plugins. Versions live in separate
-// directories so several may coexist on one machine — different workspaces pin
-// differently — and the workspace's lockfile decides which one runs. The cache
-// itself never picks.
 type Store struct {
 	root     string
 	platform Platform
 }
 
-// NewStore roots a cache at an explicit directory.
 func NewStore(root string) *Store {
 	return &Store{root: root, platform: hostPlatform()}
 }
 
-// DefaultStore roots the cache where the rest of Lore keeps its state.
 func DefaultStore() (*Store, error) {
 	root, err := defaultRoot()
 	if err != nil {
@@ -76,9 +65,6 @@ func (s *Store) Dir(name, version string) (string, error) {
 	return filepath.Join(s.root, pluginsDirName, name, version), nil
 }
 
-// Report is what is known about an installed plugin: the binary that will run,
-// the digest re-verified to reach it, and what the lockfile pinned. It is what
-// `lore plugin verify` prints and what the host hands to the protocol layer.
 type Report struct {
 	Name     string
 	Origin   Origin
@@ -93,9 +79,7 @@ type Report struct {
 	Warning string // what the host must say at startup, empty when there is nothing to say
 }
 
-// Binary is the installed, digest-checked binary for a declared plugin, or an
-// error naming the exact command that fixes it. Nothing here downloads: a
-// declared-but-uninstalled plugin is a startup error, never a silent fetch.
+// Binary never downloads: a declared-but-uninstalled plugin is an error naming the command that installs it.
 func Binary(coord Coordinate, lock *Lock) (string, error) {
 	store, err := DefaultStore()
 	if err != nil {
@@ -112,9 +96,7 @@ func (s *Store) Binary(coord Coordinate, lock *Lock) (string, error) {
 	return report.Binary, nil
 }
 
-// Locate resolves a declaration to the binary that will run and re-verifies it.
-// A digest mismatch refuses: it never warns and continues, and no flag makes it
-// continue, because the thing being launched is code from someone else.
+// Locate re-verifies the binary against its recorded digest; a mismatch refuses, and no flag makes it continue.
 func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 	name := coord.Name
 	if err := checkName(name); err != nil {
@@ -204,7 +186,6 @@ func isCacheEntryName(name string) bool {
 		filepath.Base(name) == name
 }
 
-// write stores an unpacked binary and the digest re-checked at every launch.
 func (s *Store) write(name, version, binaryName string, body []byte) (path, digest string, err error) {
 	if !isCacheEntryName(binaryName) {
 		return "", "", internalerror.NewPreconditionError(Label(name)+": the artifact names its binary "+
@@ -227,16 +208,13 @@ func (s *Store) write(name, version, binaryName string, body []byte) (path, dige
 
 	digest = digestOf(body)
 	if err := fsx.WriteAtomic(filepath.Join(dir, digestFileName), []byte(digest+"\n"), 0o644); err != nil {
-		// Without the digest file the binary can never be launched, so the
-		// half-installed version is removed rather than left to fail later.
+		// Without the digest file the binary can never be launched, so the half-installed version goes.
 		_ = os.RemoveAll(dir)
 		return "", "", internalerror.NewInternalError("cannot record the digest of "+path, err)
 	}
 	return path, digest, nil
 }
 
-// Remove deletes every cached version of a plugin and reports how many there
-// were, which is what `lore plugin remove` tells the user it did.
 func (s *Store) Remove(name string) (int, error) {
 	if err := checkName(name); err != nil {
 		return 0, err
@@ -272,15 +250,18 @@ func digestMismatch(name string, p Platform, expected, actual string) error {
 		" (expected "+expected+", got "+actual+")", nil)
 }
 
-// A digest carries its algorithm, so a lockfile written today stays readable
-// when a second algorithm exists.
-func digestOf(body []byte) string {
-	sum := sha256.Sum256(body)
-	return "sha256:" + hex.EncodeToString(sum[:])
+const digestPrefix = "sha256:"
+
+func encodeDigest(sum []byte) string {
+	return digestPrefix + hex.EncodeToString(sum)
 }
 
-// digestFile streams the file rather than reading it whole: this runs at every
-// startup, for a binary that may be tens of megabytes.
+func digestOf(body []byte) string {
+	sum := sha256.Sum256(body)
+	return encodeDigest(sum[:])
+}
+
+// digestFile streams the file: this runs at every startup, for a binary that may be tens of megabytes.
 func digestFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -292,5 +273,5 @@ func digestFile(path string) (string, error) {
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", internalerror.NewInternalError("cannot read "+path, err)
 	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+	return encodeDigest(hash.Sum(nil)), nil
 }

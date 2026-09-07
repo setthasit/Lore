@@ -12,16 +12,6 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
-// Validate reports the first rule the configuration breaks. Load applies
-// defaults before calling it, so absent optional tuning is already filled in.
-//
-// Only format-level rules live here. What a plugin's `with:` keys mean, whether
-// a secret's environment variable is set and whether a bound provider has the
-// capability the role needs are all answered against a manifest, which this
-// package deliberately cannot see.
-//
-// The loopback/TLS rule is deliberately not enforced here: it depends on the
-// address `lore serve` actually binds and is ValidateListenAddr's job.
 func (c *Config) Validate() error {
 	if c.Workspace == "" {
 		return internalerror.NewBadRequestError("workspace must be set", nil)
@@ -66,11 +56,7 @@ func (c *Config) ValidateListenAddr(setting, addr string) error {
 		" and server.mtls.key, or bind 127.0.0.1:"+port, nil)
 }
 
-// validateInstances enforces what the registry cannot discover for itself: an
-// instance with no plugin to look up, and two instances competing for one
-// identity. The identity matters more than it looks — it is the sync cursor
-// key and the document id prefix, so a collision would make two instances
-// overwrite each other's documents.
+// A duplicate identity would make two instances overwrite each other's documents.
 func validateInstances(section string, instances []Instance) error {
 	first := make(map[string]int, len(instances))
 	for i := range instances {
@@ -87,8 +73,6 @@ func validateInstances(section string, instances []Instance) error {
 	return nil
 }
 
-// An instance that names neither an id nor a plugin has no name to report, so
-// its position in the list is the only way to point the reader at it.
 func instanceLabel(instance Instance, index int) string {
 	if ident := instance.Ident(); ident != "" {
 		return ident
@@ -96,9 +80,6 @@ func instanceLabel(instance Instance, index int) string {
 	return strconv.Itoa(index)
 }
 
-// Two instances of one plugin are legitimate — two Jira sites, two GitHub orgs
-// — so a collision is never about the plugin and always about naming, and the
-// message carries the fix rather than only the complaint.
 func duplicateInstance(section string, earlier, current Instance) error {
 	if earlier.ID == "" && current.ID == "" {
 		return internalerror.NewBadRequestError(section+" lists "+strconv.Quote(current.Use)+
@@ -108,8 +89,6 @@ func duplicateInstance(section string, earlier, current Instance) error {
 		"] is declared twice; every id in "+section+" must be unique", nil)
 }
 
-// The embedder is the one role a workspace cannot do without: without vectors
-// there is nothing to search, so an index must never be opened without one.
 func (c *Config) validateEmbedder() error {
 	if c.Embedder.Provider == "" {
 		return internalerror.NewBadRequestError("embedder.provider must be set", nil)
@@ -121,9 +100,7 @@ func (c *Config) validateEmbedder() error {
 	return nil
 }
 
-// A repos[].remote that matches no ingested repository degrades answers without
-// being an error, and only a connector can tell: it is reported at startup by
-// the host asking each instance whether it matches, never decided here.
+// An unmatched repos[].remote is a startup warning, not an error.
 func (c *Config) validateRepos() error {
 	for i := range c.Repos {
 		path := c.Repos[i].Path

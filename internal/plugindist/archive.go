@@ -13,9 +13,7 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
-// unpack takes the artifact apart and returns the file name and bytes of the
-// plugin binary. A URL may also serve a bare binary, which private
-// distribution often does, so an artifact that is not an archive is the binary.
+// An artifact that is not an archive is the binary itself, which is how private distribution often serves one.
 func unpack(c Coordinate, p Platform, artifactName string, artifact []byte) (string, []byte, error) {
 	if !isArchive(artifactName) {
 		return c.binaryName(p), artifact, nil
@@ -77,7 +75,6 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 		}
 		budget -= int64(len(body))
 
-		// A tar entry name is not a filesystem path; its separators are attacker-chosen.
 		name := path.Base(header.Name)
 		if !isCacheEntryName(name) {
 			continue
@@ -87,9 +84,6 @@ func untar(c Coordinate, artifact []byte) ([]archived, error) {
 	return files, nil
 }
 
-// pickBinary chooses deterministically: the name the convention promises, then
-// the one executable file if there is exactly one. Guessing among several is
-// refused, because the wrong guess is a program the user did not agree to run.
 func pickBinary(c Coordinate, p Platform, files []archived) (string, []byte, error) {
 	want := c.binaryName(p)
 	for _, file := range files {

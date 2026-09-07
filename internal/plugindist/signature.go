@@ -18,24 +18,6 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
-// A signature defends against a different attacker than the lockfile does: a
-// compromised publisher account cutting a new release with internally valid
-// checksums. It is therefore checked against the material the digests are read
-// from, and checked before any digest is compared — a digest that came from a
-// file nobody vouched for is only a checksum.
-//
-// Two formats are recognised, both verifiable with the standard library:
-//
-//   - cosign — a PEM public key, an ECDSA (P-256, P-384 or P-521) or Ed25519
-//     signature over the signed file, base64 in a `.sig` sibling. This is what
-//     `cosign sign-blob --key` produces and goreleaser publishes.
-//   - minisign — a `.minisig` sibling, Ed25519 over the file itself.
-//
-// Prehashed minisign signatures — the `ED` algorithm — hash the file with
-// BLAKE2b, which is not in the standard library, and this repository's
-// dependencies are allowlisted. Such a signature is refused by name rather
-// than skipped: a signature layer that silently does nothing is worse than no
-// signature layer, because the user believes it is there.
 const (
 	cosignSuffix   = ".sig"
 	minisignSuffix = ".minisig"
@@ -49,7 +31,6 @@ const (
 	minisignTrustedP = "trusted comment:"
 )
 
-// verifier is a loaded public key and the signature format that key implies.
 type verifier struct {
 	name   string // the plugin, so a refusal names the declaration to fix
 	format string
@@ -65,16 +46,13 @@ type cosignKey struct {
 	verify    func(signed, signature []byte) bool
 }
 
-// cosign hashes with the digest the curve's size implies, so a P-384 signature
-// checked against SHA-256 rejects a signature that is valid.
+// cosign hashes with the digest the curve's size implies; a P-384 signature checked against SHA-256 is rejected.
 var cosignCurveHashes = map[elliptic.Curve]func() hash.Hash{
 	elliptic.P256(): sha256.New,
 	elliptic.P384(): sha512.New384,
 	elliptic.P521(): sha512.New,
 }
 
-// loadVerifier reads the resolved `pubkey:` and decides the format from the
-// file's own shape, so a user never declares which tool signed a release twice.
 func loadVerifier(name, pubkeyPath string) (verifier, error) {
 	raw, err := os.ReadFile(pubkeyPath)
 	if err != nil {
@@ -93,8 +71,6 @@ func loadVerifier(name, pubkeyPath string) (verifier, error) {
 	return loadMinisignKey(name, pubkeyPath, raw)
 }
 
-// An unusable key is refused here, before any signature is fetched from a
-// remote host.
 func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, error) {
 	refuse := func(detail string) error {
 		return internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+", "+detail, nil)
@@ -119,7 +95,7 @@ func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, err
 		}}
 	default:
 		return verifier{}, refuse("a " + fmt.Sprintf("%T", key) + " public key, which this build cannot verify" +
-			" with the standard library — publish an ECDSA (the cosign default) or Ed25519 key")
+			" — publish an ECDSA (the cosign default) or Ed25519 key")
 	}
 	return loaded, nil
 }
@@ -153,15 +129,10 @@ func loadMinisignKey(name, pubkeyPath string, raw []byte) (verifier, error) {
 	return loaded, nil
 }
 
-// signatureSuffix is the sibling file the signature is published as, which the
-// installer appends to the URL of whatever it is about to trust.
 func (v verifier) signatureSuffix() string {
 	return v.suffix
 }
 
-// verify refuses unless the signature is valid for exactly this key. Every
-// failure is a refusal: there is no path through this function that reports a
-// problem and continues.
 func (v verifier) verify(signedName string, signed, signature []byte) error {
 	if v.format == "cosign" {
 		return v.verifyCosign(signedName, signed, signature)
@@ -222,10 +193,7 @@ func (v verifier) verifyMinisign(signedName string, signed, signature []byte) er
 	return v.verifyTrustedComment(signedName, lines, decoded[10:])
 }
 
-// The global signature covers the trusted comment, which is the only part of a
-// minisign file the signer's key vouches for besides the file itself. Checking
-// it costs one Ed25519 verification and closes the gap where an attacker keeps
-// a valid signature and rewrites the comment around it.
+// A second, global signature covers the trusted comment; unchecked, an attacker rewrites the comment and keeps the rest.
 func (v verifier) verifyTrustedComment(signedName string, lines []string, signature []byte) error {
 	comment, global := "", ""
 	for at, line := range lines {
@@ -259,8 +227,6 @@ func (v verifier) refuse(signedName, detail string) error {
 		" verification — "+detail, nil)
 }
 
-// payloadLine returns the first line that is neither blank nor the comment the
-// format puts above its payload.
 func payloadLine(raw []byte, commentPrefix string) string {
 	for _, line := range contentLines(raw) {
 		if !strings.HasPrefix(line, commentPrefix) {

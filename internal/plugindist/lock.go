@@ -15,22 +15,12 @@ import (
 	"github.com/setthasit/Lore/internal/fsx"
 )
 
-// LockFileName is committed beside lore.yaml. The digests live in their own
-// file rather than inline in the configuration because they are per os/arch —
-// a team on macOS with Linux CI needs both — and because they are generated:
-// nobody edits them by hand, and a hand-written file nobody edits invites edits.
 const LockFileName = "lore.lock"
 
-// lockVersion is the only shape this build reads. A file from the future is
-// refused rather than half-understood, since the thing it pins is code that
-// will be executed.
 const lockVersion = 1
 
 const lockHeader = "# " + LockFileName + " — generated; written by `lore plugin install|update`\n"
 
-// Lock records, per plugin, the version that runs and the digest of the
-// artifact it came from, per platform. It is the only thing that decides which
-// installed version runs: the cache may hold several, and it never picks.
 type Lock struct {
 	Version int                  `yaml:"version"`
 	Plugins map[string]LockEntry `yaml:"plugins"`
@@ -47,10 +37,7 @@ type LockArtifact struct {
 	Digest string `yaml:"digest"`
 }
 
-// LoadLock reads the lockfile beside lore.yaml. A workspace with no external
-// plugin has no lockfile, which is not an error: an empty lock is what "nothing
-// is pinned yet" looks like, and every plugin declared against it then fails at
-// startup with the command that pins it.
+// LoadLock treats a missing lockfile as an empty lock rather than an error: an unpinned workspace is legal.
 func LoadLock(dir string) (*Lock, error) {
 	path := filepath.Join(dir, LockFileName)
 
@@ -96,9 +83,7 @@ func (l *Lock) Save(dir string) error {
 	return nil
 }
 
-// encode renders the file. Map keys are emitted in sorted order by the encoder,
-// so installing two plugins in either order produces the same bytes and a
-// lockfile never shows up in a diff for having been rewritten.
+// The encoder emits map keys sorted, so installing two plugins in either order produces the same bytes.
 func (l *Lock) encode() (string, error) {
 	if l.Plugins == nil {
 		l.Plugins = map[string]LockEntry{}
@@ -117,8 +102,7 @@ func (l *Lock) encode() (string, error) {
 	return lockHeader + body.String(), nil
 }
 
-// Entry reports what is locked for a plugin. A nil lock answers "nothing",
-// which is what a workspace with no lockfile has to mean.
+// A nil lock answers "nothing", which is what a workspace with no lockfile means.
 func (l *Lock) Entry(name string) (LockEntry, bool) {
 	if l == nil {
 		return LockEntry{}, false
@@ -127,9 +111,6 @@ func (l *Lock) Entry(name string) (LockEntry, bool) {
 	return entry, found
 }
 
-// Artifact reports what is locked for a plugin on one platform. A plugin locked
-// for another platform only is deliberately not a match: the digest that has to
-// be checked is this platform's.
 func (l *Lock) Artifact(name string, p Platform) (LockArtifact, bool) {
 	entry, found := l.Entry(name)
 	if !found {
@@ -139,17 +120,13 @@ func (l *Lock) Artifact(name string, p Platform) (LockArtifact, bool) {
 	return artifact, found
 }
 
-// Set records one platform's artifact, leaving the other platforms' entries
-// intact: a macOS developer and Linux CI fill in the same file from two
-// machines, and neither may drop the other's digest.
 func (l *Lock) Set(name, version, from string, p Platform, artifact LockArtifact) {
 	if l.Plugins == nil {
 		l.Plugins = map[string]LockEntry{}
 	}
 
 	entry := l.Plugins[name]
-	// A version change invalidates every platform's digest, because they are
-	// digests of that version's artifacts and of nothing else.
+	// A version change invalidates every platform's digest: they are digests of that version's artifacts only.
 	if entry.Version != version {
 		entry.Artifacts = nil
 	}

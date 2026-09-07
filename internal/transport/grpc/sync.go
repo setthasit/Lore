@@ -37,9 +37,6 @@ func (s *syncServer) Trigger(ctx context.Context, in *lorev1.TriggerRequest) (*l
 	}, nil
 }
 
-// A round that finished with a failing instance is a partial success: the
-// instances that did finish are committed, so the response carries the failures
-// rather than replacing the whole answer with an error.
 func newInstanceFailures(failures []services.InstanceFailure) []*lorev1.InstanceFailure {
 	if len(failures) == 0 {
 		return nil

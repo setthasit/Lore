@@ -8,8 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// connector is one configured source instance. It holds no process: a process
-// exists for one stream, so an idle instance costs nothing between rounds.
 type connector struct {
 	external
 	instance string
@@ -43,11 +41,6 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 		}
 
 		for {
-			// The next frame is read only here, after the consumer has taken the
-			// previous batch: that makes the OS pipe the backpressure, so a plugin
-			// faster than the indexer blocks on write instead of the host buffering
-			// a whole source in memory. Reading ahead into a channel would trade a
-			// bounded pipe for an unbounded heap.
 			frame, err := session.await(ctx, env, c.tuning.idle)
 			if err != nil {
 				yield(lore.Batch{}, err)
@@ -56,9 +49,6 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 
 			switch {
 			case frame.Done:
-				// The stream ended; the round's last act is the ordered shutdown,
-				// and a plugin that fails to leave is reported even though every
-				// batch before it is already committed.
 				if err := session.close(ctx); err != nil {
 					yield(lore.Batch{}, err)
 				}
@@ -69,10 +59,6 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 					"answered changes with a frame carrying neither a batch nor done"))
 				return
 			case frame.Batch.Cursor == nil || len(*frame.Batch.Cursor) == 0:
-				// The batch is the checkpoint unit: the host commits the documents
-				// and then persists that frame's cursor. A frame without one makes
-				// crash-safe resume unimplementable, so it is refused rather than
-				// committed against the cursor of an earlier batch.
 				session.abort()
 				yield(lore.Batch{}, protocolError(c.instance, opChanges, nil,
 					"sent a batch of %d documents without a cursor, so committing it would checkpoint nothing",
@@ -81,9 +67,6 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			}
 
 			if !yield(lore.Batch{Docs: frame.Batch.Docs, Cursor: *frame.Batch.Cursor}, nil) {
-				// The consumer abandoned the stream, which is a cancellation: the
-				// plugin is escalated away rather than left streaming into a pipe
-				// nobody reads.
 				session.abort()
 				return
 			}
@@ -91,14 +74,12 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 	}
 }
 
-// Only the plugin knows how its own repository identifiers compare — GitHub's
-// are case-insensitive, GitLab's are not.
+// GitHub's repository identifiers are case-insensitive and GitLab's are not, so only the plugin can compare them.
 func (c *connector) MatchesRemote(remote string) bool {
 	if remote == "" || !c.manifest.Capabilities.RepoRemotes {
 		return false
 	}
 
-	// An unreachable plugin reads as "not mine": a startup warning must not fail the workspace.
 	frame, err := c.unary(context.Background(), c.instance, opRemote, c.tuning.unary, func(env envelope) any {
 		return remoteRequest{
 			envelope: env,

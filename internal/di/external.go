@@ -11,10 +11,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// externals is what a workspace's `plugins:` block resolved to: the plugins
-// themselves, and the warnings resolving them produced. They travel together
-// because an unpinned local plugin is usable and worth warning about, and
-// splitting them would let the warning be dropped on the way to the operator.
 type externals struct {
 	plugins  []external
 	warnings registry.Warnings
@@ -26,11 +22,6 @@ type external struct {
 	plugin lore.Plugin
 }
 
-// newExternals resolves every declared external plugin to an installed,
-// digest-checked binary and reads its manifest through the protocol handshake.
-// It runs at startup, before the scheduler exists: nothing inside a sync round
-// ever fetches or execs a plugin for the first time, because a background timer
-// must not be able to download and run code.
 func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compiled) (externals, error) {
 	if len(cfg.Plugins) == 0 {
 		return externals{}, nil
@@ -53,10 +44,6 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 			return externals{}, err
 		}
 
-		// The handshake failure is classified here rather than left raw: it
-		// arrives from a subprocess through the wiring graph, and an unclassified
-		// error would reach the operator wrapped in constructor plumbing instead
-		// of naming the plugin they have to fix.
 		plugin, err := plugexec.Open(binary, compiled.Host(decl.Name))
 		if err != nil {
 			return externals{}, internalerror.NewPreconditionError(fmt.Sprintf(
@@ -71,9 +58,6 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 	return out, nil
 }
 
-// newWorkspaceRegistry is the registry every instance in this workspace is
-// built from: the compiled set plus whatever `plugins:` declared, on a clone so
-// the compiled set stays exactly what the composition root passed.
 func newWorkspaceRegistry(compiled registry.Compiled, ext externals) (*registry.Registry, error) {
 	reg := compiled.Clone()
 	for _, e := range ext.plugins {

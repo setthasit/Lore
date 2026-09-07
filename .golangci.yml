@@ -8,10 +8,7 @@ linters:
     - govet
     - staticcheck
   settings:
-    # The layering in docs/v3/02-architecture.md and the plugin boundaries in
-    # docs/v3/08-extensibility.md, enforced rather than documented. A wrong glob
-    # here passes silently, so each rule is proven to fire by a deliberate
-    # forbidden import before it is trusted.
+    # These rules enforce the boundary table under "Layout" in docs/v3/08-extensibility.md.
     depguard:
       rules:
         sdk:
@@ -20,10 +17,6 @@ linters:
           allow:
             - "$gostd"
             - "github.com/setthasit/Lore/sdk"
-        # A plugin may build on a sibling plugin — the OpenAI-compatible driver
-        # is presets over the OpenAI wire client, which is the whole reason it
-        # is one package and not nine — and `plugins.go` aggregates them all.
-        # What the rule forbids is reaching into the engine.
         plugins:
           files:
             - "**/plugins/**"
@@ -38,24 +31,16 @@ linters:
             - pkg: "github.com/setthasit/Lore/plugins"
               desc: the engine must not know a plugin by name; wire through the registry
     gosec:
-      # Rules that are structurally wrong for this codebase rather than
-      # findings waiting to be fixed:
-      #   G115 - the gRPC mappers narrow int line numbers to the int32 the
-      #          proto declares; no source file has 2^31 lines.
-      #   G118 - the scheduler's cancel func is stored on start and called
-      #          from the fx OnStop hook, which gosec cannot follow.
-      #   G201 - the only formatted SQL substitutes a column constant and a
-      #          generated `?,?,?` list; values always arrive as args.
-      #   G202 - the UNION builders concatenate constant fragments and column
-      #          names from a closed switch, never caller strings.
-      #   G301 - the local index directory is created 0o755 on purpose so the
-      #          owning user can inspect it with ordinary tools.
-      #   G302 - `lore init` writes a config of environment variable names,
-      #          never secrets, so 0o644 is intentional.
-      #   G304 - a local CLI reads the paths it is handed; config, bundle and
-      #          source files all arrive as arguments, not as untrusted input.
-      #   G404 - retry jitter and benchmark seeds want math/rand; crypto/rand
-      #          would buy nothing and cost throughput.
+      # Findings that are structurally wrong here rather than waiting to be fixed:
+      #   G115 - the gRPC mappers narrow int line numbers to the int32 the proto declares.
+      #   G118 - the scheduler's cancel func is stored on start and called from the fx OnStop hook.
+      #   G201 - formatted SQL substitutes column constants, a generated `?,?,?` list and the
+      #          vector width; values always arrive as args.
+      #   G202 - the UNION builders concatenate constant fragments, never caller strings.
+      #   G301 - the local index directory is 0o755 so the owning user can inspect it.
+      #   G302 - `lore init` writes a config of environment variable names, never secrets.
+      #   G304 - config, bundle and source paths all arrive as CLI arguments.
+      #   G404 - retry jitter and plugin request-id prefixes want math/rand, not crypto/rand.
       excludes:
         - G115
         - G118
@@ -67,8 +52,6 @@ linters:
         - G404
   exclusions:
     rules:
-      # Tests deliberately write fixtures with loose permissions, read paths
-      # built from table-driven names, and hardcode obviously fake tokens.
       - path: _test\.go
         linters:
           - gosec

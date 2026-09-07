@@ -40,13 +40,9 @@ type syncNowInput struct {
 type syncStatusInput struct{}
 
 type syncAcknowledgment struct {
-	Synced       string           `json:"synced"`
-	TookOverFrom *displacedHolder `json:"took_over_from,omitempty"`
-
-	// Failures is present only when an instance gave up while the round carried
-	// on: what the other instances committed is durable, so this is a partial
-	// success the caller should report rather than retry blindly.
-	Failures []instanceFailure `json:"failures,omitempty"`
+	Synced       string            `json:"synced"`
+	TookOverFrom *displacedHolder  `json:"took_over_from,omitempty"`
+	Failures     []instanceFailure `json:"failures,omitempty"`
 }
 
 type instanceFailure struct {

@@ -63,9 +63,9 @@ type IndexStore interface {
 	DeletePendingRefs(ctx context.Context, refs []entities.PendingRef) error
 
 	// Nil Cursor means never checkpointed — start a full sync.
-	Cursor(ctx context.Context, connector string) (lore.Cursor, error)
+	Cursor(ctx context.Context, instance string) (lore.Cursor, error)
 
-	SetCursor(ctx context.Context, connector string, c lore.Cursor) error
+	SetCursor(ctx context.Context, instance string, c lore.Cursor) error
 
 	// Unset keys read as "", not an error.
 	Meta(ctx context.Context, key string) (string, error)

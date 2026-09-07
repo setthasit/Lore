@@ -14,9 +14,6 @@ import (
 	"github.com/setthasit/Lore/internal/urlx"
 )
 
-// Origin is the shape of a `from:` coordinate, and the only thing that decides
-// how a binary is obtained. Nothing downstream of resolution depends on it:
-// once a binary is on disk it is launched the same way whatever brought it.
 type Origin string
 
 const (
@@ -25,22 +22,16 @@ const (
 	OriginURL    Origin = "url"
 )
 
-// LatestVersion is the one floating version the supply chain understands, and
-// `lore plugin install` is the only place it may appear: install resolves it
-// and writes the concrete version back, because a floating version means two
-// machines silently run different code against one index.
+// LatestVersion is legal only as an argument to `lore plugin install`, which writes back what it resolved.
 const LatestVersion = "latest"
 
 const gitHubPrefix = "github.com/"
 
-// archiveSuffixes are the archive shapes the goreleaser convention publishes.
-// Anything else served at a URL is taken to be the binary itself.
+// archiveSuffixes are what the goreleaser convention publishes; any other artifact is taken to be the binary.
 var archiveSuffixes = []string{".tar.gz", ".tgz"}
 
 var versionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?$`)
 
-// A branch or a moving tag is not exact: the version a lockfile records must not be able to start
-// pointing somewhere else.
 func ExactVersion(version string) bool {
 	return versionPattern.MatchString(version)
 }
@@ -54,9 +45,6 @@ func checkName(name string) error {
 		" should read it, such as linear or openai-compatible", nil)
 }
 
-// Coordinate is a resolved `from:` declaration. It carries the plugin's short
-// name because every message about a plugin names it the way lore.yaml does,
-// as plugins[<name>].
 type Coordinate struct {
 	Name   string
 	Origin Origin
@@ -71,20 +59,12 @@ type Coordinate struct {
 	URL     string // OriginURL: the artifact URL, verbatim
 }
 
-// Resolve reads the coordinate a declaration names. A remote coordinate must
-// pin an exact version here, so a workspace's configuration alone determines
-// which code runs.
-//
-// dir is the directory the declaring lore.yaml sits in: a local from: and a
-// relative pubkey: mean "beside the configuration that declared it", so a
-// workspace behaves the same whichever directory lore was started from.
+// Resolve reads a declaration; a local from: and a relative pubkey: resolve against dir.
 func Resolve(dir string, decl config.PluginDecl) (Coordinate, error) {
 	return parseCoordinate(dir, decl, false)
 }
 
-// ResolveInstall reads a coordinate `lore plugin install` was handed, where
-// @latest is legal: install resolves it and writes the concrete version back
-// into lore.yaml before anything is locked or executed.
+// ResolveInstall is Resolve for `lore plugin install`, where @latest is legal.
 func ResolveInstall(dir string, decl config.PluginDecl) (Coordinate, error) {
 	return parseCoordinate(dir, decl, true)
 }
@@ -146,14 +126,12 @@ func IsLocalPath(from string) bool {
 	return false
 }
 
-// A declaration's name is a bare token; every shape parseCoordinate accepts
-// carries a scheme or a path separator.
+// A declaration's name is a bare token; every coordinate shape carries a scheme or a path separator.
 func isCoordinate(target string) bool {
 	return strings.ContainsAny(target, `/\:`)
 }
 
-// Only a repository coordinate carries a name: the convention is lore-<name>,
-// and a repository that ignores it is declared by hand rather than guessed at.
+// The convention is lore-<name>; a repository that ignores it is declared by hand.
 func nameFor(target string) (string, error) {
 	_, repo, ok := gitHubRepo(target)
 	if !ok {
@@ -209,9 +187,6 @@ func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 	}, nil
 }
 
-// A URL coordinate is its own pin: the bytes it serves are pinned by the
-// lockfile digest, and the version is read from the file name because the
-// on-disk layout keeps versions in separate directories.
 func parseURL(name, from string) (Coordinate, error) {
 	parsed, err := url.Parse(from)
 	if err != nil || parsed.Host == "" {
@@ -232,9 +207,6 @@ func parseURL(name, from string) (Coordinate, error) {
 	return Coordinate{Name: name, Origin: OriginURL, From: from, Version: version, URL: from}, nil
 }
 
-// AtVersion re-points a coordinate at another release, which is what
-// `lore plugin update <name>@<version>` asks for. A URL coordinate's version is
-// part of the URL, so moving that one is an edit to lore.yaml, not an argument.
 func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	if c.Origin != OriginGitHub {
 		return Coordinate{}, internalerror.NewBadRequestError(Label(c.Name)+" is fetched from "+c.SafeFrom()+
@@ -247,8 +219,7 @@ func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	}, true)
 }
 
-// Only a URL coordinate's from: can carry a credential; a github.com/owner/repo
-// coordinate and a local path have nowhere to put one.
+// Only a URL coordinate's from: can carry a credential; the other shapes have nowhere to put one.
 func (c Coordinate) SafeFrom() string {
 	if c.Origin != OriginURL {
 		return c.From
@@ -256,15 +227,10 @@ func (c Coordinate) SafeFrom() string {
 	return safeTarget(c.From)
 }
 
-// Floating reports a coordinate that still has to be pinned, so nothing
-// unpinned can reach the lockfile or the cache.
 func (c Coordinate) Floating() bool {
 	return c.Origin == OriginGitHub && c.Version == LatestVersion
 }
 
-// Warning is what the host logs at startup, empty when there is nothing to say.
-// A local plugin is the development escape hatch, and its whole cost is stated
-// where the person who chose it will see it.
 func (c Coordinate) Warning() string {
 	if c.Origin != OriginLocal {
 		return ""
@@ -273,17 +239,11 @@ func (c Coordinate) Warning() string {
 		" has no lore.lock entry and no digest, and is for development only"
 }
 
-// assetName is the archive the goreleaser default naming publishes for one
-// platform. It is constructed rather than guessed at from a release's
-// attachments, so a release that does not follow the convention fails to
-// resolve with the exact name that was looked for instead of running something
-// that merely looked close.
 func (c Coordinate) assetName(p Platform) string {
 	return c.Repo + "_" + strings.TrimPrefix(c.Version, "v") + "_" + p.OS + "_" + p.Arch + ".tar.gz"
 }
 
-// binaryName is the file the archive is expected to hold: goreleaser names it
-// after the project, which for a plugin repository is the repository itself.
+// binaryName is the file the archive holds: goreleaser names it after the project, which is the repository.
 func (c Coordinate) binaryName(p Platform) string {
 	base := c.Repo
 	if base == "" {
@@ -295,8 +255,7 @@ func (c Coordinate) binaryName(p Platform) string {
 	return base
 }
 
-// Platform is one os/arch pair, spelled the way GOOS and GOARCH spell it: it is
-// both a lockfile key and part of an asset name, so the two cannot drift.
+// Platform is one os/arch pair, spelled the way GOOS and GOARCH spell it.
 type Platform struct {
 	OS   string
 	Arch string
@@ -310,8 +269,6 @@ func (p Platform) Key() string {
 	return p.OS + "/" + p.Arch
 }
 
-// Label spells a plugin the way lore.yaml does, so an error points at the line
-// the reader has to edit.
 func Label(name string) string {
 	return pluginsKey + "[" + name + "]"
 }

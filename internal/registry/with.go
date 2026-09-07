@@ -148,8 +148,7 @@ func CheckURL(field, raw, example string) error {
 	return nil
 }
 
-// YAML resolves an integer to int, but a value that arrived through JSON is a
-// float64; both are whole numbers and both are accepted.
+// A JSON decoder yields float64 where YAML yields int; both are whole numbers.
 func integral(value any) bool {
 	switch n := value.(type) {
 	case int:
@@ -167,8 +166,7 @@ func typeError(field, want string, got any) error {
 		"%s must be %s, got %v", field, want, got), nil)
 }
 
-// A secret's ConfigField is omitted: the plugin gets the value under Secret.Key,
-// never the operator's variable name.
+// Secret config fields stay out: a plugin gets values under Secret.Key, never the operator's variable name.
 func configJSON(manifest lore.Manifest, in Instance) ([]byte, error) {
 	declared := make(map[string]any, len(manifest.Fields))
 	for _, f := range manifest.Fields {

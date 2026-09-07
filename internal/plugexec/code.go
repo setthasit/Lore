@@ -8,9 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// codeRepo is one registered clone. A clone has no instance id of its own — the
-// registry names its logger after the plugin — so that name is what errors are
-// attributed to, and the absolute path in the message says which clone.
 type codeRepo struct {
 	external
 	root string
@@ -45,16 +42,9 @@ func (r *codeRepo) Log(ctx context.Context, path string) ([]lore.CommitRef, erro
 	if err != nil {
 		return nil, err
 	}
-	// A path with no history is not an error, so an empty commit list is an
-	// answer and the caller is left to decide what it means.
 	return frame.Commits, nil
 }
 
-// HasFileAtHEAD is its own op rather than an inference from an empty Log,
-// because a deleted file still has history: the query engine asks it before
-// blaming so a mistyped path comes back as a missing file instead of a raw tool
-// failure. A directory, an untracked path and a clone with no commits are all
-// false and none of them is an error.
 func (r *codeRepo) HasFileAtHEAD(ctx context.Context, path string) (bool, error) {
 	absolute, err := r.resolve(opHasFile, path)
 	if err != nil {

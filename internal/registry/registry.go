@@ -1,7 +1,5 @@
-// Package registry turns the plugin names in a workspace configuration into the
-// connectors, providers and code accessors the engine runs on. It is the only
-// place that maps a name to an implementation, which is what lets the rest of
-// the engine hold no name of any source or provider at all.
+// Package registry maps the plugin names in a workspace configuration to the
+// connectors, providers and code accessors the engine runs on.
 package registry
 
 import (
@@ -22,32 +20,25 @@ func OriginExternal(binary string) string {
 	return "external " + binary
 }
 
-// Also one directory in the plugin cache (plugindist): never admit a separator or a dot.
+// A plugin name is also a directory name in the plugin cache, so a separator or a dot must never match.
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
-// Field, secret and secret-config keys are snake_case because they are YAML
-// mapping keys and JSON object keys at the same time.
 var keyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
-// An environment variable name, as a manifest may suggest one by default.
 var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// An instance id becomes the DocID prefix, so a colon in it would make document
-// identities unparseable. Everything else about the shape is the operator's taste.
+// An instance id becomes the DocID prefix, so a colon would make document identities unparseable.
 var instancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 func ValidPluginName(name string) bool {
 	return namePattern.MatchString(name)
 }
 
-// Entry is one registered plugin as `lore plugin list` reports it.
 type Entry struct {
 	Manifest lore.Manifest
 	Origin   string
 }
 
-// Registry holds no list of its own: everything in it was handed to it by the
-// composition root, so a build's plugin set is visible in exactly one file.
 type Registry struct {
 	host    lore.Host
 	entries map[string]Entry
@@ -63,15 +54,8 @@ func New(host lore.Host) *Registry {
 	}
 }
 
-// Compiled is the plugin set this binary was built with. It is a distinct type
-// so the wiring can hold both it and a workspace's registry — the compiled set
-// plus whatever that workspace's `plugins:` declared — without ambiguity.
 type Compiled struct{ *Registry }
 
-// Clone returns an independent registry holding everything this one holds. A
-// workspace adds its external plugins to a clone, so the compiled set stays
-// exactly what the composition root built and two workspaces in one process
-// cannot contaminate each other.
 func (r *Registry) Clone() *Registry {
 	out := &Registry{
 		host:    r.host,
@@ -84,10 +68,6 @@ func (r *Registry) Clone() *Registry {
 	return out
 }
 
-// Register validates each plugin's manifest against the contract and rejects a
-// plugin that misdeclares itself. Doing it here, rather than when an instance is
-// built, is what turns a manifest lie into a failing test instead of a failing
-// sync in somebody's workspace.
 func (r *Registry) Register(plugins ...lore.Plugin) error {
 	return r.register(OriginBuiltin, plugins...)
 }
@@ -124,14 +104,12 @@ func (r *Registry) register(origin string, plugins ...lore.Plugin) error {
 	return nil
 }
 
-// Manifest reports what a registered plugin declares.
 func (r *Registry) Manifest(name string) (lore.Manifest, bool) {
 	entry, ok := r.entries[name]
 	return entry.Manifest, ok
 }
 
-// List reports every registered plugin, ordered by name so two runs of
-// `lore plugin list` agree.
+// Ordered by name.
 func (r *Registry) List() []Entry {
 	out := make([]Entry, 0, len(r.entries))
 	for _, name := range r.order {
@@ -141,8 +119,7 @@ func (r *Registry) List() []Entry {
 	return out
 }
 
-// Names lists the registered plugins of one kind, sorted, as error messages
-// name what this build actually has.
+// Sorted by name.
 func (r *Registry) Names(kind lore.Kind) []string {
 	var out []string
 	for name, entry := range r.entries {
@@ -154,10 +131,8 @@ func (r *Registry) Names(kind lore.Kind) []string {
 	return out
 }
 
-// Starter reports the first registered plugin of a kind that serves want, in
-// registration order; an empty want matches any. `lore init` scaffolds from it,
-// so which plugin a fresh workspace suggests is decided by the order the
-// composition root registers them — the one place allowed to prefer a plugin.
+// Starter reports the first plugin of kind that serves want, in registration
+// order; an empty want matches any.
 func (r *Registry) Starter(kind lore.Kind, want lore.Capability) (lore.Manifest, bool) {
 	for _, name := range r.order {
 		m := r.entries[name].Manifest
@@ -196,8 +171,6 @@ func validateManifest(m lore.Manifest, p lore.Plugin) error {
 	return validateFields(m)
 }
 
-// A kind that does not match the interface the value implements would fail much
-// later, when a configuration asked for something the plugin cannot build.
 func validateKind(m lore.Manifest, p lore.Plugin) error {
 	var ok bool
 	switch m.Kind {

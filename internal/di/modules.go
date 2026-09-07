@@ -19,14 +19,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Workspace wires one workspace. It names no source and no provider: the
-// registry it is handed is the only thing that knows which plugins this build
-// has, so adding a source is a plugin plus a configuration entry.
-//
-// The compiled set is supplied under its own type and the workspace's registry
-// is derived from it, because `plugins:` lives in the configuration and the
-// configuration is only known once a command has parsed its flags. Two
-// workspaces in one process therefore extend independent clones.
 func Workspace(configPath string, compiled *registry.Registry) fx.Option {
 	return fx.Options(
 		ConfigModule(configPath),
@@ -37,9 +29,6 @@ func Workspace(configPath string, compiled *registry.Registry) fx.Option {
 	)
 }
 
-// WorkspaceDir is the directory lore.yaml was read from. `lore.lock` lives
-// beside the configuration it pins, so the resolution of an external plugin
-// depends on where the file was, not on where the process was started.
 type WorkspaceDir string
 
 func ConfigModule(configPath string) fx.Option {
@@ -51,7 +40,6 @@ func ConfigModule(configPath string) fx.Option {
 
 var RepositoryModule = fx.Module("repository", fx.Provide(newIndexStore))
 
-// PluginModule turns configured instances into running plugin values.
 var PluginModule = fx.Module("plugins", fx.Provide(
 	newExternals,
 	newWorkspaceRegistry,
@@ -146,10 +134,7 @@ func schedulerStopBudget(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithDeadline(ctx, deadline.Add(-min(schedulerStopReserve, remaining/2)))
 }
 
-// The vector column's width is baked into the index at creation, so the store
-// opens only once a provider has reported a usable one. That is the whole of
-// the engine's dimension knowledge: which model implies which width belongs to
-// the driver that knows it.
+// The index's vector column is fixed at creation, so it opens only once a provider reports a width.
 func newIndexStore(lc fx.Lifecycle, cfg *config.Config, embedding embedding) (repositories.IndexStore, error) {
 	dims := embedding.provider.Dimensions()
 	if dims <= 0 {
@@ -181,9 +166,6 @@ func newSources(cfg *config.Config, reg *registry.Registry) ([]lore.Connector, e
 	return reg.BuildSources(instances)
 }
 
-// embedding carries the plugin name alongside the built embedder, because the
-// vector-space identity is "<plugin>/<model>/<dims>" and a provider reports only
-// the width: it never names itself, so it cannot claim another's vector space.
 type embedding struct {
 	plugin   string
 	model    string
@@ -210,8 +192,7 @@ func newVectorSpace(e embedding) services.VectorSpace {
 	return services.NewVectorSpace(e.plugin, e.model, e.provider.Dimensions())
 }
 
-// A workspace with no llm: block resolves to a nil Completer: only synthesis
-// then fails, and it says why.
+// A workspace with no llm: block resolves to a nil Completer; only synthesis then fails.
 func newCompleter(cfg *config.Config, reg *registry.Registry, providers providerInstances) (lore.Completer, error) {
 	if cfg.LLM == nil {
 		return nil, nil
@@ -257,8 +238,6 @@ func newProviderInstances(cfg *config.Config) (providerInstances, error) {
 	return instances(cfg.Providers, "providers")
 }
 
-// The configuration path travels with each instance so a plugin's own
-// validation failure still points at the line the operator has to edit.
 func instances(declared []config.Instance, block string) ([]registry.Instance, error) {
 	out := make([]registry.Instance, 0, len(declared))
 	for _, decl := range declared {

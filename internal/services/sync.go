@@ -29,14 +29,10 @@ type SyncResult struct {
 	// Set only when this round claimed a lease a different, dead holder still owned.
 	TookOverFrom *entities.LeaseState
 
-	// The instances that ended their stream early, in selection order. A round that
-	// completed with failures reports them here and returns no error: one broken
-	// plugin must not stop a workspace from syncing.
+	// Instances that ended their stream early, in selection order; a round with failures still returns no error.
 	Failures []InstanceFailure
 }
 
-// InstanceFailure is one source instance that gave up at its last committed
-// cursor while the rest of the round carried on.
 type InstanceFailure struct {
 	Instance string
 	Err      error
@@ -172,8 +168,6 @@ func (s *syncOrchestrator) runRound(
 			continue
 		}
 
-		// A round the heartbeat or the caller ended would fail every instance after
-		// this one the same way, and that is the round's failure, not the instance's.
 		if round.Err() != nil {
 			return nil, roundFailure(round, err)
 		}
@@ -183,8 +177,6 @@ func (s *syncOrchestrator) runRound(
 		progress.emit(instance, entities.SyncPhaseFailed, err)
 	}
 
-	// The pass runs over whatever was ingested, so a failing instance never costs
-	// the healthy ones their edges.
 	if err := s.links.LinkPending(round); err != nil {
 		return nil, roundFailure(round, err)
 	}
@@ -406,10 +398,7 @@ func (s *syncOrchestrator) commitBatch(ctx context.Context, instance string, bat
 	return chunks, s.links.Link(ctx, batch.Docs)
 }
 
-// The instance id is the cursor key, the Source value and the DocID prefix at
-// once, and nothing in the schema constrains the source column — so a plugin that
-// mislabels its documents writes into another instance's namespace unnoticed
-// unless the batch carrying them is refused here.
+// The store constrains neither source nor id, so a mislabelled document lands in another instance's namespace.
 func assertInstanceIdentity(instance string, docs []lore.Document) error {
 	prefix := instance + ":"
 	for _, doc := range docs {

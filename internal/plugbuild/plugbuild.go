@@ -1,12 +1,5 @@
-// Package plugbuild compiles a custom lore binary. Go cannot load code
-// dynamically, so a compiled third-party plugin always means a new binary: this
-// package generates the composition root cmd/lore/main.go already is, with the
-// named plugin modules appended to the official set, builds it in a scratch
-// module and throws that module away.
-//
-// It also serves `lore plugin search`, which reads a JSON index over HTTP. The
-// two live together because both are the ecosystem's edge: one produces a binary
-// with a stranger's code compiled in, the other is how that stranger is found.
+// Package plugbuild compiles a custom lore binary: Go cannot load code
+// dynamically, so a third-party plugin compiled in means a new binary.
 package plugbuild
 
 import (
@@ -24,71 +17,54 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// DefaultOutput matches the stock binary's name, so a custom build is a drop-in
-// replacement for the one it was built from.
 const DefaultOutput = "lore"
 
-// scratchModule is the main module path of the generated build. It never leaves
-// the temporary directory, so the name only has to be a legal module path.
 const scratchModule = "lorecustom"
 
-// develVersion is what the go command stamps into a binary built from a
-// checkout. It is not a version query anything can resolve.
+// Without VCS info the go command stamps "(devel)", which no proxy resolves.
 const develVersion = "(devel)"
 
 const goCommand = "go"
 
-// Runner runs one external program and returns its combined output. It is an
-// interface so a test can assert the exact command sequence without a
-// toolchain, a network or a minute of compilation.
+// Runner returns the program's combined stdout and stderr, on success and on failure.
 type Runner interface {
 	Run(ctx context.Context, dir, program string, args ...string) (string, error)
 }
 
-// Request describes the binary to build.
 type Request struct {
-	// Coordinates are the plugin modules to compile in. At least one is
-	// required: building the stock plugin set is what `go build ./cmd/lore` is.
 	Coordinates []Coordinate
 
 	// Output is the path of the binary to write; empty means DefaultOutput.
 	Output string
 
-	// Engine is the version query for the engine module. Empty means the
-	// version of the running binary.
+	// Engine is the version query for the engine module; empty means the running binary's version.
 	Engine string
 
 	// Replace maps a module path to a local directory, written into the scratch
 	// module as a replace directive instead of being fetched by version.
 	Replace map[string]string
 
-	// Progress receives one line per step. A custom build compiles the whole
-	// engine, so silence for a minute would read as a hang.
+	// Progress receives one line per step; nil discards them.
 	Progress io.Writer
 
-	// Runner runs the go command and the produced binary; nil means the real one.
+	// Runner runs the go command and the produced binary; nil uses the real toolchain.
 	Runner Runner
 }
 
-// Result reports what was built.
 type Result struct {
 	// Output is the absolute path of the binary that was written.
 	Output string
 
-	// Engine is the version the engine module resolved to, and Added the
-	// plugins compiled in on top of the official set, in the order the
-	// generated composition root registers them.
+	// Engine is the version the engine module resolved to, and Added the plugins
+	// compiled in on top of the official set, in registration order.
 	Engine string
 	Added  []Coordinate
 
-	// Plugins is the verbatim `lore plugin list` output of the binary that was
-	// just built. The plugin set is read back from the artifact rather than
-	// predicted, because only the artifact can be right about itself.
+	// Plugins is the verbatim `lore plugin list` output of the binary just built.
 	Plugins string
 }
 
-// Build generates, fetches, compiles and then asks the produced binary what it
-// contains. The scratch module is removed however the build ends.
+// Build removes its scratch module however the build ends.
 func Build(ctx context.Context, req Request) (Result, error) {
 	if len(req.Coordinates) == 0 {
 		return Result{}, internalerror.NewBadRequestError(
@@ -215,8 +191,6 @@ func compile(ctx context.Context, runner Runner, dir, output string) error {
 	return nil
 }
 
-// Registration validates every manifest against the interfaces it claims, so
-// listing the plugins is also the cheapest proof that the artifact runs.
 func readBackPlugins(ctx context.Context, runner Runner, output string) (string, error) {
 	listing, err := runner.Run(ctx, "", output, "plugin", "list")
 	if err != nil {
@@ -225,8 +199,7 @@ func readBackPlugins(ctx context.Context, runner Runner, output string) (string,
 	return listing, nil
 }
 
-// The go command needs the user's own GOPATH, GOPROXY, GOMODCACHE and
-// credentials, so execRunner inherits the environment.
+// The go command needs the user's own GOPROXY, GOMODCACHE and credentials, so the environment is inherited.
 type execRunner struct{}
 
 func newExecRunner() (execRunner, error) {
@@ -246,10 +219,6 @@ func (execRunner) Run(ctx context.Context, dir, program string, args ...string) 
 	return string(out), err
 }
 
-// engineVersion is the version of the running binary, which is the engine a
-// custom build should match. A binary built from a checkout reports "(devel)",
-// which no proxy can resolve, so the build asks for the newest release instead;
-// Request.Replace is how a checkout builds against itself.
 func engineVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" || info.Main.Version == develVersion {
@@ -258,9 +227,7 @@ func engineVersion() string {
 	return info.Main.Version
 }
 
-// A replaced module still needs a version on its require line, and the version
-// is never used to fetch anything, so a checkout's "(devel)" becomes the zero
-// version rather than an error.
+// A replaced module still needs a version on its require line, and nothing fetches it.
 func replacedVersion(version string) string {
 	if version == "" || version == develVersion || version == "latest" {
 		return "v0.0.0"

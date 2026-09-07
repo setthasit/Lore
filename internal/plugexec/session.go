@@ -18,16 +18,13 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// tuning holds the protocol's timeouts as data so the tests can shrink them
-// without waiting out a five-minute idle window. The values in defaultTuning
-// are the protocol's; nothing outside this package can change them.
 type tuning struct {
 	manifest time.Duration
-	unary    time.Duration // embed, blame, log, has_file
+	unary    time.Duration
 	complete time.Duration
-	idle     time.Duration // changes has no total limit, only an idle one
+	idle     time.Duration
 	shutdown time.Duration
-	grace    time.Duration // between SIGTERM and SIGKILL, and on pipes a descendant still holds
+	grace    time.Duration
 }
 
 func defaultTuning() tuning {
@@ -35,17 +32,12 @@ func defaultTuning() tuning {
 		manifest: 10 * time.Second,
 		unary:    60 * time.Second,
 		complete: lore.CompleteTimeout,
-		// A long backfill is legitimate, a silent process is not, so the changes
-		// budget is per frame rather than per stream.
 		idle:     300 * time.Second,
 		shutdown: 5 * time.Second,
 		grace:    5 * time.Second,
 	}
 }
 
-// session is one plugin process. The protocol allows one in-flight request per
-// process — concurrency is the host's job, and it gets it by running more
-// processes — so a session needs no request table and no scheduler.
 type session struct {
 	instance string
 	tuning   tuning
@@ -56,8 +48,7 @@ type session struct {
 	stdout *bufio.Reader
 	stderr *stderrLog
 
-	// idPrefix is random per process so a plugin cannot pass the correlation
-	// check by hardcoding the ids it saw in an example.
+	// Random per process so a plugin cannot pass the correlation check with ids copied from an example.
 	idPrefix string
 	requests int
 
@@ -65,11 +56,10 @@ type session struct {
 	waitErr  error
 }
 
+const outputChunkBytes = 64 << 10
+
 func spawn(binary, instance string, host lore.Host, tune tuning) (*session, error) {
 	cmd := exec.Command(binary)
-	// The child gets no inherited environment: secrets travel in the request
-	// payload, so a plugin sees only what its manifest declared and cannot read
-	// another plugin's token out of the process it happens to be started from.
 	cmd.Env = minimalEnv()
 	stderr := &stderrLog{log: host.Log, instance: instance}
 	cmd.Stderr = stderr
@@ -94,15 +84,12 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 		log:      host.Log,
 		cmd:      cmd,
 		stdin:    stdin,
-		stdout:   bufio.NewReaderSize(stdout, 64<<10),
+		stdout:   bufio.NewReaderSize(stdout, outputChunkBytes),
 		stderr:   stderr,
 		idPrefix: strconv.FormatUint(rand.Uint64(), 36),
 	}, nil
 }
 
-// handshake spawns the process and performs the one request that must come
-// first on every process, so no operation can run over a contract the two sides
-// have not agreed on.
 func handshake(ctx context.Context, binary, instance string, host lore.Host, tune tuning) (*session, lore.Manifest, error) {
 	s, err := spawn(binary, instance, host, tune)
 	if err != nil {
@@ -148,17 +135,15 @@ func (s *session) begin(op string) envelope {
 	return envelope{V: lore.APIVersion, ID: fmt.Sprintf("%s-%d", s.idPrefix, s.requests), Op: op}
 }
 
-// send writes one request line. The write is bounded because a plugin that
-// never reads its stdin would otherwise hang the host once a request outgrows
-// the pipe buffer.
+// send writes one request line under a timeout: a plugin that never reads its
+// stdin would otherwise hang the host once a request outgrows the pipe buffer.
 func (s *session) send(ctx context.Context, env envelope, req any, timeout time.Duration) error {
 	line, err := json.Marshal(req)
 	if err != nil {
 		s.abort()
 		return protocolError(s.instance, env.Op, err, "cannot encode the %s request", env.Op)
 	}
-	// encoding/json escapes control characters inside strings, so a request is
-	// always exactly one line however a secret or a document body is spelled.
+	// encoding/json escapes control characters, so a request is always exactly one line.
 	line = append(line, '\n')
 
 	done := make(chan error, 1)
@@ -184,11 +169,6 @@ func (s *session) send(ctx context.Context, env envelope, req any, timeout time.
 	}
 }
 
-// await reads the next frame for env and applies the envelope rules. An error
-// frame and a malformed one both end the round; the difference is how the
-// process is asked to leave, not whether it survives one. Nothing here returns
-// to a caller with the process still running, because stdout is protocol-only
-// and there is no resynchronization point to look for.
 func (s *session) await(ctx context.Context, env envelope, timeout time.Duration) (*frame, error) {
 	f, err := s.read(ctx, env.Op, timeout)
 	if err != nil {
@@ -199,9 +179,7 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 		return nil, protocolError(s.instance, env.Op, nil,
 			"answered %s with id %q, host sent id %q, so no frame can be correlated any more", env.Op, f.ID, env.ID)
 	}
-	// The error frame is read before the version check: a plugin that rejects
-	// the host's protocol version answers with an error, and hiding that message
-	// behind a version complaint of our own would lose the one detail it carries.
+	// Checked before the version below, so a plugin's own rejection message is not replaced by ours.
 	if f.Error != nil {
 		s.endRound(ctx, env.Op)
 		return nil, fromWire(s.instance, env.Op, f.Error)
@@ -214,19 +192,11 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 	return f, nil
 }
 
-// endRound leaves the process no way to outlive the round it was started for.
-// A plugin that reported an expected failure — bad credentials, throttling, a
-// missing resource — is alive and still answering, so it gets the ordered
-// shutdown the protocol promises it. One that failed the shutdown itself has
-// nothing left worth asking and is escalated instead.
 func (s *session) endRound(ctx context.Context, op string) {
 	if op == opShutdown {
 		s.abort()
 		return
 	}
-	// Every failure inside close reaps the process on its own, so its error
-	// describes a plugin that is already gone and adds nothing to the error the
-	// caller is about to report.
 	_ = s.close(ctx)
 }
 
@@ -236,9 +206,7 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		err  error
 	}
 
-	// The read runs in a goroutine so the timeout and the cancellation are
-	// selectable; it is one goroutine per frame and it always finishes, because
-	// every path that abandons it kills the process, which ends the read.
+	// Every path that abandons this goroutine kills the process, which ends the read.
 	done := make(chan result, 1)
 	go func() {
 		line, err := s.readLine()
@@ -276,9 +244,6 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 
 var errLineTooLong = errors.New("protocol frame exceeds the line limit")
 
-// readLine returns one NDJSON frame without its terminator. It reads through
-// bufio in chunks rather than into an unbounded buffer so a plugin cannot make
-// the host allocate more than the protocol's line cap.
 func (s *session) readLine() ([]byte, error) {
 	var line []byte
 	for {
@@ -298,9 +263,6 @@ func (s *session) readLine() ([]byte, error) {
 	}
 }
 
-// close is the ordered end of a round: the plugin answers shutdown, flushes its
-// stdout and exits 0. Anything else is a crash, because the process was asked
-// to leave and did not.
 func (s *session) close(ctx context.Context) error {
 	env := s.begin(opShutdown)
 	if err := s.send(ctx, env, shutdownRequest{envelope: env}, s.tuning.shutdown); err != nil {
@@ -315,9 +277,6 @@ func (s *session) close(ctx context.Context) error {
 		return protocolError(s.instance, opShutdown, nil, "answered shutdown without ok")
 	}
 
-	// Closing stdin is the plugin's cancel signal, and after shutdown there is
-	// nothing left to send: a plugin that ignores its answer and lingers is
-	// escalated exactly as a cancellation is.
 	_ = s.stdin.Close()
 	if err := s.waitWithin(s.tuning.shutdown); err != nil {
 		return &crashError{instance: s.instance, op: opShutdown, detail: err.Error(), cause: err}
@@ -325,10 +284,6 @@ func (s *session) close(ctx context.Context) error {
 	return nil
 }
 
-// abort is the cancellation escalation: stdin EOF, then SIGTERM, then SIGKILL
-// after the grace. Its error is deliberately dropped — every caller already has
-// the failure it is reporting, and how a plugin died while being killed adds
-// nothing to it.
 func (s *session) abort() {
 	_ = s.terminate()
 }
@@ -370,9 +325,6 @@ func (s *session) wait() error {
 	return s.waitErr
 }
 
-// crashed reports a process that died mid-operation. The exit status is read
-// first, because "exit status 3" is the whole diagnosis and a plugin author
-// looking at a bare EOF has nothing to work with.
 func (s *session) crashed(op string, cause error) error {
 	waitErr := s.terminate()
 
@@ -389,8 +341,6 @@ func (s *session) crashed(op string, cause error) error {
 	return &crashError{instance: s.instance, op: op, detail: detail, cause: waitErr}
 }
 
-// excerpt keeps a malformed line quotable in an error message without pasting a
-// megabyte of a plugin's stray output into a log.
 func excerpt(line []byte) string {
 	const limit = 120
 	if len(line) > limit {
@@ -407,24 +357,23 @@ type stderrLog struct {
 	partial []byte
 }
 
-const maxStderrLine = 64 << 10
-
-var newline = []byte{'\n'}
+const maxStderrLine = outputChunkBytes
 
 func (w *stderrLog) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for rest := p; len(rest) > 0; {
-		line, tail, found := bytes.Cut(rest, newline)
-		w.partial = append(w.partial, line...)
-		if !found {
+		end := bytes.IndexByte(rest, '\n')
+		if end < 0 {
+			w.partial = append(w.partial, rest...)
 			if len(w.partial) >= maxStderrLine {
 				w.emit()
 			}
 			break
 		}
+		w.partial = append(w.partial, rest[:end]...)
 		w.emit()
-		rest = tail
+		rest = rest[end+1:]
 	}
 	return len(p), nil
 }

@@ -8,8 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// call is one configured provider instance: the payload every provider op
-// repeats, held once so the two capabilities cannot drift apart.
 type call struct {
 	external
 	instance string
@@ -44,8 +42,6 @@ func newEmbedder(c call, declared int) (*embedder, error) {
 func (e *embedder) Dimensions() int { return e.dims }
 
 func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	// The SDK contract is explicit that no texts means no request, so an empty
-	// caller batch never costs a process.
 	if len(texts) == 0 {
 		return nil, nil
 	}
@@ -59,8 +55,6 @@ func (e *embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 	return e.aligned(frame, texts)
 }
 
-// Misalignment is never a partial success: the host would otherwise store one
-// document's vector under another's id.
 func (e *embedder) aligned(frame *frame, texts []string) ([][]float32, error) {
 	if len(frame.Vectors) != len(texts) {
 		return nil, protocolError(e.instance, opEmbed, nil,
@@ -70,7 +64,7 @@ func (e *embedder) aligned(frame *frame, texts []string) ([][]float32, error) {
 	if frame.Dimensions <= 0 {
 		return nil, protocolError(e.instance, opEmbed, nil, "reported dimensions %d, which is not a vector width", frame.Dimensions)
 	}
-	// A width that moves under a live index cannot be reinterpreted afterwards.
+	// Vectors already stored in this instance's index cannot be reinterpreted at a new width.
 	if frame.Dimensions != e.dims {
 		return nil, protocolError(e.instance, opEmbed, nil,
 			"reported dimensions %d, but this instance's vector space is %d wide", frame.Dimensions, e.dims)

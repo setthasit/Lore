@@ -9,15 +9,10 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist"
 )
 
-// repoPrefix is the naming convention the distribution document fixes for a
-// plugin repository, so trimming it is the one derivation that is a convention
-// rather than a guess: github.com/jdoe/lore-linear holds package linear.
+// Trimming this repository prefix derives the package name: github.com/jdoe/lore-linear holds package linear.
 const repoPrefix = "lore-"
 
-// reservedPackages are the identifiers the generated composition root already
-// spends. A plugin package landing on one of them would shadow os, the engine,
-// the official plugin set, package main or the builtin the root calls, so it
-// has to be named explicitly instead of silently breaking generated code.
+// reservedPackages are the identifiers the generated composition root already spends.
 var reservedPackages = map[string]bool{
 	"os":      true,
 	"app":     true,
@@ -26,22 +21,17 @@ var reservedPackages = map[string]bool{
 	"append":  true,
 }
 
-// Coordinate is one module to compile in. Version is always exact: a binary
-// built from a floating version cannot be rebuilt into the same binary, and a
-// compiled plugin has no lockfile entry to record what @latest resolved to.
+// Coordinate is one module to compile in. Version is always exact: the scratch
+// module's go.mod is discarded, so no lockfile records what @latest resolved to.
 type Coordinate struct {
-	Module  string // github.com/jdoe/lore-linear
-	Version string // v0.3.1
-	Package string // the package name the generated root calls Plugin() on
+	Module  string
+	Version string
+	Package string
 }
 
 func (c Coordinate) String() string { return c.Module + "@" + c.Version }
 
-// ParseCoordinate reads `github.com/owner/repo@vX.Y.Z` with an optional
-// `=<package>` suffix. The package name is derived from the module path only
-// where the convention makes that unambiguous; anything else is an error asking
-// for the suffix, because a wrong guess surfaces as a compile failure inside
-// generated code the user never wrote.
+// ParseCoordinate reads `github.com/owner/repo@vX.Y.Z[=package]`.
 func ParseCoordinate(raw string) (Coordinate, error) {
 	spec := strings.TrimSpace(raw)
 	if spec == "" {
@@ -77,8 +67,6 @@ func ParseCoordinate(raw string) (Coordinate, error) {
 	return Coordinate{Module: module, Version: version, Package: pkg}, nil
 }
 
-// The package suffix is cut before the version is, and on the last =, because a
-// module path may not contain an = at all: the split cannot be ambiguous.
 func cutPackage(spec string) (rest, pkg string, explicit bool) {
 	i := strings.LastIndex(spec, "=")
 	if i < 0 {
@@ -131,8 +119,7 @@ func derivePackage(raw, module, version string) (string, error) {
 	return name, nil
 }
 
-// isMajorSuffix reports whether the element is a /vN major-version suffix,
-// which names no package: github.com/acme/lore-crm/v2 still holds package crm.
+// A /vN element names no package: github.com/acme/lore-crm/v2 still holds package crm.
 func isMajorSuffix(element string) bool {
 	if len(element) < 2 || element[0] != 'v' {
 		return false

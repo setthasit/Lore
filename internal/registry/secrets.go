@@ -8,8 +8,6 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Plugins never read the environment; the host resolves their secrets here on
-// their behalf.
 func resolveSecrets(manifest lore.Manifest, in Instance) (map[string]string, error) {
 	if len(manifest.Secrets) == 0 {
 		return nil, nil

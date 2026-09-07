@@ -18,21 +18,12 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// DefaultIndexURL is the plugin index: a JSON file in a git repository, read
-// over HTTP at the pinned branch. There is no disk cache and no ranking — the
-// index is one small file, and an ecosystem large enough to need either does
-// not exist yet.
 const DefaultIndexURL = "https://raw.githubusercontent.com/setthasit/lore-plugins/main/index.json"
 
-// indexVersion is the schema this reader understands.
 const indexVersion = 1
 
-// One four-column terminal row, and four times the longest summary this repo's own plugins publish.
 const maxEntryFieldBytes = 120
 
-// Entry is one plugin in the index. Coordinate is what `lore plugin install` or
-// `lore build --with` is given, so the output of a search is directly the input
-// of the next command.
 type Entry struct {
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
@@ -50,8 +41,6 @@ type Index struct {
 	URL  string
 }
 
-// An empty index is not an error; the caller says so in words. Entries the
-// index publishes but this reader cannot render are skipped, not fatal.
 func (i Index) Fetch(ctx context.Context) (entries []Entry, skipped int, err error) {
 	target := i.URL
 	if target == "" {
@@ -129,9 +118,7 @@ func knownKind(kind string) bool {
 	return false
 }
 
-// Match returns the entries whose name, summary or kind contains the query,
-// case-insensitively, in index order. There is deliberately no scoring: a
-// ranking nobody can evaluate is worse than the order the index was written in.
+// Match is a case-insensitive substring over name, summary and kind, in index order.
 func Match(entries []Entry, query string) []Entry {
 	needle := strings.ToLower(strings.TrimSpace(query))
 	matched := make([]Entry, 0, len(entries))

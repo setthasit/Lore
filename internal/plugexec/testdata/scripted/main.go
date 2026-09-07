@@ -1,26 +1,8 @@
-// Command scripted is a plugin whose entire behaviour is a script file, so the
-// host's tests can build a plugin that misbehaves in exactly one way — a stray
-// banner on stdout, a batch without a cursor, an id it never received — which
-// no plugin worth shipping ever does.
-//
-// It takes no arguments and reads no environment, because the host gives a
-// plugin neither: the script is the file "script.txt" beside this binary.
-//
-// A script is groups of "<op> <action> [argument]" lines separated by blank
-// lines. A request is answered by the first unused group naming its op, all of
-// that group's steps in order, which is why a whole changes stream is one
-// group. Actions:
-//
-//	emit <json>     one response frame, after placeholder substitution
-//	raw <text>      the text verbatim, whether or not it is JSON
-//	bigline <n>     a well-formed frame padded past n bytes
-//	stderr <text>   a diagnostic line on the only channel allowed to carry one
-//	partial <text>  the same with no newline, which only a flush delivers
-//	sleep <ms>      answer late
-//	exit <code>     flush and die, which is how a crash is scripted
-//
-// Placeholders in emit, raw, stderr and partial: $ID, $OP, $NTEXTS, $PATH, $PID,
-// $ENV{NAME}, $SECRET{key}, $CURSOR{key}, $CONFIG{key}.
+// Command scripted is a plugin whose behaviour comes entirely from a script, so
+// a test can build one that misbehaves in exactly one way. The script is
+// "script.txt" beside this binary: blank-line-separated groups of
+// "<op> <action> [argument]" lines, and a request runs the first unused group
+// naming its op. The actions are the cases in run, the placeholders in expand.
 package main
 
 import (
@@ -91,8 +73,6 @@ func main() {
 			os.Exit(4)
 		}
 	}
-	// Stdin EOF is cancel: there is nothing in flight to abandon here, so the
-	// only correct answer is to leave.
 	_ = out.Flush()
 }
 
@@ -127,9 +107,7 @@ func expand(text string, req request) string {
 	text = strings.ReplaceAll(text, "$OP", req.Op)
 	text = strings.ReplaceAll(text, "$NTEXTS", strconv.Itoa(len(req.Texts)))
 	text = strings.ReplaceAll(text, "$PID", strconv.Itoa(os.Getpid()))
-	// The path is escaped because a Windows clone root arrives full of
-	// backslashes, and a script pasting one raw into a JSON string would emit a
-	// frame the host is right to reject.
+	// A Windows clone root arrives full of backslashes, which no JSON string can carry raw.
 	text = strings.ReplaceAll(text, "$PATH", escape(req.Path))
 
 	for _, ref := range []struct {

@@ -10,33 +10,25 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// Instance is a configured plugin instance, independent of the file format it
-// was read from: the registry never parses YAML, so the same code serves a
-// configuration file and a test table.
 type Instance struct {
-	// ID is the instance identity — sync cursor key, Document.Source and DocID
-	// prefix. It defaults to Use.
+	// Sync cursor key, Document.Source and DocID prefix; empty means Use.
 	ID string
 
-	// Use names the plugin.
 	Use string
 
-	// With is the decoded `with:` block; a nil map is an empty block.
 	With map[string]any
 
-	// Field is the configuration path this instance was read from, quoted
-	// verbatim in errors so a message points at a line the operator can edit.
+	// Configuration path, quoted verbatim in errors.
 	Field string
 }
 
-// Binding is a role bound to a provider instance and a model.
 type Binding struct {
 	Provider   string
 	Model      string
 	Dimensions int
 	Capability lore.Capability
 
-	// Field is the configuration path of the role, "embedder" or "llm".
+	// Configuration path of the role, "embedder" or "llm".
 	Field string
 }
 
@@ -47,15 +39,13 @@ type LocalClone struct {
 	Field  string
 }
 
-// Code pairs a built code accessor with the clone it reads.
 type Code struct {
 	Path   string
 	Remote string
 	Repo   lore.CodeRepo
 }
 
-// BuildSources builds one connector per instance, in configuration order,
-// because sync order is the order the operator wrote.
+// One connector per instance, in configuration order.
 func (r *Registry) BuildSources(instances []Instance) ([]lore.Connector, error) {
 	connectors := make([]lore.Connector, 0, len(instances))
 	for _, in := range instances {
@@ -97,9 +87,7 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 			"plugin %q built a connector calling itself %q for instance %q; the instance id is the cursor key and the document namespace, so a connector may not rename itself",
 			in.Use, name, id), nil)
 	}
-	// A source that claims its documents carry repository paths must be able to
-	// answer which remotes it ingests, or the startup warning about an unmatched
-	// local clone silently stops working.
+	// Without MatchesRemote the unmatched-clone startup warning silently stops working.
 	if _, ok := conn.(lore.RemoteMatcher); manifest.Capabilities.RepoRemotes && !ok {
 		return nil, internalerror.NewInternalError(fmt.Sprintf(
 			"plugin %q declares repo_remotes but its connector does not implement MatchesRemote", in.Use), nil)
@@ -108,16 +96,14 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 }
 
 type BuiltProvider struct {
-	// Plugin is the first component of the vector-space identity the host composes.
+	// First component of the vector-space identity.
 	Plugin   string
 	Instance string
 	Value    lore.Provider
 }
 
-// BuildProvider builds the provider a role binds to. An id that names no
-// declared instance but does name a registered plugin is built with that
-// plugin's defaults, which is what keeps a two-line starter configuration
-// working without a providers: block.
+// An id that names no declared instance but does name a registered plugin is
+// built from that plugin's defaults.
 func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider, error) {
 	if b.Provider == "" {
 		return BuiltProvider{}, internalerror.NewBadRequestError(b.Field+".provider must name a provider", nil)
@@ -166,8 +152,6 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 	return BuiltProvider{Plugin: manifest.Name, Instance: id, Value: built}, nil
 }
 
-// A manifest that claims a capability the built value does not implement would
-// otherwise surface as a nil-interface panic on the first query.
 func assertCapability(b Binding, id string, manifest lore.Manifest, built lore.Provider) error {
 	var ok bool
 	switch b.Capability {
@@ -190,8 +174,7 @@ func serves(manifest lore.Manifest) string {
 	return "it serves " + manifest.Capabilities.String()
 }
 
-// BuildCode builds one accessor per registered clone. Root is already absolute:
-// path expansion is the configuration's job, not a plugin's.
+// clone.Path must already be absolute; plugins never expand paths.
 func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 	out := make([]Code, 0, len(clones))
 	for _, clone := range clones {
@@ -222,8 +205,6 @@ func findInstance(instances []Instance, id string) (Instance, bool) {
 	return Instance{}, false
 }
 
-// Ident is the instance identity, defaulting to the plugin name so a
-// single-instance workspace reads `use: github` and gets the id "github".
 func (in Instance) Ident() string {
 	if in.ID != "" {
 		return in.ID
@@ -250,8 +231,6 @@ func (r *Registry) resolve(in Instance, kind lore.Kind) (string, lore.Plugin, lo
 	return id, r.plugins[in.Use], entry.Manifest, nil
 }
 
-// The failure names what this build actually has, because the fix depends on
-// whether the plugin exists at all or merely is not compiled in.
 func (r *Registry) unresolved(field, name string, kind lore.Kind, instances []Instance) error {
 	compiled := r.Names(kind)
 	have := "nothing of that kind"

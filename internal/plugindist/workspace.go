@@ -13,12 +13,10 @@ import (
 
 const pluginsKey = "plugins"
 
-// Workspace is the configuration, its lockfile and the text of the file itself.
-// The text is kept because every edit to a hand-written lore.yaml is a splice.
 type Workspace struct {
 	path      string
 	dir       string
-	content   string
+	content   string // kept beside the parsed config: every edit to a hand-written lore.yaml is a splice
 	config    *config.Config
 	lock      *Lock
 	store     *Store
@@ -50,9 +48,7 @@ func (w *Workspace) Plugins() []config.PluginDecl {
 	return w.config.Plugins
 }
 
-// Installed reports the binary a startup would run. An empty path with no error
-// means nothing is installed yet; an error means the declaration does not
-// resolve.
+// An empty path with no error means nothing is installed; an error means the declaration does not resolve.
 func (w *Workspace) Installed(decl config.PluginDecl) (string, error) {
 	coord, err := Resolve(w.dir, decl)
 	if err != nil {
@@ -65,8 +61,7 @@ func (w *Workspace) Installed(decl config.PluginDecl) (string, error) {
 	return binary, nil
 }
 
-// No results means there was nothing to install. notice is called once the work
-// is known and before the first byte is fetched.
+// notice is called once the work is known, before the first byte is fetched; no results means nothing to install.
 func (w *Workspace) Install(ctx context.Context, args []string, notice func()) ([]Result, error) {
 	requests, declare, err := w.requests(args)
 	if err != nil || len(requests) == 0 {
@@ -100,7 +95,6 @@ func (w *Workspace) Install(ctx context.Context, args []string, notice func()) (
 	return results, nil
 }
 
-// notice is called once the work is known and before the first byte is fetched.
 func (w *Workspace) Update(ctx context.Context, argument string, notice func()) (Result, error) {
 	name, version := splitArgument(argument)
 	decl, err := w.mustDeclare(name)
@@ -121,8 +115,6 @@ func (w *Workspace) Update(ctx context.Context, argument string, notice func()) 
 			return Result{}, err
 		}
 	case coord.Origin == OriginGitHub:
-		// Update with no version means "the newest release", which is the only
-		// other place @latest is legal.
 		if coord, err = coord.AtVersion(LatestVersion); err != nil {
 			return Result{}, err
 		}
@@ -153,8 +145,7 @@ type Removal struct {
 	Versions int
 }
 
-// The cache is the only one of the three a later install rebuilds, so it goes
-// last and a refused write leaves it intact.
+// The cache goes last, so a refused write to lore.yaml leaves it intact.
 func (w *Workspace) Remove(name string) (Removal, error) {
 	if _, err := w.mustDeclare(name); err != nil {
 		return Removal{}, err
@@ -194,8 +185,7 @@ func (w *Workspace) Verify(name string) (Report, error) {
 	return w.store.Locate(coord, w.lock)
 }
 
-// The second result is the name the argument introduces, empty when lore.yaml
-// already declares everything asked for.
+// The second result is the name the argument introduces, empty when lore.yaml already declares it.
 func (w *Workspace) requests(args []string) ([]Request, string, error) {
 	if len(args) == 0 {
 		requests := make([]Request, 0, len(w.config.Plugins))
@@ -265,7 +255,6 @@ func neverPinned(name string) error {
 		" rebuild it in place instead", nil)
 }
 
-// A splice carries the pinned coordinate, never the @latest that was asked for.
 func pinEdits(requests []Request, pinned []Coordinate, declare string) []configEdit {
 	edits := []configEdit(nil)
 	for i, coord := range pinned {

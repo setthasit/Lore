@@ -1,4 +1,3 @@
-// Package app assembles a lore binary from a set of plugins.
 package app
 
 import (

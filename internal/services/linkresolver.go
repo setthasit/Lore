@@ -29,9 +29,7 @@ var (
 	supersedesRule    = edgeRule{entities.EdgeKindSupersedes, 0.8}
 )
 
-// Total over the closed RefKind vocabulary, which assertKnownRefKinds enforces: a
-// kind missing from either table would read a zero rule or an empty target list,
-// and so produce no edge at all.
+// Both tables must cover every RefKind: a missing kind reads a zero rule or no targets, and yields no edge.
 var refKindRules = map[lore.RefKind]edgeRule{
 	lore.RefKindURL:       {entities.EdgeKindReferencesDoc, 1.0},
 	lore.RefKindCommitSHA: {entities.EdgeKindMentionsCommit, 0.9},
@@ -57,9 +55,6 @@ var refKindVocabulary = func() string {
 	return strings.Join(names, ", ")
 }()
 
-// A dropped reference is a missing edge and therefore a wrong answer, and the
-// plugin author has nothing to debug once it is gone, so an unrecognised kind
-// fails the batch that carried it instead of resolving to a zero rule.
 func assertKnownRefKinds(refs []entities.PendingRef) error {
 	for _, ref := range refs {
 		if slices.Contains(knownRefKinds, ref.Ref.Kind) {
@@ -118,8 +113,6 @@ type resolvedRef struct {
 	target entities.DocumentMeta
 }
 
-// Both the ingest pass and the pending-ref retry pass funnel through here, so the
-// vocabulary is asserted once for every ref either of them can hand to a rule.
 func (l *linkResolver) resolve(ctx context.Context, refs []entities.PendingRef, inHand map[lore.DocID]lore.Document) error {
 	if err := assertKnownRefKinds(refs); err != nil {
 		return err
