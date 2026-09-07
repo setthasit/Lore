@@ -2,11 +2,14 @@ package plugindist
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -16,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
 // minisignKey is an Ed25519 keypair in minisign's own file format, generated
@@ -231,7 +235,7 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 	t.Parallel()
 
 	scene := newScene(t)
-	key, pubkeyPath := newCosignKey(t)
+	key, pubkeyPath := newCosignKey(t, elliptic.P256())
 	checksums := scene.fake.Asset("v0.3.1", ChecksumsAsset)
 	scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix, cosignSign(t, key, checksums))
 
@@ -254,14 +258,20 @@ func TestInstallVerifiesACosignSignature(t *testing.T) {
 	}
 }
 
-func newCosignKey(t *testing.T) (*ecdsa.PrivateKey, string) {
+func newCosignKey(t *testing.T, curve elliptic.Curve) (*ecdsa.PrivateKey, string) {
 	t.Helper()
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		t.Fatalf("generate an ecdsa key: %v", err)
 	}
-	encoded, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	return key, cosignPublicKeyFile(t, &key.PublicKey)
+}
+
+func cosignPublicKeyFile(t *testing.T, public crypto.PublicKey) string {
+	t.Helper()
+
+	encoded, err := x509.MarshalPKIXPublicKey(public)
 	if err != nil {
 		t.Fatalf("marshal the public key: %v", err)
 	}
@@ -271,16 +281,162 @@ func newCosignKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write the public key: %v", err)
 	}
-	return key, path
+	return path
 }
 
+// The digest per curve is spelled out here rather than read from the code under
+// test: cosign's choice is what a release is signed with.
 func cosignSign(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte {
 	t.Helper()
 
-	hashed := sha256.Sum256(signed)
-	signature, err := ecdsa.SignASN1(rand.Reader, key, hashed[:])
+	var hashed []byte
+	switch curve := key.Curve.Params().Name; curve {
+	case "P-256":
+		sum := sha256.Sum256(signed)
+		hashed = sum[:]
+	case "P-384":
+		sum := sha512.Sum384(signed)
+		hashed = sum[:]
+	case "P-521":
+		sum := sha512.Sum512(signed)
+		hashed = sum[:]
+	default:
+		t.Fatalf("no cosign digest for curve %s", curve)
+	}
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, hashed)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
 	return []byte(base64.StdEncoding.EncodeToString(signature) + "\n")
+}
+
+// cosign signs with the digest the curve's size implies, so a P-384 release is
+// signed over SHA-384: checking it against SHA-256 rejects a valid signature.
+func TestInstallVerifiesACosignSignatureOnTheLargerCurves(t *testing.T) {
+	t.Parallel()
+
+	for _, curve := range []elliptic.Curve{elliptic.P384(), elliptic.P521()} {
+		t.Run(curve.Params().Name, func(t *testing.T) {
+			t.Parallel()
+
+			scene := newScene(t)
+			key, pubkeyPath := newCosignKey(t, curve)
+			scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix,
+				cosignSign(t, key, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
+
+			result, err := scene.installer.Install(context.Background(),
+				Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{})
+			if err != nil {
+				t.Fatalf("install a release signed on %s: %v", curve.Params().Name, err)
+			}
+			if !result.Signed {
+				t.Fatal("a verified signature is not reported")
+			}
+		})
+	}
+}
+
+// A key this build cannot verify with is refused while the key is read, so no
+// .sig request is made for it.
+func TestInstallRefusesAnUnusableKeyBeforeFetchingASignature(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate an rsa key: %v", err)
+	}
+	shortCurve, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate a p-224 key: %v", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		public crypto.PublicKey
+		want   string
+	}{
+		{
+			name:   "an rsa key",
+			public: &rsaKey.PublicKey,
+			want:   "a *rsa.PublicKey public key, which this build cannot verify",
+		},
+		{
+			name:   "an ecdsa key on a curve cosign does not sign with",
+			public: &shortCurve.PublicKey,
+			want:   "an ECDSA key on curve P-224, which this build cannot verify",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			served := serveArtifact(t, "acme-crm", "/lore/acme-crm/v2.0.1.tar.gz",
+				plugindisttest.Archive(t, "acme-crm", []byte(stubBinary)))
+
+			_, err := served.install(t, &Lock{}, cosignPublicKeyFile(t, test.public))
+			if err == nil {
+				t.Fatal("installing against an unusable key succeeded, want a refusal")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error %q does not name the key this build cannot use", err)
+			}
+			if asked := served.asked(cosignSuffix); len(asked) > 0 {
+				t.Fatalf("an unusable key still fetched %v", asked)
+			}
+		})
+	}
+}
+
+func TestVerifyTrustedCommentRefusesACommentNothingVouchesFor(t *testing.T) {
+	t.Parallel()
+
+	key := newMinisignKey(t)
+	verify, err := loadVerifier("linear", key.publicKeyFile(t))
+	if err != nil {
+		t.Fatalf("load a minisign public key: %v", err)
+	}
+
+	const comment = "timestamp:1756900000\tfile:checksums.txt"
+	signature := ed25519.Sign(key.private, []byte("checksums"))
+	global := base64.StdEncoding.EncodeToString(
+		ed25519.Sign(key.private, append(append([]byte(nil), signature...), comment...)))
+
+	for _, test := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name:  "no global signature under the comment",
+			lines: []string{minisignTrustedP + " " + comment},
+			want:  "a trusted comment with no global signature over it",
+		},
+		{
+			name:  "the global signature is not base64",
+			lines: []string{minisignTrustedP + " " + comment, "!not base64!"},
+			want:  "the global signature is not an Ed25519 signature",
+		},
+		{
+			name:  "the global signature is the wrong length",
+			lines: []string{minisignTrustedP + " " + comment, base64.StdEncoding.EncodeToString(signature[:32])},
+			want:  "the global signature is not an Ed25519 signature",
+		},
+		{
+			name:  "the comment was rewritten under a valid global signature",
+			lines: []string{minisignTrustedP + " timestamp:1799999999\tfile:checksums.txt", global},
+			want:  "the global signature over the trusted comment does not verify",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := verify.verifyTrustedComment(ChecksumsAsset, test.lines, signature)
+			if err == nil {
+				t.Fatal("an unvouched trusted comment was accepted, want a refusal")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error %q does not refuse with %q", err, test.want)
+			}
+		})
+	}
 }

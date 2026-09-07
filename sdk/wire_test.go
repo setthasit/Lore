@@ -125,8 +125,8 @@ func TestEmptyBatchStillEncodesItsCursor(t *testing.T) {
 	if !strings.Contains(string(raw), `"cursor":{"updated_after":"2026-09-01T00:00:00Z"}`) {
 		t.Errorf("encoded batch %s does not carry its cursor", raw)
 	}
-	if !strings.Contains(string(raw), `"docs":null`) {
-		t.Errorf("encoded batch %s should still declare docs", raw)
+	if !strings.Contains(string(raw), `"docs":[]`) {
+		t.Errorf("encoded batch %s should declare docs as a list, as the protocol document does", raw)
 	}
 }
 

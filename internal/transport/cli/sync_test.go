@@ -157,3 +157,27 @@ func TestSyncCountsTheInstancesThatDidNotFinish(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncNamesEveryInstanceThatFailed(t *testing.T) {
+	rt, orchestrator := mockSync(t)
+	orchestrator.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: errors.New("read timed out")},
+			{Instance: "tracker", Err: internalerror.NewPreconditionError("token expired", nil)},
+		},
+	}, nil)
+
+	res := run(t, rt, "sync")
+	if res.exitCode != exitInternal {
+		t.Fatalf("exit = %d, want %d, stdout = %q", res.exitCode, exitInternal, res.stdout)
+	}
+	for _, want := range []string{
+		"forge failed at its last checkpoint — read timed out",
+		"tracker failed at its last checkpoint — token expired",
+		"the remaining sources are committed",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+		}
+	}
+}

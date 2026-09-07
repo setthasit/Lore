@@ -1,6 +1,7 @@
 package lore
 
 import (
+	"encoding/json"
 	"maps"
 	"time"
 )
@@ -95,4 +96,13 @@ func (c Cursor) Clone() Cursor {
 type Batch struct {
 	Docs   []Document `json:"docs"`
 	Cursor Cursor     `json:"cursor"`
+}
+
+// docs is never null: docs/v3/09-plugin-protocol.md types it as a list.
+func (b Batch) MarshalJSON() ([]byte, error) {
+	type wire Batch
+	if b.Docs == nil {
+		b.Docs = []Document{}
+	}
+	return json.Marshal(wire(b))
 }

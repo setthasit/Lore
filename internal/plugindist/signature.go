@@ -4,11 +4,14 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"hash"
 	"os"
 	"strings"
 
@@ -23,8 +26,8 @@ import (
 //
 // Two formats are recognised, both verifiable with the standard library:
 //
-//   - cosign — a PEM public key, an ECDSA P-256 or Ed25519 signature over the
-//     signed file, base64 in a `.sig` sibling. This is what
+//   - cosign — a PEM public key, an ECDSA (P-256, P-384 or P-521) or Ed25519
+//     signature over the signed file, base64 in a `.sig` sibling. This is what
 //     `cosign sign-blob --key` produces and goreleaser publishes.
 //   - minisign — a `.minisig` sibling, Ed25519 over the file itself.
 //
@@ -52,9 +55,22 @@ type verifier struct {
 	format string
 	suffix string
 
-	cosign crypto.PublicKey
+	cosign cosignKey
 	pub    ed25519.PublicKey
 	keyID  [8]byte
+}
+
+type cosignKey struct {
+	algorithm string
+	verify    func(signed, signature []byte) bool
+}
+
+// cosign hashes with the digest the curve's size implies, so a P-384 signature
+// checked against SHA-256 rejects a signature that is valid.
+var cosignCurveHashes = map[elliptic.Curve]func() hash.Hash{
+	elliptic.P256(): sha256.New,
+	elliptic.P384(): sha512.New384,
+	elliptic.P521(): sha512.New,
 }
 
 // loadVerifier reads the resolved `pubkey:` and decides the format from the
@@ -72,9 +88,40 @@ func loadVerifier(name, pubkeyPath string) (verifier, error) {
 			return verifier{}, internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+
 				", which is PEM but holds no public key this build can read", err)
 		}
-		return verifier{name: name, format: "cosign", suffix: cosignSuffix, cosign: key}, nil
+		return loadCosignKey(name, pubkeyPath, key)
 	}
 	return loadMinisignKey(name, pubkeyPath, raw)
+}
+
+// An unusable key is refused here, before any signature is fetched from a
+// remote host.
+func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, error) {
+	refuse := func(detail string) error {
+		return internalerror.NewPreconditionError(Label(name)+" declares pubkey: "+pubkeyPath+", "+detail, nil)
+	}
+
+	loaded := verifier{name: name, format: "cosign", suffix: cosignSuffix}
+	switch key := key.(type) {
+	case ed25519.PublicKey:
+		loaded.cosign = cosignKey{algorithm: "Ed25519", verify: func(signed, signature []byte) bool {
+			return ed25519.Verify(key, signed, signature)
+		}}
+	case *ecdsa.PublicKey:
+		newHash, usable := cosignCurveHashes[key.Curve]
+		if !usable {
+			return verifier{}, refuse("an ECDSA key on curve " + key.Curve.Params().Name +
+				", which this build cannot verify — publish a key on P-256 (the cosign default), P-384 or P-521")
+		}
+		loaded.cosign = cosignKey{algorithm: "ECDSA", verify: func(signed, signature []byte) bool {
+			digest := newHash()
+			digest.Write(signed)
+			return ecdsa.VerifyASN1(key, digest.Sum(nil), signature)
+		}}
+	default:
+		return verifier{}, refuse("a " + fmt.Sprintf("%T", key) + " public key, which this build cannot verify" +
+			" with the standard library — publish an ECDSA (the cosign default) or Ed25519 key")
+	}
+	return loaded, nil
 }
 
 func loadMinisignKey(name, pubkeyPath string, raw []byte) (verifier, error) {
@@ -128,24 +175,10 @@ func (v verifier) verifyCosign(signedName string, signed, signature []byte) erro
 	if err != nil {
 		return v.refuse(signedName, "the signature is not base64")
 	}
-
-	switch key := v.cosign.(type) {
-	case *ecdsa.PublicKey:
-		hashed := sha256.Sum256(signed)
-		if !ecdsa.VerifyASN1(key, hashed[:], decoded) {
-			return v.refuse(signedName, "the ECDSA signature does not verify against the declared key")
-		}
-		return nil
-	case ed25519.PublicKey:
-		if !ed25519.Verify(key, signed, decoded) {
-			return v.refuse(signedName, "the Ed25519 signature does not verify against the declared key")
-		}
-		return nil
-	default:
-		return internalerror.NewPreconditionError(Label(v.name)+" declares a "+fmt.Sprintf("%T", v.cosign)+
-			" public key, which this build cannot verify with the standard library — publish an ECDSA P-256"+
-			" (the cosign default) or Ed25519 key", nil)
+	if !v.cosign.verify(signed, decoded) {
+		return v.refuse(signedName, "the "+v.cosign.algorithm+" signature does not verify against the declared key")
 	}
+	return nil
 }
 
 func (v verifier) verifyMinisign(signedName string, signed, signature []byte) error {

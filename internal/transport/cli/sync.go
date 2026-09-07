@@ -49,10 +49,8 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 	return cmd
 }
 
-// Instances fail independently, so a round with a failed instance still
-// committed everything the others produced. The exit status is non-zero anyway:
-// a workspace that could not read a source is not up to date, and a script has
-// to be able to tell.
+// A round with a failed instance still committed everything the others
+// produced; the exit status is non-zero anyway so a script can tell.
 func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	for _, failure := range failures {
 		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, internalerror.MessageOf(failure.Err))
@@ -60,10 +58,10 @@ func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	printfln(out, "the remaining sources are committed; `lore status` for counts and cursor ages")
 
 	return internalerror.NewInternalError(plural(len(failures), "source", "sources")+
-		" did not finish this round", errors.Join(errs(failures)...))
+		" did not finish this round", errors.Join(failureErrors(failures)...))
 }
 
-func errs(failures []services.InstanceFailure) []error {
+func failureErrors(failures []services.InstanceFailure) []error {
 	out := make([]error, len(failures))
 	for i, failure := range failures {
 		out[i] = failure.Err

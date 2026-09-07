@@ -378,26 +378,11 @@ func TestInstallLocalCoordinateIsNeverLocked(t *testing.T) {
 func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 	t.Parallel()
 
-	archive := plugindisttest.Archive(t, "acme-crm", []byte(stubBinary))
-	served := archive
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/lore/acme-crm/v2.0.1.tar.gz" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write(served)
-	}))
-	t.Cleanup(server.Close)
+	served := serveArtifact(t, "acme-crm", "/lore/acme-crm/v2.0.1.tar.gz",
+		plugindisttest.Archive(t, "acme-crm", []byte(stubBinary)))
 
-	coord, err := Resolve(".", config.PluginDecl{Name: "acme-crm", From: server.URL + "/lore/acme-crm/v2.0.1.tar.gz"})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-
-	store := NewStore(t.TempDir())
-	installer := newInstaller(store, server.Client(), DefaultAPIBase())
 	lock := &Lock{}
-	result, err := installer.Install(context.Background(), Request{Coordinate: coord}, lock)
+	result, err := served.install(t, lock, "")
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -408,8 +393,8 @@ func TestInstallURLCoordinatePinsTheFirstFetch(t *testing.T) {
 		t.Fatalf("version = %q, want v2.0.1 from the URL", result.Version)
 	}
 
-	served = plugindisttest.Archive(t, "acme-crm", []byte("evil\n"))
-	if _, err := installer.Install(context.Background(), Request{Coordinate: coord}, lock); err == nil {
+	served.publish(plugindisttest.Archive(t, "acme-crm", []byte("evil\n")))
+	if _, err := served.install(t, lock, ""); err == nil {
 		t.Fatal("re-installing changed bytes over a pin succeeded, want a refusal")
 	} else if !strings.Contains(err.Error(), "digest mismatch") {
 		t.Fatalf("error %q does not report a digest mismatch", err)
@@ -467,6 +452,80 @@ func TestUnpackTakesTheBinaryFromUnderADirectoryPrefix(t *testing.T) {
 	}
 	if string(body) != stubBinary {
 		t.Fatalf("body = %q, want the nested binary", body)
+	}
+}
+
+// The fallback takes a binary the publisher named something else, and stops at
+// one: an archive that smuggles a second executable is refused rather than
+// resolved into whichever of the two the reader did not mean.
+func TestUnpackFallsBackToTheArchivesOnlyExecutable(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	platform := scene.store.platform
+	const renamed = "linear-cli"
+
+	name, body, err := unpack(scene.coord, platform, scene.asset, plugindisttest.TarGz(t,
+		plugindisttest.TarEntry{Name: "LICENSE", Mode: 0o644, Body: []byte("MIT")},
+		plugindisttest.TarEntry{Name: renamed, Mode: 0o755, Body: []byte(stubBinary)},
+	))
+	if err != nil {
+		t.Fatalf("unpack an archive whose binary is named otherwise: %v", err)
+	}
+	if name != renamed {
+		t.Fatalf("binary = %q, want the one executable %q", name, renamed)
+	}
+	if string(body) != stubBinary {
+		t.Fatalf("body = %q, want the renamed binary", body)
+	}
+
+	_, _, err = unpack(scene.coord, platform, scene.asset, plugindisttest.TarGz(t,
+		plugindisttest.TarEntry{Name: renamed, Mode: 0o755, Body: []byte(stubBinary)},
+		plugindisttest.TarEntry{Name: "postinstall.sh", Mode: 0o755, Body: []byte("evil\n")},
+	))
+	if err == nil {
+		t.Fatal("unpacking an archive holding two executables succeeded, want a refusal")
+	}
+	for _, want := range []string{"holds no plugin binary", renamed, "postinstall.sh"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// Private distribution often serves the binary itself, so an artifact that is
+// not an archive is the binary rather than a failed unpack.
+func TestInstallOfABareBinaryURLTakesTheArtifactAsTheBinary(t *testing.T) {
+	t.Parallel()
+
+	served := serveArtifact(t, "acme-crm", "/lore/acme-crm/v2.0.1", []byte(stubBinary))
+	result, err := served.install(t, &Lock{}, "")
+	if err != nil {
+		t.Fatalf("install a bare binary: %v", err)
+	}
+	if want := served.coord.binaryName(hostPlatform()); filepath.Base(result.Binary) != want {
+		t.Fatalf("binary = %q, want it cached as %q", result.Binary, want)
+	}
+	if got := readFile(t, result.Binary); got != stubBinary {
+		t.Fatalf("binary = %q, want the served bytes", got)
+	}
+}
+
+// .tgz is the other name the goreleaser convention publishes a tarball under.
+func TestInstallOfATgzURLUnpacksTheArchive(t *testing.T) {
+	t.Parallel()
+
+	served := serveArtifact(t, "acme-crm", "/lore/acme-crm/v2.0.1.tgz",
+		plugindisttest.Archive(t, "acme-crm", []byte(stubBinary)))
+	result, err := served.install(t, &Lock{}, "")
+	if err != nil {
+		t.Fatalf("install a .tgz artifact: %v", err)
+	}
+	if result.Version != "v2.0.1" {
+		t.Fatalf("version = %q, want v2.0.1 with the suffix taken off", result.Version)
+	}
+	if got := readFile(t, result.Binary); got != stubBinary {
+		t.Fatalf("binary = %q, want the archived binary rather than the archive", got)
 	}
 }
 
