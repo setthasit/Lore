@@ -351,6 +351,14 @@ A third-party distribution is the same file with one more argument:
 os.Exit(app.Run(append(plugins.Official(), acmecrm.Plugin(), myjira.Plugin())...))
 ```
 
+Registration order carries one further decision: `lore init` scaffolds a fresh
+workspace from the first registered plugin of each kind that serves the role it
+needs, so the order the composition root passes is where a distribution states
+its preference. GitHub leads the sources because a public repository is a source
+a new user already has rather than one they must stand up first, and OpenAI
+leads the providers because its embedding models imply their own vector width — an
+operator can start without knowing what `dimensions` means.
+
 Compiled plugins and external plugins ([09](09-plugin-protocol.md)) both end up
 as `lore.Connector` / `lore.Provider` / `lore.CodeRepo` values in the registry.
 The services layer never learns which mode a plugin came from.

@@ -225,6 +225,20 @@ A relative `pubkey:` resolves against the directory `lore.yaml` sits in, like a
 local `from:`, so the key a workspace declares is the same key whichever
 directory `lore` was started from.
 
+Which tool signed the release is read from the key file's own shape, so a
+workspace never declares it twice. Both formats are recognised because both are
+verifiable with the standard library alone:
+
+| Format | Public key | Signature |
+|---|---|---|
+| cosign | a PEM public key — ECDSA on P-256 (the cosign default), P-384 or P-521, or Ed25519 | base64 in a `<file>.sig` sibling, as `cosign sign-blob --key` produces and goreleaser publishes |
+| minisign | the 42-byte `Ed` key line | a `<file>.minisig` sibling, Ed25519 over the file's own bytes |
+
+Minisign's prehashed `ED` variant hashes with BLAKE2b, which the standard
+library does not offer, so such a signature is refused by name rather than
+skipped: a signature layer that silently does nothing is worse than none,
+because the user believes it is there.
+
 The two layers defend different things and neither substitutes for the other:
 
 | Layer | Defends against | Status |

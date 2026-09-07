@@ -307,6 +307,13 @@ only what its manifest declared. The host resolves the env var names given in
 operator's variable naming. A plugin MUST NOT read `os.Getenv` or any
 equivalent; needing an undeclared value means it is misconfigured.
 
+The discipline is enforced rather than requested: the host starts the child
+with an empty environment instead of an inherited one, so one plugin cannot
+read another's credentials even if it looks. On Windows the child additionally
+receives the few variables the loader and runtime need to find the system and a
+temporary directory — none of which can carry a credential — because a process
+started without them fails in ways that look like plugin bugs.
+
 The transport changes no residual risk: a source plugin holds a source token,
 so "read-only" is a promise the host cannot enforce for a subprocess — trust
 controls are in [10](10-plugin-distribution.md).
