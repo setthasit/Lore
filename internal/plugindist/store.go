@@ -15,12 +15,15 @@ import (
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/fsx"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const RootEnv = "LORE_HOME"
 
 const (
 	recordFileName = ".install.json"
+
+	manifestFileName = ".manifest.json"
 
 	pluginsDirName = "plugins"
 )
@@ -196,38 +199,50 @@ func (s *Store) write(
 	binaryName string,
 	body []byte,
 	artifactDigest string,
-) (path, digest string, err error) {
+) (path string, record installRecord, err error) {
 	if !isCacheEntryName(binaryName) {
-		return "", "", internalerror.NewPreconditionError(Label(coord.Name)+": the artifact names its binary "+
-			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
-			" must be a single name that does not start with a dot", nil)
+		return "", installRecord{}, internalerror.NewPreconditionError(Label(coord.Name)+": the artifact names"+
+			" its binary "+binaryName+", which is not a usable file name: a binary is one file in the plugin"+
+			" cache, so it must be a single name that does not start with a dot", nil)
 	}
 
 	dir, err := s.Dir(coord.Name, coord.Version)
 	if err != nil {
-		return "", "", err
+		return "", installRecord{}, err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", "", internalerror.NewInternalError("cannot create the plugin cache at "+dir, err)
+		return "", installRecord{}, internalerror.NewInternalError("cannot create the plugin cache at "+dir, err)
 	}
 
 	path = filepath.Join(dir, binaryName)
 	if err := fsx.WriteAtomic(path, body, 0o755); err != nil {
-		return "", "", internalerror.NewInternalError("cannot write "+path, err)
+		return "", installRecord{}, internalerror.NewInternalError("cannot write "+path, err)
 	}
-
-	digest = digestOf(body)
-	record := installRecord{
+	return path, installRecord{
 		Binary:         binaryName,
-		BinaryDigest:   digest,
+		BinaryDigest:   digestOf(body),
 		ArtifactDigest: artifactDigest,
 		From:           coord.SafeFrom(),
+	}, nil
+}
+
+func (s *Store) recordInstall(coord Coordinate, record installRecord, manifest lore.Manifest) error {
+	dir, err := s.Dir(coord.Name, coord.Version)
+	if err != nil {
+		return err
 	}
+
+	path := filepath.Join(dir, manifestFileName)
+	if err := writeJSON(path, manifest); err != nil {
+		return internalerror.NewInternalError("cannot write "+path, err)
+	}
+
+	record.Manifest = manifestFileName
 	if err := writeInstallRecord(dir, record); err != nil {
-		_ = os.RemoveAll(dir)
-		return "", "", internalerror.NewInternalError("cannot record the provenance of "+path, err)
+		return internalerror.NewInternalError("cannot record the provenance of "+
+			filepath.Join(dir, record.Binary), err)
 	}
-	return path, digest, nil
+	return nil
 }
 
 type installRecord struct {
@@ -235,14 +250,19 @@ type installRecord struct {
 	BinaryDigest   string `json:"binary_digest"`
 	ArtifactDigest string `json:"artifact_digest"`
 	From           string `json:"from"`
+	Manifest       string `json:"manifest,omitempty"`
 }
 
 func writeInstallRecord(dir string, record installRecord) error {
-	body, err := json.MarshalIndent(record, "", "  ")
+	return writeJSON(filepath.Join(dir, recordFileName), record)
+}
+
+func writeJSON(path string, value any) error {
+	body, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fsx.WriteAtomic(filepath.Join(dir, recordFileName), append(body, '\n'), 0o644)
+	return fsx.WriteAtomic(path, append(body, '\n'), 0o644)
 }
 
 func readInstallRecord(dir string) (installRecord, error) {

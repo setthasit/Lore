@@ -3,21 +3,71 @@ package cli
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
+	"github.com/setthasit/Lore/sdk"
 )
 
-// pluginStub answers nothing on the plugin protocol: install checks bytes, certification is what refuses it.
-const pluginStub = "#!/bin/sh\necho lore-linear\n"
+var scriptedFixtureDir string
+
+var scriptedFixture = sync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "cli-scripted-fixture")
+	if err != nil {
+		return "", err
+	}
+	scriptedFixtureDir = dir
+
+	binary := filepath.Join(dir, "scripted")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	source := filepath.Join("..", "..", "plugexec", "testdata", "scripted")
+	if out, err := exec.Command("go", "build", "-o", binary, source).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build the scripted plugin: %w\n%s", err, out)
+	}
+	return binary, nil
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = os.RemoveAll(scriptedFixtureDir)
+	os.Exit(code)
+}
+
+// The scripted plugin answers the handshake from the script publishPlugin plants beside it.
+func pluginStub(t *testing.T) string {
+	t.Helper()
+
+	built, err := scriptedFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(built)
+	if err != nil {
+		t.Fatalf("read the scripted plugin: %v", err)
+	}
+	return string(body)
+}
+
+const pluginScript = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"linear","kind":"source",` +
+	`"api_version":1,"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
+	`"repo_remotes":false},"fields":[],"secrets":[]}}
+
+shutdown emit {"v":1,"id":"$ID","ok":true}
+`
 
 func pythonPlugin(t *testing.T) string {
 	t.Helper()
@@ -66,6 +116,53 @@ func publishPlugin(t *testing.T, fake *plugindisttest.GitHub, tag, body string) 
 	fake.Publish(tag, map[string][]byte{
 		fake.AssetName(tag): plugindisttest.Archive(t, pluginBinaryName(), []byte(body)),
 	})
+
+	dir := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", tag)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("make room for the plugin script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(pluginScript), 0o600); err != nil {
+		t.Fatalf("write the plugin script: %v", err)
+	}
+}
+
+func breakPluginScript(t *testing.T, tag string) {
+	t.Helper()
+
+	script := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", tag, "script.txt")
+	if err := os.WriteFile(script, []byte("manifest exit 1\n"), 0o600); err != nil {
+		t.Fatalf("rewrite the plugin script: %v", err)
+	}
+}
+
+func capturedManifest(t *testing.T, dir string) lore.Manifest {
+	t.Helper()
+
+	var record struct {
+		Manifest string `json:"manifest"`
+	}
+	if err := json.Unmarshal([]byte(readConfigFile(t, filepath.Join(dir, ".install.json"))), &record); err != nil {
+		t.Fatalf("decode the install record: %v", err)
+	}
+	if record.Manifest == "" {
+		t.Fatal("the install record names no manifest file")
+	}
+
+	var manifest lore.Manifest
+	if err := json.Unmarshal([]byte(readConfigFile(t, filepath.Join(dir, record.Manifest))), &manifest); err != nil {
+		t.Fatalf("decode the captured manifest: %v", err)
+	}
+	return manifest
+}
+
+func reportedManifest(t *testing.T, binary string) lore.Manifest {
+	t.Helper()
+
+	manifest, err := declaredManifest(binary)
+	if err != nil {
+		t.Fatalf("handshake the installed binary: %v", err)
+	}
+	return manifest
 }
 
 func publishedDigest(fake *plugindisttest.GitHub, tag string) string {
@@ -119,7 +216,7 @@ func countRequests(t *testing.T) *countingTransport {
 
 func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	res := run(t, nil, "plugin", "install", "--config", path)
@@ -152,12 +249,18 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	if config := readConfigFile(t, path); config != declaredConfig("github.com/jdoe/lore-linear@v0.3.1") {
 		t.Fatalf("install rewrote a pinned configuration:\n%s", config)
 	}
+
+	dir := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1")
+	stored, reported := capturedManifest(t, dir), reportedManifest(t, filepath.Join(dir, pluginBinaryName()))
+	if !reflect.DeepEqual(stored, reported) {
+		t.Fatalf("captured manifest = %+v, want what the binary reports: %+v", stored, reported)
+	}
 }
 
 func TestPluginInstallLatestWritesTheVersionBack(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
-	publishPlugin(t, fake, "v0.4.0", pluginStub+"# v0.4.0\n")
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n")
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	res := run(t, nil, "plugin", "install", "linear@latest", "--config", path)
@@ -192,14 +295,14 @@ func TestPluginInstallRefusesAFloatingConfiguration(t *testing.T) {
 
 func TestPluginInstallLatestRefusesAnOriginOnlyTheLockDisagreesWith(t *testing.T) {
 	locked := newFakeReleases(t)
-	publishPlugin(t, locked, "v0.3.1", pluginStub)
+	publishPlugin(t, locked, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
 	drifted := plugindisttest.NewGitHub(t, "acme", "lore-linear")
-	publishPlugin(t, drifted, "v0.3.1", pluginStub+"# acme\n")
+	publishPlugin(t, drifted, "v0.3.1", pluginStub(t)+"# acme\n")
 	trustFakeReleases(t, drifted.Certificate())
 	t.Setenv(plugindist.APIBaseEnv, drifted.URL)
 	if err := os.WriteFile(path, []byte(declaredConfig("github.com/acme/lore-linear@v0.3.1")), 0o600); err != nil {
@@ -242,7 +345,7 @@ func TestPluginInstallLatestRefusesAnOriginOnlyTheLockDisagreesWith(t *testing.T
 
 func TestPluginInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	declared := declaredConfig("github.com/jdoe/lore-linear@v9.9.9")
 	path := writeConfigFile(t, declared)
 
@@ -291,7 +394,7 @@ func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
 
 func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, "workspace: myproject\n")
 
 	res := run(t, nil, "plugin", "install", "github.com/jdoe/lore-linear@v0.3.1", "--config", path)
@@ -357,14 +460,38 @@ func TestPluginVerifyReportsTheDigestAndCertifiesTheBinary(t *testing.T) {
 	}
 }
 
-func TestPluginVerifyRefusesABinaryThatIsNotAPlugin(t *testing.T) {
+func TestPluginInstallRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", "#!/bin/sh\necho lore-linear\n")
+	declared := declaredConfig("github.com/jdoe/lore-linear@v0.3.1")
+	path := writeConfigFile(t, declared)
+
+	res := run(t, nil, "plugin", "install", "--config", path)
+	if res.exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d; stdout = %q", res.exitCode, exitPrecondition, res.stdout)
+	}
+	if !strings.Contains(res.stderr, "plugins[linear]") ||
+		!strings.Contains(res.stderr, "does not answer the plugin protocol") {
+		t.Fatalf("stderr %q does not refuse the plugin by name", res.stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), plugindist.LockFileName)); !os.IsNotExist(err) {
+		t.Errorf("a refused install left a lockfile: %v", err)
+	}
+	if got := readConfigFile(t, path); got != declared {
+		t.Errorf("configuration = %q, want it unchanged at %q", got, declared)
+	}
+}
+
+func TestPluginVerifyReportsTheDigestWhenCertificationRefuses(t *testing.T) {
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
+	breakPluginScript(t, "v0.3.1")
 
 	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
 	if res.exitCode == exitOK {
@@ -377,7 +504,7 @@ func TestPluginVerifyRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 
 func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -397,13 +524,13 @@ func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 
 func TestPluginUpdateRewritesTheLockedDigest(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	publishPlugin(t, fake, "v0.4.0", pluginStub+"# v0.4.0\n")
+	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n")
 
 	res := run(t, nil, "plugin", "update", "linear", "--config", path)
 	if res.exitCode != exitOK {
@@ -424,7 +551,7 @@ func TestPluginUpdateRewritesTheLockedDigest(t *testing.T) {
 
 func TestPluginRemoveDropsTheDeclarationLockAndCache(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {

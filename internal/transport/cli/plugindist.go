@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugexec"
 	"github.com/setthasit/Lore/internal/plugindist"
@@ -71,7 +72,7 @@ func newPluginVerifyCommand(configPath *string, reg *registry.Registry) *cobra.C
 }
 
 func runPluginInstall(cmd *cobra.Command, args []string, configPath string) error {
-	workspace, err := plugindist.Open(configPath)
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
 	if err != nil {
 		return err
 	}
@@ -93,7 +94,7 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 }
 
 func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
-	workspace, err := plugindist.Open(configPath)
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
 	if err != nil {
 		return err
 	}
@@ -144,6 +145,14 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 		return err
 	}
 	return renderCertification(out, name, certification)
+}
+
+func declaredManifest(binary string) (lore.Manifest, error) {
+	plugin, err := plugexec.Open(binary, lore.Host{Log: di.DiagnosticLogger()})
+	if err != nil {
+		return lore.Manifest{}, err
+	}
+	return plugin.Manifest(), nil
 }
 
 func renderInstall(out io.Writer, result plugindist.Result) {

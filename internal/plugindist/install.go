@@ -3,26 +3,37 @@ package plugindist
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // downloadTimeout bounds a whole artifact fetch, not one read: a stalled supply chain must fail, not hang.
 const downloadTimeout = 5 * time.Minute
 
+type Handshake func(binary string) (lore.Manifest, error)
+
 type Installer struct {
-	store   *Store
-	client  *http.Client
-	fetcher fetcher
+	store     *Store
+	client    *http.Client
+	fetcher   fetcher
+	handshake Handshake
 }
 
-func NewInstaller(store *Store) *Installer {
-	return newInstaller(store, &http.Client{Timeout: downloadTimeout}, DefaultAPIBase())
+func NewInstaller(store *Store, handshake Handshake) *Installer {
+	return newInstaller(store, &http.Client{Timeout: downloadTimeout}, DefaultAPIBase(), handshake)
 }
 
-func newInstaller(store *Store, client *http.Client, apiBase string) *Installer {
-	return &Installer{store: store, client: client, fetcher: fetcher{client: client, apiBase: apiBase}}
+func newInstaller(store *Store, client *http.Client, apiBase string, handshake Handshake) *Installer {
+	return &Installer{
+		store:     store,
+		client:    client,
+		fetcher:   fetcher{client: client, apiBase: apiBase},
+		handshake: handshake,
+	}
 }
 
 type Request struct {
@@ -127,17 +138,35 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	path, binaryDigest, err := ins.store.write(coord, binaryName, body, digest)
+	path, record, err := ins.store.write(coord, binaryName, body, digest)
 	if err != nil {
 		return Result{}, err
 	}
-	result.Binary, result.BinaryDigest = path, binaryDigest
+	result.Binary, result.BinaryDigest = path, record.BinaryDigest
+
+	if err := ins.captureManifest(coord, record, path); err != nil {
+		_ = os.RemoveAll(filepath.Dir(path))
+		return Result{}, err
+	}
 
 	if !pinned {
 		lock.Set(coord.Name, coord.Version, from, platform, LockArtifact{URL: lockedURL, Digest: digest})
 		result.Pinned = true
 	}
 	return result, nil
+}
+
+func (ins *Installer) captureManifest(coord Coordinate, record installRecord, binary string) error {
+	if ins.handshake == nil {
+		return internalerror.NewInternalError(Label(coord.Name)+" reached install with no manifest handshake", nil)
+	}
+
+	manifest, err := ins.handshake(binary)
+	if err != nil {
+		return internalerror.NewPreconditionError(Label(coord.Name)+" does not answer the plugin protocol at "+
+			binary+": "+internalerror.MessageOf(err), err)
+	}
+	return ins.store.recordInstall(coord, record, manifest)
 }
 
 func updateRemedy(name string) string {

@@ -75,7 +75,7 @@ func TestRenderPluginsOutput(t *testing.T) {
 
 func TestPluginListReportsATamperedCacheAsTampered(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1")+
 		"  - name: crm\n    from: github.com/acme/lore-crm@v2.0.1\n")
 

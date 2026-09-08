@@ -318,7 +318,7 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	dir := filepath.Dir(result.Binary)
 
 	for _, binaryName := range []string{recordFileName, `..\..\evil.exe`, "sub/evil", ".."} {
-		path, digest, err := scene.store.write(scene.coord, binaryName, []byte("evil\n"), "sha256:aaaa")
+		path, record, err := scene.store.write(scene.coord, binaryName, []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("writing a binary named %q succeeded, want a refusal", binaryName)
 		} else if !internalerror.IsPrecondition(err) {
@@ -326,8 +326,8 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "plugins[linear]") {
 			t.Errorf("error %q does not name the plugin", err)
 		}
-		if path != "" || digest != "" {
-			t.Errorf("name %q reported path %q and digest %q", binaryName, path, digest)
+		if path != "" || record != (installRecord{}) {
+			t.Errorf("name %q reported path %q and record %+v", binaryName, path, record)
 		}
 	}
 
@@ -414,14 +414,14 @@ func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
 		}
 
 		coord := Coordinate{Name: "linear", Origin: OriginGitHub, From: "github.com/jdoe/lore-linear", Version: version}
-		path, digest, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
+		path, record, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("write accepted the version %q", version)
 		} else if !internalerror.IsBadRequest(err) {
 			t.Errorf("write of version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
 		}
-		if path != "" || digest != "" {
-			t.Errorf("write of version %q reported path %q and digest %q", version, path, digest)
+		if path != "" || record != (installRecord{}) {
+			t.Errorf("write of version %q reported path %q and record %+v", version, path, record)
 		}
 	}
 
@@ -447,14 +447,14 @@ func TestStoreRefusesANameThatIsNotOneDirectoryName(t *testing.T) {
 		}
 
 		coord := Coordinate{Name: name, Origin: OriginGitHub, From: "github.com/jdoe/lore-linear", Version: "v0.3.1"}
-		path, digest, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
+		path, record, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("write accepted the name %q", name)
 		} else if !internalerror.IsBadRequest(err) {
 			t.Errorf("write of name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
 		}
-		if path != "" || digest != "" {
-			t.Errorf("write of name %q reported path %q and digest %q", name, path, digest)
+		if path != "" || record != (installRecord{}) {
+			t.Errorf("write of name %q reported path %q and record %+v", name, path, record)
 		}
 	}
 

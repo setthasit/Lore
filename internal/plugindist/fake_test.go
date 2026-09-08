@@ -12,10 +12,15 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func fakeInstaller(fake *plugindisttest.GitHub, store *Store) *Installer {
-	return newInstaller(store, fake.Client(), fake.URL)
+	return newInstaller(store, fake.Client(), fake.URL, stubHandshake)
+}
+
+func stubHandshake(binary string) (lore.Manifest, error) {
+	return lore.Manifest{Name: filepath.Base(binary), Kind: lore.KindSource, APIVersion: 1}, nil
 }
 
 func readFile(t *testing.T, path string) string {
@@ -71,7 +76,8 @@ func serveArtifact(t *testing.T, name, urlPath string, body []byte) *urlArtifact
 	}
 	store := NewStore(t.TempDir())
 
-	served.coord, served.installer = coord, newInstaller(store, server.Client(), DefaultAPIBase())
+	served.coord = coord
+	served.installer = newInstaller(store, server.Client(), DefaultAPIBase(), stubHandshake)
 	return served
 }
 

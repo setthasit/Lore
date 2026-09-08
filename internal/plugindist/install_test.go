@@ -2,6 +2,8 @@ package plugindist
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const stubBinary = "#!/bin/sh\necho lore-linear\n"
@@ -190,6 +193,7 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 		BinaryDigest:   result.BinaryDigest,
 		ArtifactDigest: result.LockedDigest,
 		From:           scene.coord.From,
+		Manifest:       manifestFileName,
 	}
 	if record != wantRecord {
 		t.Fatalf("install record = %+v, want %+v", record, wantRecord)
@@ -391,6 +395,53 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	}
 }
 
+func TestInstallRefusedByTheHandshakeLeavesNothingCached(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, first := scene.installed(t)
+	refuse := func(string) (lore.Manifest, error) {
+		return lore.Manifest{}, errors.New("wrote a line on stdout that is not a protocol frame")
+	}
+
+	next, err := scene.coord.AtVersion("v0.4.0")
+	if err != nil {
+		t.Fatalf("move the coordinate: %v", err)
+	}
+	scene.fake.Publish("v0.4.0", map[string][]byte{
+		next.assetName(scene.store.platform): plugindisttest.Archive(t,
+			next.binaryName(scene.store.platform), []byte("#!/bin/sh\necho v0.4.0\n")),
+	})
+	scene.installer.handshake = refuse
+	if _, err := scene.installer.Install(context.Background(), Request{Coordinate: next, Rewrite: true}, lock); err == nil {
+		t.Fatal("a version whose binary fails the handshake installed")
+	}
+	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.4.0")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the refused version left a directory behind: %v", err)
+	}
+	if report, err := scene.store.Locate(scene.coord, lock); err != nil || report.Binary != first.Binary {
+		t.Fatalf("the sibling version stopped launching: %+v, %v", report, err)
+	}
+
+	scene.fake.Publish("v0.3.1", map[string][]byte{
+		scene.asset: plugindisttest.Archive(t, scene.coord.binaryName(scene.store.platform), []byte("#!/bin/sh\necho again\n")),
+	})
+	if _, err := scene.install(t, lock, true); err == nil {
+		t.Fatal("a rewrite whose binary fails the handshake installed")
+	}
+	if _, err := scene.store.Locate(scene.coord, lock); err == nil || !strings.Contains(err.Error(), "is not installed") {
+		t.Fatalf("locate after a refused rewrite = %v, want it reported as not installed", err)
+	}
+
+	scene.installer.handshake = stubHandshake
+	if _, err := scene.install(t, lock, true); err != nil {
+		t.Fatalf("re-installing a binary that answers the handshake: %v", err)
+	}
+	if _, err := scene.store.Locate(scene.coord, lock); err != nil {
+		t.Fatalf("locate after a healed install: %v", err)
+	}
+}
+
 func TestUpdateDropsTheSiblingPlatformsPinOnlyWhenTheOriginMoves(t *testing.T) {
 	t.Parallel()
 
@@ -576,7 +627,7 @@ func TestInstallLocalCoordinateIsNeverLocked(t *testing.T) {
 	}
 
 	lock := &Lock{}
-	installer := NewInstaller(NewStore(t.TempDir()))
+	installer := NewInstaller(NewStore(t.TempDir()), stubHandshake)
 	result, err := installer.Install(context.Background(), Request{Coordinate: coord}, lock)
 	if err != nil {
 		t.Fatalf("install a local plugin: %v", err)

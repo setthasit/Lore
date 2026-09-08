@@ -23,10 +23,17 @@ type Workspace struct {
 	config    *config.Config
 	lock      *Lock
 	store     *Store
+	handshake Handshake
 	installer *Installer
 }
 
-func Open(configPath string) (*Workspace, error) {
+type Option func(*Workspace)
+
+func WithHandshake(handshake Handshake) Option {
+	return func(w *Workspace) { w.handshake = handshake }
+}
+
+func Open(configPath string, opts ...Option) (*Workspace, error) {
 	content, parsed, err := config.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -41,10 +48,16 @@ func Open(configPath string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{
+
+	w := &Workspace{
 		path: configPath, dir: dir, content: content,
-		config: parsed, lock: lock, store: store, installer: NewInstaller(store),
-	}, nil
+		config: parsed, lock: lock, store: store,
+	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	w.installer = NewInstaller(store, w.handshake)
+	return w, nil
 }
 
 func (w *Workspace) Plugins() []config.PluginDecl {
