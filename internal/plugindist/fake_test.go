@@ -19,8 +19,32 @@ func fakeInstaller(fake *plugindisttest.GitHub, store *Store) *Installer {
 	return newInstaller(store, fake.Client(), fake.URL, stubHandshake)
 }
 
+func publishRelease(t *testing.T, workspace *Workspace, coord Coordinate) {
+	t.Helper()
+
+	platform := workspace.store.platform
+	fake := plugindisttest.NewGitHub(t, coord.Owner, coord.Repo)
+	fake.Publish(coord.Version, map[string][]byte{
+		coord.assetName(platform): plugindisttest.Archive(t, coord.binaryName(platform), []byte(stubBinary)),
+	})
+	workspace.installer = fakeInstaller(fake, workspace.store)
+}
+
 func stubHandshake(binary string) (lore.Manifest, error) {
 	return lore.Manifest{Name: filepath.Base(binary), Kind: lore.KindSource, APIVersion: 1}, nil
+}
+
+type countingHandshake struct {
+	manifest lore.Manifest
+
+	calls  int
+	binary string
+}
+
+func (h *countingHandshake) answer(binary string) (lore.Manifest, error) {
+	h.calls++
+	h.binary = binary
+	return h.manifest, nil
 }
 
 func readFile(t *testing.T, path string) string {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 )
 
 func scratchWorkspace(t *testing.T, body string) string {
@@ -41,12 +40,7 @@ func TestInstallDeclaresAnUndeclaredCoordinateAtTheResolvedVersion(t *testing.T)
 	if err != nil {
 		t.Fatalf("resolve the published coordinate: %v", err)
 	}
-	platform := workspace.store.platform
-	fake := plugindisttest.NewGitHub(t, "jdoe", "lore-linear")
-	fake.Publish("v0.4.2", map[string][]byte{
-		coord.assetName(platform): plugindisttest.Archive(t, coord.binaryName(platform), []byte(stubBinary)),
-	})
-	workspace.installer = fakeInstaller(fake, workspace.store)
+	publishRelease(t, workspace, coord)
 
 	results, err := workspace.Install(context.Background(), []string{"github.com/jdoe/lore-linear@latest"}, func() {})
 	if err != nil {

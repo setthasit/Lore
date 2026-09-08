@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -439,6 +440,34 @@ func TestInstallRefusedByTheHandshakeLeavesNothingCached(t *testing.T) {
 	}
 	if _, err := scene.store.Locate(scene.coord, lock); err != nil {
 		t.Fatalf("locate after a healed install: %v", err)
+	}
+}
+
+func TestInstallStoresTheManifestTheBinaryReported(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	handshake := &countingHandshake{manifest: lore.Manifest{
+		Name: "linear", Kind: lore.KindSource, APIVersion: lore.APIVersion,
+		Summary: "issues and comments from Linear", Capabilities: lore.Capabilities{Embed: true},
+	}}
+	scene.installer.handshake = handshake.answer
+
+	_, result := scene.installed(t)
+
+	if handshake.calls != 1 {
+		t.Errorf("install handshaked %d times, want exactly one", handshake.calls)
+	}
+	if handshake.binary != result.Binary {
+		t.Errorf("install handshaked %q, want the binary it wrote %q", handshake.binary, result.Binary)
+	}
+
+	var stored lore.Manifest
+	if err := readJSON(filepath.Join(filepath.Dir(result.Binary), manifestFileName), &stored); err != nil {
+		t.Fatalf("read the manifest stored beside the binary: %v", err)
+	}
+	if !reflect.DeepEqual(stored, handshake.manifest) {
+		t.Fatalf("stored manifest = %+v, want the one the binary reported %+v", stored, handshake.manifest)
 	}
 }
 
