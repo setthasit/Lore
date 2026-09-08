@@ -266,10 +266,13 @@ func TestInstallRefusesAVersionTheLockDisagreesWith(t *testing.T) {
 	}
 	scene.coord = moved
 
+	if _, err := scene.installer.Pin(context.Background(), Request{Coordinate: moved}, lock); err != nil {
+		t.Fatalf("pinning a version bump on the locked repository refused: %v", err)
+	}
 	if _, err := scene.install(t, lock, false); err == nil {
 		t.Fatal("installing a version the lock disagrees with succeeded, want a refusal")
 	} else {
-		for _, want := range []string{"is locked at v0.3.1", "lore plugin update linear"} {
+		for _, want := range []string{"is locked at v0.3.1", "asks for v0.4.0", "lore plugin update linear"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("error %q does not mention %q", err, want)
 			}
@@ -291,20 +294,23 @@ func TestInstallRefusesAnOriginTheLockDisagreesWith(t *testing.T) {
 	}
 	scene.coord = moved
 
-	_, err = scene.install(t, lock, false)
-	if err == nil {
-		t.Fatal("installing an origin the lock disagrees with succeeded, want a refusal")
-	}
-	if !internalerror.IsPrecondition(err) {
-		t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
-	}
-	for _, want := range []string{
-		"is locked to github.com/jdoe/lore-linear@v0.3.1",
-		"not github.com/acme/lore-linear@v0.3.1",
-		"lore plugin update linear",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not mention %q", err, want)
+	_, pinErr := scene.installer.Pin(context.Background(), Request{Coordinate: moved}, lock)
+	_, installErr := scene.install(t, lock, false)
+	for _, err := range []error{pinErr, installErr} {
+		if err == nil {
+			t.Fatal("an origin the lock disagrees with was accepted, want a refusal")
+		}
+		if !internalerror.IsPrecondition(err) {
+			t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
+		}
+		for _, want := range []string{
+			"is locked to github.com/jdoe/lore-linear@v0.3.1",
+			"not github.com/acme/lore-linear@v0.3.1",
+			"lore plugin update linear",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not mention %q", err, want)
+			}
 		}
 	}
 	if after := savedLock(t, lock, dir); after != before {

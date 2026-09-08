@@ -151,15 +151,18 @@ func lockedOriginChanged(lock *Lock, req Request) error {
 	}
 
 	entry, hasEntry := lock.Entry(coord.Name)
-	same := sameFrom(entry.From, coord.From)
-	if coord.Floating() {
-		same = sameRepo(entry.From, coord)
-	}
-	if !hasEntry || same {
+	if !hasEntry || sameOrigin(entry.From, coord) {
 		return nil
 	}
 	return internalerror.NewPreconditionError(Label(coord.Name)+" is locked to "+
 		lockedOrigin(safeFrom(entry.From))+", not "+coord.SafeFrom()+updateRemedy(coord.Name), nil)
+}
+
+func sameOrigin(from string, coord Coordinate) bool {
+	if coord.Origin == OriginGitHub {
+		return sameRepo(from, coord)
+	}
+	return sameFrom(from, coord.From)
 }
 
 func sameRepo(from string, coord Coordinate) bool {
