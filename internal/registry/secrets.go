@@ -39,8 +39,7 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 		// The value is withheld: an operator who pastes a credential here must not see it echoed back.
 		if !envPattern.MatchString(name) {
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must be an environment variable name: upper-case letters, digits and underscores, not starting with a digit",
-				in.Field, s.ConfigField), nil)
+				"%s.with.%s must be an environment variable name: %s", in.Field, s.ConfigField, EnvNameRule), nil)
 		}
 
 		value := os.Getenv(name)

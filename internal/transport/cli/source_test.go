@@ -276,19 +276,19 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			name:    "a non-numeric int",
 			plugin:  "forge",
 			answers: "forge-2\n\nacme/app\n\n\nseven\n",
-			wantErr: `sources[forge-2].with.batch must be a whole number, got "seven"`,
+			wantErr: "sources[forge-2].with.batch must be a whole number",
 		},
 		{
 			name:    "a bool that is neither",
 			plugin:  "forge",
 			answers: "forge-2\n\nacme/app\n\n\n50\nperhaps\n",
-			wantErr: `sources[forge-2].with.archived must be true or false, got "perhaps"`,
+			wantErr: "sources[forge-2].with.archived must be true or false",
 		},
 		{
 			name:    "a duration that does not parse",
 			plugin:  "forge",
 			answers: "forge-2\n\nacme/app\n\nlast tuesday\n",
-			wantErr: `sources[forge-2].with.since must be a duration like 30m or 30d, got "last tuesday"`,
+			wantErr: "sources[forge-2].with.since must be a duration like 30m or 30d",
 		},
 		{
 			name:    "an env var name that is not a variable name",

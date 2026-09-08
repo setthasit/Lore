@@ -172,13 +172,12 @@ func renderInstalls(out io.Writer, configPath string, results []plugindist.Resul
 }
 
 func installedManifest(workspace *plugindist.Workspace, configPath, name string) (lore.Manifest, error) {
-	for _, decl := range workspace.Plugins() {
-		if decl.Name == name {
-			return workspace.Manifest(decl)
-		}
+	decl, declared := workspace.Declaration(name)
+	if !declared {
+		return lore.Manifest{}, internalerror.NewPreconditionError(
+			plugindist.Label(name)+" is installed, but "+configPath+" no longer declares it", nil)
 	}
-	return lore.Manifest{}, internalerror.NewPreconditionError(
-		plugindist.Label(name)+" is installed, but "+configPath+" no longer declares it", nil)
+	return workspace.Manifest(decl)
 }
 
 func renderInstall(out io.Writer, result plugindist.Result) {

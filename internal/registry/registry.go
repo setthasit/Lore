@@ -27,11 +27,17 @@ var keyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
 var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
+const EnvNameRule = "upper-case letters, digits and underscores, not starting with a digit"
+
 // An instance id becomes the DocID prefix, so a colon would make document identities unparseable.
 var instancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 func ValidPluginName(name string) bool {
 	return namePattern.MatchString(name)
+}
+
+func ValidEnvName(name string) bool {
+	return envPattern.MatchString(name)
 }
 
 type Entry struct {
@@ -78,12 +84,26 @@ func (r *Registry) RegisterExternal(origin, name string, p lore.Plugin) error {
 			"plugin %q was registered externally with origin %q; an external registration must carry its own origin and cannot claim compiled-in trust",
 			name, origin), nil)
 	}
-	if got := p.Manifest().Name; got != name {
-		return internalerror.NewBadRequestError(fmt.Sprintf(
-			"plugins[%s] is a binary whose manifest calls itself %q; rename the declaration or the plugin",
-			name, got), nil)
+	if err := checkDeclaredName(name, p.Manifest()); err != nil {
+		return err
 	}
 	return r.register(origin, p)
+}
+
+func CheckExternal(declared string, m lore.Manifest) error {
+	if err := checkDeclaredName(declared, m); err != nil {
+		return err
+	}
+	return CheckManifest(m)
+}
+
+func checkDeclaredName(declared string, m lore.Manifest) error {
+	if m.Name == declared {
+		return nil
+	}
+	return internalerror.NewBadRequestError(fmt.Sprintf(
+		"plugins[%s] is a binary whose manifest calls itself %q; rename the declaration or the plugin",
+		declared, m.Name), nil)
 }
 
 func (r *Registry) register(origin string, plugins ...lore.Plugin) error {
@@ -152,6 +172,13 @@ func (r *Registry) Starter(kind lore.Kind, want lore.Capability) (lore.Manifest,
 }
 
 func validateManifest(m lore.Manifest, p lore.Plugin) error {
+	if err := CheckManifest(m); err != nil {
+		return err
+	}
+	return validateImplements(m, p)
+}
+
+func CheckManifest(m lore.Manifest) error {
 	if m.Name == "" {
 		return internalerror.NewInternalError("a plugin declares no name, so nothing in a configuration could refer to it", nil)
 	}
@@ -167,7 +194,7 @@ func validateManifest(m lore.Manifest, p lore.Plugin) error {
 		return internalerror.NewInternalError(fmt.Sprintf(
 			"plugin %q declares no summary; `lore plugin list` has nothing to show for it", m.Name), nil)
 	}
-	if err := validateKind(m, p); err != nil {
+	if err := validateKind(m); err != nil {
 		return err
 	}
 	if err := validateCapabilities(m); err != nil {
@@ -176,19 +203,25 @@ func validateManifest(m lore.Manifest, p lore.Plugin) error {
 	return validateFields(m)
 }
 
-func validateKind(m lore.Manifest, p lore.Plugin) error {
+func validateKind(m lore.Manifest) error {
+	switch m.Kind {
+	case lore.KindSource, lore.KindProvider, lore.KindCode:
+		return nil
+	}
+	return internalerror.NewInternalError(fmt.Sprintf(
+		"plugin %q declares kind %q; the kinds are %s", m.Name, m.Kind,
+		joinKinds(lore.KindSource, lore.KindProvider, lore.KindCode)), nil)
+}
+
+func validateImplements(m lore.Manifest, p lore.Plugin) error {
 	var ok bool
 	switch m.Kind {
 	case lore.KindSource:
 		_, ok = p.(lore.SourcePlugin)
 	case lore.KindProvider:
 		_, ok = p.(lore.ProviderPlugin)
-	case lore.KindCode:
-		_, ok = p.(lore.CodePlugin)
 	default:
-		return internalerror.NewInternalError(fmt.Sprintf(
-			"plugin %q declares kind %q; the kinds are %s", m.Name, m.Kind,
-			joinKinds(lore.KindSource, lore.KindProvider, lore.KindCode)), nil)
+		_, ok = p.(lore.CodePlugin)
 	}
 	if !ok {
 		return internalerror.NewInternalError(fmt.Sprintf(

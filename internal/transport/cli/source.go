@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,13 +12,15 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 )
 
-var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 const sourcesKey = "sources"
+
+const externalPromptNotice = "the questions below are the ones this plugin's own manifest declares;" +
+	" answer each one with configuration, and a secret with the NAME of an environment variable, never the value"
 
 func newSourceCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	source := &cobra.Command{
@@ -57,7 +58,7 @@ func sourceArgument(reg *registry.Registry) []string {
 }
 
 func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *registry.Registry) error {
-	manifest, err := sourceToAdd(args, reg)
+	manifest, compiledIn, err := sourceToAdd(args, configPath, reg)
 	if err != nil {
 		return err
 	}
@@ -67,10 +68,14 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
+	out := cmd.OutOrStdout()
+	if !compiledIn {
+		printfln(out, "%s", externalPromptNotice)
+	}
 	draft, err := promptSource(&prompter{
 		in:  bufio.NewReader(cmd.InOrStdin()),
-		out: cmd.OutOrStdout(),
-	}, manifest, current)
+		out: out,
+	}, manifest, compiledIn, current)
 	if err != nil {
 		return err
 	}
@@ -88,7 +93,6 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 		return err
 	}
 
-	out := cmd.OutOrStdout()
 	printfln(out, "added sources[%s] to %s", draft.ident(), configPath)
 	if len(draft.variables) > 0 {
 		printfln(out, "next: export %s, then run `lore sync`", strings.Join(draft.variables, " and "))
@@ -98,22 +102,64 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	return nil
 }
 
-func sourceToAdd(args []string, reg *registry.Registry) (lore.Manifest, error) {
-	names := reg.Names(lore.KindSource)
-	registered := "the source plugins this build registers are " + strings.Join(names, ", ")
-	if len(names) == 0 {
-		registered = "this build registers no source plugin at all"
+func sourceToAdd(args []string, configPath string, reg *registry.Registry) (lore.Manifest, bool, error) {
+	if len(args) > 0 {
+		if manifest, known := reg.Manifest(args[0]); known && manifest.Kind == lore.KindSource {
+			return manifest, true, nil
+		}
 	}
 
-	if len(args) == 0 {
-		return lore.Manifest{}, internalerror.NewBadRequestError("name the source plugin to add: "+registered, nil)
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+	if err != nil {
+		return lore.Manifest{}, false, err
 	}
-	manifest, known := reg.Manifest(args[0])
-	if !known || manifest.Kind != lore.KindSource {
-		return lore.Manifest{}, internalerror.NewBadRequestError("unknown source plugin "+args[0]+
-			" — "+registered+"; run `lore plugin list` to see them all", nil)
+	if len(args) > 0 {
+		manifest, err := installedSource(workspace, args[0])
+		if err != nil || manifest.Kind == lore.KindSource {
+			return manifest, false, err
+		}
+	}
+	return lore.Manifest{}, false, noSourceToAdd(args, addableSources(workspace, reg))
+}
+
+func installedSource(workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
+	decl, declared := workspace.Declaration(name)
+	if !declared {
+		return lore.Manifest{}, nil
+	}
+	manifest, err := workspace.Manifest(decl)
+	if err != nil {
+		return lore.Manifest{}, err
+	}
+	if err := registry.CheckExternal(decl.Name, manifest); err != nil {
+		return lore.Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func addableSources(workspace *plugindist.Workspace, reg *registry.Registry) string {
+	names := reg.Names(lore.KindSource)
+	for _, decl := range workspace.Plugins() {
+		if _, compiled := reg.Manifest(decl.Name); compiled {
+			continue
+		}
+		if manifest, err := installedSource(workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
+			names = append(names, decl.Name)
+		}
+	}
+
+	if len(names) == 0 {
+		return "no source plugin is registered or installed at all"
+	}
+	return "the source plugins you can add are " + strings.Join(names, ", ")
+}
+
+func noSourceToAdd(args []string, addable string) error {
+	if len(args) == 0 {
+		return internalerror.NewBadRequestError("name the source plugin to add: "+addable, nil)
+	}
+	return internalerror.NewBadRequestError("unknown source plugin "+args[0]+
+		" — "+addable+"; run `lore plugin list` to see them all", nil)
 }
 
 type sourceDraft struct {
@@ -130,7 +176,7 @@ func (d sourceDraft) ident() string {
 	return d.use
 }
 
-func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceDraft, error) {
+func promptSource(p *prompter, m lore.Manifest, compiledIn bool, current *config.Config) (sourceDraft, error) {
 	draft := sourceDraft{use: m.Name}
 
 	id, err := promptInstanceID(p, m.Name, current.Sources)
@@ -141,7 +187,7 @@ func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceD
 
 	field := "sources[" + draft.ident() + "].with."
 	for _, secret := range m.Secrets {
-		name, err := p.envName(field+secret.ConfigField, secretHolds(m, secret), secret.DefaultEnv)
+		name, err := p.envName(field+secret.ConfigField, secretHolds(m, secret), defaultEnv(secret, compiledIn))
 		if err != nil {
 			return draft, err
 		}
@@ -158,6 +204,14 @@ func promptSource(p *prompter, m lore.Manifest, current *config.Config) (sourceD
 		}
 	}
 	return draft, nil
+}
+
+// A sync round ignores an external plugin's own default, so offering it here would write a variable nothing reads.
+func defaultEnv(secret lore.Secret, compiledIn bool) string {
+	if !compiledIn {
+		return ""
+	}
+	return secret.DefaultEnv
 }
 
 func promptInstanceID(p *prompter, plugin string, existing []config.Instance) (string, error) {
@@ -222,8 +276,7 @@ func parseField(field string, declared lore.Field, answer string) (any, error) {
 	case lore.FieldInt:
 		number, err := strconv.Atoi(answer)
 		if err != nil {
-			return nil, internalerror.NewBadRequestError(field+" must be a whole number, got "+
-				strconv.Quote(answer), nil)
+			return nil, internalerror.NewBadRequestError(field+" must be a whole number", nil)
 		}
 		return number, nil
 	case lore.FieldBool:
@@ -233,12 +286,10 @@ func parseField(field string, declared lore.Field, answer string) (any, error) {
 		case "false":
 			return false, nil
 		}
-		return nil, internalerror.NewBadRequestError(field+" must be true or false, got "+
-			strconv.Quote(answer), nil)
+		return nil, internalerror.NewBadRequestError(field+" must be true or false", nil)
 	case lore.FieldDuration:
 		if _, err := lore.ParseDuration(answer); err != nil {
-			return nil, internalerror.NewBadRequestError(field+" must be a duration like 30m or 30d, got "+
-				strconv.Quote(answer), nil)
+			return nil, internalerror.NewBadRequestError(field+" must be a duration like 30m or 30d", nil)
 		}
 		// Written back as text: the whole-day "30d" form survives no time.Duration round trip.
 		return answer, nil
@@ -274,13 +325,13 @@ func (p *prompter) envName(field, holds, fallback string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !envNamePattern.MatchString(answer) {
+	if !registry.ValidEnvName(answer) {
 		// The answer is never echoed: a user who pastes a token here must not see it logged back.
 		refusal := field + " must be an environment variable name"
 		if fallback != "" {
 			refusal += " like " + fallback
 		}
-		return "", internalerror.NewBadRequestError(refusal, nil)
+		return "", internalerror.NewBadRequestError(refusal+": "+registry.EnvNameRule, nil)
 	}
 	return answer, nil
 }

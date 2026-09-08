@@ -305,7 +305,7 @@ func (w *Workspace) requests(args []string) ([]Request, string, error) {
 		from = target + "@" + version
 	}
 
-	decl, declared := w.declaration(name)
+	decl, declared := w.Declaration(name)
 	coord, err := ResolveInstall(w.dir, config.PluginDecl{Name: name, From: from, PubKey: decl.PubKey})
 	if err != nil {
 		return nil, "", err
@@ -346,7 +346,7 @@ func pinEdits(requests []Request, pinned []Coordinate, declare string) []configE
 	return edits
 }
 
-func (w *Workspace) declaration(name string) (config.PluginDecl, bool) {
+func (w *Workspace) Declaration(name string) (config.PluginDecl, bool) {
 	for _, decl := range w.config.Plugins {
 		if decl.Name == name {
 			return decl, true
@@ -356,7 +356,7 @@ func (w *Workspace) declaration(name string) (config.PluginDecl, bool) {
 }
 
 func (w *Workspace) mustDeclare(name string) (config.PluginDecl, error) {
-	decl, found := w.declaration(name)
+	decl, found := w.Declaration(name)
 	if found {
 		return decl, nil
 	}
