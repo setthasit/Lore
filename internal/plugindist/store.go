@@ -15,7 +15,6 @@ import (
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/fsx"
-	"github.com/setthasit/Lore/internal/urlx"
 )
 
 const RootEnv = "LORE_HOME"
@@ -152,13 +151,12 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 		return Report{}, cachedBinaryMismatch(name, s.platform, record.BinaryDigest, actual)
 	}
 
-	pinnedFrom := safeFrom(entry.From)
-	if record.From != pinnedFrom || record.ArtifactDigest != artifact.Digest {
-		return Report{}, provenanceMismatch(name, s.platform, record, pinnedFrom, artifact.Digest)
+	if !sameFrom(record.From, entry.From) || record.ArtifactDigest != artifact.Digest {
+		return Report{}, provenanceMismatch(name, s.platform, record, safeFrom(entry.From), artifact.Digest)
 	}
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
-	report.LockedURL, report.LockedDigest = artifact.URL, artifact.Digest
+	report.LockedURL, report.LockedDigest = safeTarget(artifact.URL), artifact.Digest
 	return report, nil
 }
 
@@ -167,13 +165,23 @@ func isCacheEntryName(name string) bool {
 		filepath.Base(name) == name
 }
 
-// lore.lock records from: verbatim, credential and all; an install record already holds it redacted.
-func safeFrom(from string) string {
-	parsed, err := url.Parse(from)
-	if err != nil || parsed.Scheme == "" {
-		return from
+func redactFrom(from string) (safe string, readable bool) {
+	if !strings.Contains(from, "://") {
+		return from, true
 	}
-	return urlx.Redact(parsed)
+	_, err := url.Parse(from)
+	return safeTarget(from), err == nil
+}
+
+func safeFrom(from string) string {
+	safe, _ := redactFrom(from)
+	return safe
+}
+
+func sameFrom(a, b string) bool {
+	left, leftReadable := redactFrom(a)
+	right, rightReadable := redactFrom(b)
+	return leftReadable && rightReadable && left == right
 }
 
 func (s *Store) write(

@@ -219,12 +219,8 @@ func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	}, true)
 }
 
-// Only a URL coordinate's from: can carry a credential; the other shapes have nowhere to put one.
 func (c Coordinate) SafeFrom() string {
-	if c.Origin != OriginURL {
-		return c.From
-	}
-	return safeTarget(c.From)
+	return safeFrom(c.From)
 }
 
 func (c Coordinate) Floating() bool {

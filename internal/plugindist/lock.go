@@ -126,7 +126,7 @@ func (l *Lock) Set(name, version, from string, p Platform, artifact LockArtifact
 	}
 
 	entry := l.Plugins[name]
-	if entry.Version != version || safeFrom(entry.From) != safeFrom(from) {
+	if entry.Version != version || !sameFrom(entry.From, from) {
 		entry.Artifacts = nil
 	}
 	if entry.Artifacts == nil {

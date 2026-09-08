@@ -85,9 +85,9 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
 				" but "+from+" asks for "+coord.Version+updateRemedy(coord.Name), nil)
 		}
-		if pinnedFrom := safeFrom(entry.From); pinnedFrom != from {
+		if !sameFrom(entry.From, coord.From) {
 			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked to "+
-				lockedOrigin(pinnedFrom)+", not "+from+updateRemedy(coord.Name), nil)
+				lockedOrigin(safeFrom(entry.From))+", not "+from+updateRemedy(coord.Name), nil)
 		}
 	}
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
@@ -97,11 +97,12 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	result.LockedURL = artifactURL
+	lockedURL := safeTarget(artifactURL)
+	result.LockedURL = lockedURL
 
 	artifact, err := BoundedGet(ctx, ins.client, artifactURL, maxArtifactBytes)
 	if err != nil {
-		return Result{}, resolveFailure(coord, "downloading "+safeTarget(artifactURL), err)
+		return Result{}, resolveFailure(coord, "downloading "+lockedURL, err)
 	}
 
 	fileName := artifactFileName(artifactURL)
@@ -132,7 +133,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	result.Binary, result.BinaryDigest = path, binaryDigest
 
 	if !pinned {
-		lock.Set(coord.Name, coord.Version, coord.From, platform, LockArtifact{URL: artifactURL, Digest: digest})
+		lock.Set(coord.Name, coord.Version, from, platform, LockArtifact{URL: lockedURL, Digest: digest})
 		result.Pinned = true
 	}
 	return result, nil
