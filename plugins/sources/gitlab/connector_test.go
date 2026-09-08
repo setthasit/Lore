@@ -902,22 +902,28 @@ func TestANonDefaultInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 }
 
 func TestMatchesRemote(t *testing.T) {
-	c := NewConnector("gitlab-acme", fakeToken,
-		[]string{projectPath, "acme/platform/infra"}, "")
+	c := NewConnector("gitlab-acme", fakeToken, []string{
+		"https://gitlab.acme.dev/acme/legacy",
+		projectPath,
+		"acme/platform/infra",
+		"/acme/tooling/",
+	}, "")
 
 	tests := []struct {
 		name   string
 		remote string
 		want   bool
 	}{
-		{name: "a configured project", remote: "gitlab:acme/widgets", want: true},
+		{name: "a configured project listed after an unparseable entry", remote: "gitlab:acme/widgets", want: true},
 		{name: "a configured nested subgroup path", remote: "gitlab:acme/platform/infra", want: true},
+		{name: "a configured project wrapped in separators", remote: "gitlab:acme/tooling", want: true},
 		{name: "a case-differing path is a different project", remote: "gitlab:Acme/Widgets"},
 		{name: "another forge's remote", remote: "github:acme/widgets"},
 		{name: "a remote naming no forge", remote: "acme/widgets"},
 		{name: "a path that is not namespaced", remote: "gitlab:widgets"},
 		{name: "a path with an empty segment", remote: "gitlab:acme//widgets"},
 		{name: "an unconfigured project", remote: "gitlab:acme/other"},
+		{name: "a project named only by an unparseable configured URL", remote: "gitlab:acme/legacy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

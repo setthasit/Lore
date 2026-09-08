@@ -860,14 +860,17 @@ func TestInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 }
 
 func TestMatchesRemote(t *testing.T) {
-	c := NewConnector("github-acme", fakeToken, []string{fixtureRepo}, "")
+	c := NewConnector("github-acme", fakeToken,
+		[]string{"/acme/app/", fixtureRepo, "acme/widgets/extra"}, "")
 	tests := []struct {
 		remote string
 		want   bool
 		why    string
 	}{
-		{remote: "github:acme/widgets", want: true, why: "the configured repo"},
+		{remote: "github:acme/widgets", want: true, why: "a configured repo listed after an unparseable entry"},
 		{remote: "github:ACME/Widgets", want: true, why: "GitHub names are case-insensitive"},
+		{remote: "github:acme/app", why: "a separator-wrapped configured repo is not trimmed, so it names nothing"},
+		{remote: "github:acme/widgets/extra", why: "an unparseable configured repo matches nothing"},
 		{remote: "gitlab:acme/widgets", why: "another forge"},
 		{remote: "github:widgets", why: "not a namespaced path"},
 		{remote: "github:acme//widgets", why: "empty path segment"},
