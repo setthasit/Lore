@@ -126,8 +126,7 @@ func (l *Lock) Set(name, version, from string, p Platform, artifact LockArtifact
 	}
 
 	entry := l.Plugins[name]
-	// A version change invalidates every platform's digest: they are digests of that version's artifacts only.
-	if entry.Version != version {
+	if entry.Version != version || safeFrom(entry.From) != safeFrom(from) {
 		entry.Artifacts = nil
 	}
 	if entry.Artifacts == nil {
