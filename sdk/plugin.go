@@ -148,6 +148,7 @@ type Field struct {
 type Secret struct {
 	Key         string `json:"key"`
 	ConfigField string `json:"config_field"`
+	Optional    bool   `json:"optional,omitempty"`
 	DefaultEnv  string `json:"default_env,omitempty"`
 	Doc         string `json:"doc,omitempty"`
 }
