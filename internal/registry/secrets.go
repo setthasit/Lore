@@ -48,6 +48,11 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 			if s.Optional && !operatorNamed {
 				continue
 			}
+			if in.ImpliedByRole {
+				return nil, internalerror.NewBadRequestError(fmt.Sprintf(
+					"%s names plugin %q, whose default variable %s is not set; export it, or %s",
+					in.Field, in.Use, name, declareProvider(in, s)), nil)
+			}
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
 				"%s.with.%s names %s, but that environment variable is not set", in.Field, s.ConfigField, name), nil)
 		}
@@ -57,12 +62,27 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 }
 
 func unnamedSecret(in Instance, s lore.Secret, compiledIn bool) error {
-	message := fmt.Sprintf(
-		"%s.with.%s must name the environment variable holding the %s", in.Field, s.ConfigField, secretDoc(s))
+	var message string
+	if in.ImpliedByRole {
+		message = fmt.Sprintf(
+			"%s names plugin %q, which no providers: entry declares, so nothing can name the environment variable holding the %s",
+			in.Field, in.Use, secretDoc(s))
+	} else {
+		message = fmt.Sprintf(
+			"%s.with.%s must name the environment variable holding the %s", in.Field, s.ConfigField, secretDoc(s))
+	}
 	if !compiledIn && s.DefaultEnv != "" {
 		message += "; a plugin installed from outside the binary cannot choose it"
 	}
+	if in.ImpliedByRole {
+		message += "; " + declareProvider(in, s)
+	}
 	return internalerror.NewBadRequestError(message, nil)
+}
+
+func declareProvider(in Instance, s lore.Secret) string {
+	return fmt.Sprintf("declare `providers: [{id: %s, use: %s, with: {%s: YOUR_VARIABLE}}]` and keep %s naming %q",
+		in.Use, in.Use, s.ConfigField, in.Field, in.Use)
 }
 
 func secretDoc(s lore.Secret) string {
