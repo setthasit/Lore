@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,6 +150,13 @@ func TestPluginRequiresDeclaredDimensions(t *testing.T) {
 
 // Authorization must be absent, not blank: servers read "Bearer " as malformed, not anonymous.
 func TestPluginBuildsWithoutAnAPIKey(t *testing.T) {
+	optional := slices.ContainsFunc(Plugin().Manifest().Secrets, func(s lore.Secret) bool {
+		return s.Key == "api_key" && s.Optional
+	})
+	if !optional {
+		t.Fatal("the manifest does not mark api_key optional, so a host refuses an instance that names no variable")
+	}
+
 	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		if got := r.Header.Values("Authorization"); len(got) != 0 {
 			t.Errorf("Authorization = %q, want the header absent", got)
@@ -183,6 +191,9 @@ func TestPluginBuildsWithoutAnAPIKey(t *testing.T) {
 	}
 	if _, err := embedder.(lore.Embedder).Embed(context.Background(), []string{"local text"}); err != nil {
 		t.Fatalf("Embed: %v", err)
+	}
+	if got := ts.Attempts(); got != 2 {
+		t.Fatalf("server saw %d requests, want the chat and the embeddings call", got)
 	}
 }
 
