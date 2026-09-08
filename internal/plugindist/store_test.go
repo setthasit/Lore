@@ -38,6 +38,123 @@ func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
 	}
 }
 
+func TestPluginBinaryRefusesACacheWrittenByAnotherInstall(t *testing.T) {
+	t.Parallel()
+
+	const otherOrigin = "github.com/evil/lore-linear@v0.3.1"
+	otherArtifact := "sha256:" + strings.Repeat("b", 64)
+
+	cases := []struct {
+		name    string
+		rewrite func(installRecord) installRecord
+		want    string
+	}{
+		{
+			name:    "the cache holds the install of another origin",
+			rewrite: func(record installRecord) installRecord { record.From = otherOrigin; return record },
+			want:    otherOrigin,
+		},
+		{
+			name: "the cache holds the install of another artifact",
+			rewrite: func(record installRecord) installRecord {
+				record.ArtifactDigest = otherArtifact
+				return record
+			},
+			want: otherArtifact,
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			scene := newScene(t)
+			lock, result := scene.installed(t)
+			dir := filepath.Dir(result.Binary)
+
+			record, err := readInstallRecord(dir)
+			if err != nil {
+				t.Fatalf("read the install record: %v", err)
+			}
+			if err := writeInstallRecord(dir, test.rewrite(record)); err != nil {
+				t.Fatalf("rewrite the install record: %v", err)
+			}
+
+			path, err := scene.store.Binary(scene.coord, lock)
+			if err == nil {
+				t.Fatalf("a cache written by another install resolved to %q, want a refusal", path)
+			}
+			if path != "" {
+				t.Errorf("the refusal still reported the binary %q", path)
+			}
+			if !internalerror.IsPrecondition(err) {
+				t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+			}
+			wanted := []string{
+				"plugins[linear]", "digest mismatch", scene.coord.From, digestOf(scene.archive),
+				"lore plugin install linear", test.want,
+			}
+			for _, want := range wanted {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPluginBinaryRefusesACachedInstallWithNoRecordedProvenance(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, result := scene.installed(t)
+
+	if err := os.Remove(filepath.Join(filepath.Dir(result.Binary), recordFileName)); err != nil {
+		t.Fatalf("delete the install record: %v", err)
+	}
+
+	path, err := scene.store.Binary(scene.coord, lock)
+	if err == nil {
+		t.Fatalf("a cache with no recorded provenance resolved to %q, want a refusal", path)
+	}
+	if path != "" {
+		t.Errorf("the refusal still reported the binary %q", path)
+	}
+	if !internalerror.IsPrecondition(err) {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+
+	message := internalerror.MessageOf(err)
+	for _, want := range []string{"plugins[linear]", "cannot read the recorded provenance", "lore plugin install linear"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("message %q does not mention %q", message, want)
+		}
+	}
+	if strings.Contains(message, "is not installed") {
+		t.Errorf("message %q reports a cached install as absent", message)
+	}
+}
+
+func TestPluginBinaryLaunchesTheRecordedBinaryBesideAnUnrelatedFile(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, result := scene.installed(t)
+
+	beside := filepath.Join(filepath.Dir(result.Binary), "LICENSE")
+	if err := os.WriteFile(beside, []byte("MIT\n"), 0o600); err != nil {
+		t.Fatalf("seed a file beside the cached binary: %v", err)
+	}
+
+	path, err := scene.store.Binary(scene.coord, lock)
+	if err != nil {
+		t.Fatalf("launching the recorded binary beside %s: %v", beside, err)
+	}
+	if path != result.Binary {
+		t.Fatalf("binary = %q, want the recorded %q", path, result.Binary)
+	}
+}
+
 func TestPluginBinaryWithoutALockEntryFailsAtStartup(t *testing.T) {
 	t.Parallel()
 

