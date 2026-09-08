@@ -40,7 +40,12 @@ type Result struct {
 }
 
 // Pin resolves @latest to the concrete version the caller then writes back into lore.yaml.
-func (ins *Installer) Pin(ctx context.Context, coord Coordinate) (Coordinate, error) {
+func (ins *Installer) Pin(ctx context.Context, req Request, lock *Lock) (Coordinate, error) {
+	if err := lockedOriginChanged(lock, req); err != nil {
+		return Coordinate{}, err
+	}
+
+	coord := req.Coordinate
 	if !coord.Floating() {
 		return coord, nil
 	}
@@ -79,16 +84,12 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 
 	platform := ins.store.platform
 	from := coord.SafeFrom()
-	entry, hasEntry := lock.Entry(coord.Name)
-	if hasEntry && !req.Rewrite {
-		if entry.Version != coord.Version {
-			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
-				" but "+from+" asks for "+coord.Version+updateRemedy(coord.Name), nil)
-		}
-		if !sameFrom(entry.From, coord.From) {
-			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked to "+
-				lockedOrigin(safeFrom(entry.From))+", not "+from+updateRemedy(coord.Name), nil)
-		}
+	if entry, hasEntry := lock.Entry(coord.Name); hasEntry && !req.Rewrite && entry.Version != coord.Version {
+		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
+			" but "+from+" asks for "+coord.Version+updateRemedy(coord.Name), nil)
+	}
+	if err := lockedOriginChanged(lock, req); err != nil {
+		return Result{}, err
 	}
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
 	pinned := hasLocked && !req.Rewrite
@@ -141,6 +142,29 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 
 func updateRemedy(name string) string {
 	return " — run: lore plugin update " + name
+}
+
+func lockedOriginChanged(lock *Lock, req Request) error {
+	coord := req.Coordinate
+	if req.Rewrite || coord.Origin == OriginLocal {
+		return nil
+	}
+
+	entry, hasEntry := lock.Entry(coord.Name)
+	same := sameFrom(entry.From, coord.From)
+	if coord.Floating() {
+		same = sameRepo(entry.From, coord)
+	}
+	if !hasEntry || same {
+		return nil
+	}
+	return internalerror.NewPreconditionError(Label(coord.Name)+" is locked to "+
+		lockedOrigin(safeFrom(entry.From))+", not "+coord.SafeFrom()+updateRemedy(coord.Name), nil)
+}
+
+func sameRepo(from string, coord Coordinate) bool {
+	owner, repo, isGitHub := gitHubRepo(from)
+	return isGitHub && owner == coord.Owner && repo == coord.Repo
 }
 
 func (ins *Installer) locate(

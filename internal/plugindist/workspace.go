@@ -102,7 +102,7 @@ func (w *Workspace) Install(ctx context.Context, args []string, notice func()) (
 
 	pinned := make([]Coordinate, 0, len(requests))
 	for _, request := range requests {
-		coord, err := w.installer.Pin(ctx, request.Coordinate)
+		coord, err := w.installer.Pin(ctx, request, w.lock)
 		if err != nil {
 			return nil, err
 		}
@@ -152,11 +152,13 @@ func (w *Workspace) Update(ctx context.Context, argument string, notice func()) 
 	}
 	notice()
 
-	pinned, err := w.installer.Pin(ctx, coord)
+	req := Request{Coordinate: coord, Rewrite: true}
+	pinned, err := w.installer.Pin(ctx, req, w.lock)
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := w.installer.Install(ctx, Request{Coordinate: pinned, Rewrite: true}, w.lock)
+	req.Coordinate = pinned
+	result, err := w.installer.Install(ctx, req, w.lock)
 	if err != nil {
 		return Result{}, err
 	}
@@ -285,8 +287,7 @@ func matchesDeclaration(declared string, coord Coordinate, version string) bool 
 	if version != LatestVersion {
 		return declared == coord.From
 	}
-	owner, repo, isGitHub := gitHubRepo(declared)
-	return isGitHub && owner == coord.Owner && repo == coord.Repo
+	return sameRepo(declared, coord)
 }
 
 func neverPinned(name string) error {

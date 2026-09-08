@@ -505,7 +505,7 @@ func TestInstallPinsLatestToAConcreteVersion(t *testing.T) {
 		t.Fatal("@latest does not report itself floating")
 	}
 
-	pinned, err := scene.installer.Pin(context.Background(), floating)
+	pinned, err := scene.installer.Pin(context.Background(), Request{Coordinate: floating}, &Lock{})
 	if err != nil {
 		t.Fatalf("pin: %v", err)
 	}
