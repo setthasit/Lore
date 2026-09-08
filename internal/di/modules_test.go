@@ -474,6 +474,35 @@ llm:
 	}
 }
 
+func TestWorkspaceRefusesADeclaredProviderInstanceNoRoleBinds(t *testing.T) {
+	const (
+		instance     = "spare-abacus"
+		unregistered = "quipu"
+	)
+
+	path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+providers:
+  - id: `+instance+`
+    use: `+unregistered+`
+`+embedderBlock)
+
+	var embedder lore.Embedder
+	err := startWorkspace(t, path, &embedder)
+	if err == nil {
+		t.Fatal("resolve workspace: want an error rather than a workspace that leaves an unbound declaration unchecked")
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s (error %v)", got, internalerror.KindBadRequest, err)
+	}
+	for _, want := range []string{"providers[" + instance + "]", unregistered} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 func TestWorkspaceResolvesWithNoProvidersReposOrLLM(t *testing.T) {
 	t.Setenv(sourceTokenEnv, "token-example")
 
