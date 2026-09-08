@@ -93,7 +93,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
 	pinned := hasLocked && !req.Rewrite
 
-	artifactURL, checksumsURL, err := ins.locate(ctx, coord, platform, locked, pinned, coord.PubKey != "")
+	artifactURL, checksumsURL, err := ins.locate(ctx, coord, platform, pinned, coord.PubKey != "")
 	if err != nil {
 		return Result{}, err
 	}
@@ -150,25 +150,15 @@ func lockedOrigin(from string) string {
 	return from
 }
 
-// A pinned platform is fetched from the URL the lockfile recorded; the release is not consulted at all.
 func (ins *Installer) locate(
 	ctx context.Context,
 	coord Coordinate,
 	platform Platform,
-	locked LockArtifact,
 	pinned, signatureDeclared bool,
 ) (artifactURL, checksumsURL string, err error) {
 	if coord.Origin == OriginURL {
 		// A URL coordinate publishes no checksums file by convention; its signature covers the artifact itself.
 		return coord.URL, "", nil
-	}
-
-	if pinned {
-		artifactURL = locked.URL
-		if signatureDeclared {
-			checksumsURL = siblingURL(artifactURL, ChecksumsAsset)
-		}
-		return artifactURL, checksumsURL, nil
 	}
 
 	published, err := ins.fetcher.releaseByTag(ctx, coord)
@@ -178,7 +168,9 @@ func (ins *Installer) locate(
 	if artifactURL, err = published.asset(coord, coord.assetName(platform)); err != nil {
 		return "", "", err
 	}
-	// An unpinned install has nothing to compare a download against, so the checksums file is mandatory here.
+	if pinned && !signatureDeclared {
+		return artifactURL, "", nil
+	}
 	if checksumsURL, err = published.asset(coord, ChecksumsAsset); err != nil {
 		return "", "", err
 	}

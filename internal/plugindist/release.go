@@ -193,14 +193,6 @@ func checksumFor(body []byte, asset string) (string, bool) {
 	return "", false
 }
 
-func siblingURL(artifact, name string) string {
-	at := strings.LastIndex(artifact, "/")
-	if at < 0 {
-		return artifact + "/" + name
-	}
-	return artifact[:at+1] + name
-}
-
 func artifactFileName(target string) string {
 	parsed, err := url.Parse(target)
 	if err != nil {
