@@ -234,8 +234,15 @@ func sourceInstances(cfg *config.Config) ([]registry.Instance, error) {
 
 type providerInstances []registry.Instance
 
-func newProviderInstances(cfg *config.Config) (providerInstances, error) {
-	return instances(cfg.Providers, "providers")
+func newProviderInstances(cfg *config.Config, reg *registry.Registry) (providerInstances, error) {
+	declared, err := instances(cfg.Providers, "providers")
+	if err != nil {
+		return nil, err
+	}
+	if err := reg.CheckDeclarations(declared, lore.KindProvider); err != nil {
+		return nil, err
+	}
+	return declared, nil
 }
 
 func instances(declared []config.Instance, block string) ([]registry.Instance, error) {

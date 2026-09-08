@@ -18,6 +18,8 @@ type Instance struct {
 
 	With map[string]any
 
+	ImpliedByRole bool
+
 	// Configuration path, quoted verbatim in errors.
 	Field string
 }
@@ -117,7 +119,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 		if _, known := r.entries[b.Provider]; !known {
 			return BuiltProvider{}, r.unresolved(b.Field+".provider", b.Provider, lore.KindProvider, instances)
 		}
-		in = Instance{Use: b.Provider, Field: b.Field + ".provider"}
+		in = Instance{Use: b.Provider, Field: b.Field + ".provider", ImpliedByRole: true}
 	}
 
 	id, plugin, manifest, origin, err := r.resolve(in, lore.KindProvider)
@@ -198,6 +200,20 @@ func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 		out = append(out, Code{Path: clone.Path, Remote: clone.Remote, Repo: repo})
 	}
 	return out, nil
+}
+
+// Secrets stay unresolved here: an instance no role binds must not demand an exported variable.
+func (r *Registry) CheckDeclarations(instances []Instance, kind lore.Kind) error {
+	for _, in := range instances {
+		_, _, manifest, _, err := r.resolve(in, kind)
+		if err != nil {
+			return err
+		}
+		if err := checkKeys(manifest, in); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func findInstance(instances []Instance, id string) (Instance, bool) {
