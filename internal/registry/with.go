@@ -14,12 +14,12 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-func prepare(manifest lore.Manifest, in Instance) ([]byte, map[string]string, error) {
+func prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
 	if err := checkKeys(manifest, in); err != nil {
 		return nil, nil, err
 	}
 
-	secrets, err := resolveSecrets(manifest, in)
+	secrets, err := resolveSecrets(manifest, in, origin)
 	if err != nil {
 		return nil, nil, err
 	}

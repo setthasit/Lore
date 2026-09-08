@@ -59,12 +59,12 @@ func (r *Registry) BuildSources(instances []Instance) ([]lore.Connector, error) 
 }
 
 func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
-	id, plugin, manifest, err := r.resolve(in, lore.KindSource)
+	id, plugin, manifest, origin, err := r.resolve(in, lore.KindSource)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg, secrets, err := prepare(manifest, in)
+	cfg, secrets, err := prepare(manifest, in, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 		in = Instance{Use: b.Provider, Field: b.Field + ".provider"}
 	}
 
-	id, plugin, manifest, err := r.resolve(in, lore.KindProvider)
+	id, plugin, manifest, origin, err := r.resolve(in, lore.KindProvider)
 	if err != nil {
 		return BuiltProvider{}, err
 	}
@@ -129,7 +129,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 			"%s binds provider %q, which does not serve %s; %s", b.Field, id, b.Capability, serves(manifest)), nil)
 	}
 
-	cfg, secrets, err := prepare(manifest, in)
+	cfg, secrets, err := prepare(manifest, in, origin)
 	if err != nil {
 		return BuiltProvider{}, err
 	}
@@ -179,7 +179,7 @@ func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 	out := make([]Code, 0, len(clones))
 	for _, clone := range clones {
 		in := Instance{Use: clone.Use, Field: clone.Field}
-		_, plugin, _, err := r.resolve(in, lore.KindCode)
+		_, plugin, _, _, err := r.resolve(in, lore.KindCode)
 		if err != nil {
 			return nil, err
 		}
@@ -212,23 +212,23 @@ func (in Instance) Ident() string {
 	return in.Use
 }
 
-func (r *Registry) resolve(in Instance, kind lore.Kind) (string, lore.Plugin, lore.Manifest, error) {
+func (r *Registry) resolve(in Instance, kind lore.Kind) (string, lore.Plugin, lore.Manifest, string, error) {
 	id := in.Ident()
 	if !instancePattern.MatchString(id) {
-		return "", nil, lore.Manifest{}, internalerror.NewBadRequestError(fmt.Sprintf(
+		return "", nil, lore.Manifest{}, "", internalerror.NewBadRequestError(fmt.Sprintf(
 			"%s has id %q; an instance id becomes the prefix of every document identity it produces, so it must start with a letter or digit and hold only letters, digits, - and _",
 			in.Field, id), nil)
 	}
 
 	entry, known := r.entries[in.Use]
 	if !known {
-		return "", nil, lore.Manifest{}, r.unresolved(in.Field+".use", in.Use, kind, nil)
+		return "", nil, lore.Manifest{}, "", r.unresolved(in.Field+".use", in.Use, kind, nil)
 	}
 	if entry.Manifest.Kind != kind {
-		return "", nil, lore.Manifest{}, internalerror.NewBadRequestError(fmt.Sprintf(
+		return "", nil, lore.Manifest{}, "", internalerror.NewBadRequestError(fmt.Sprintf(
 			"%s.use names %q, which is a %s plugin, not a %s plugin", in.Field, in.Use, entry.Manifest.Kind, kind), nil)
 	}
-	return id, r.plugins[in.Use], entry.Manifest, nil
+	return id, r.plugins[in.Use], entry.Manifest, entry.Origin, nil
 }
 
 func (r *Registry) unresolved(field, name string, kind lore.Kind, instances []Instance) error {

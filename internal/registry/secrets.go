@@ -8,7 +8,7 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-func resolveSecrets(manifest lore.Manifest, in Instance) (map[string]string, error) {
+func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[string]string, error) {
 	if len(manifest.Secrets) == 0 {
 		return nil, nil
 	}
