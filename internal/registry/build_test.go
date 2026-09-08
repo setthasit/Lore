@@ -334,10 +334,7 @@ func TestCheckURLRefusalDoesNotEchoURLCredentials(t *testing.T) {
 }
 
 func TestPrepareRejectsAnUnsetSecretVariable(t *testing.T) {
-	manifest := sourceManifest("acme")
-	manifest.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "ACME_TOKEN"}}
-
-	r := newRegistry(t, stubSource{manifest: manifest})
+	r := newRegistry(t, tokenSource(nil))
 
 	t.Run("named explicitly", func(t *testing.T) {
 		t.Setenv("LORE_ACME_TOKEN", "")
@@ -410,5 +407,191 @@ func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
 	}
 	if !logged {
 		t.Fatal("the plugin never logged, so nothing proved its logger usable")
+	}
+}
+
+func tokenSource(capture *lore.SourceConfig) stubSource {
+	manifest := sourceManifest("acme")
+	manifest.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "ACME_TOKEN"}}
+	return stubSource{manifest: manifest, build: func(c lore.SourceConfig) (lore.Connector, error) {
+		if capture != nil {
+			*capture = c
+		}
+		return stubConnector{name: c.Instance}, nil
+	}}
+}
+
+func externalRegistry(t *testing.T, plugin lore.Plugin) *Registry {
+	t.Helper()
+
+	r := New(lore.Host{})
+	if err := r.RegisterExternal(OriginExternal("./bin/lore-acme"), plugin.Manifest().Name, plugin); err != nil {
+		t.Fatalf("RegisterExternal: %v", err)
+	}
+	return r
+}
+
+func TestPrepareIgnoresAnExternallyInstalledPluginsSecretDefault(t *testing.T) {
+	t.Setenv("ACME_TOKEN", "t-example")
+
+	r := externalRegistry(t, tokenSource(nil))
+
+	_, err := r.BuildSources([]Instance{{Use: "acme", Field: "sources[acme]"}})
+	if err == nil {
+		t.Fatal("BuildSources: want an error even though the declared variable holds a value")
+	}
+	for _, want := range []string{
+		"sources[acme].with.token_env",
+		"must name the environment variable holding the token",
+		"a plugin installed from outside the binary cannot choose it",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+}
+
+func TestPrepareUsesACompiledInPluginsSecretDefault(t *testing.T) {
+	t.Setenv("ACME_TOKEN", "t-example")
+
+	var got lore.SourceConfig
+	r := newRegistry(t, tokenSource(&got))
+
+	if _, err := r.BuildSources([]Instance{{Use: "acme", Field: "sources[acme]"}}); err != nil {
+		t.Fatalf("BuildSources: %v", err)
+	}
+	if got.Secret("token") != "t-example" {
+		t.Errorf("token = %q, want the value of the manifest's declared variable", got.Secret("token"))
+	}
+}
+
+func keylessProvider(capture *lore.ProviderConfig) stubProvider {
+	manifest := providerManifest("acme", lore.Capabilities{Complete: true})
+	manifest.Secrets = []lore.Secret{{Key: "api_key", ConfigField: "api_key_env", Optional: true}}
+	return stubProvider{manifest: manifest, build: func(c lore.ProviderConfig) (lore.Provider, error) {
+		if capture != nil {
+			*capture = c
+		}
+		return completeOnly{}, nil
+	}}
+}
+
+func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
+	instances := []Instance{{ID: "local", Use: "acme", Field: "providers[local]"}}
+	binding := Binding{
+		Provider:   "local",
+		Model:      "qwen3-8b",
+		Capability: lore.CapabilityComplete,
+		Field:      "llm",
+	}
+
+	t.Run("optional and no variable named", func(t *testing.T) {
+		var got lore.ProviderConfig
+		r := newRegistry(t, keylessProvider(&got))
+
+		built, err := r.BuildProvider(binding, instances)
+		if err != nil {
+			t.Fatalf("BuildProvider: %v", err)
+		}
+		if _, ok := built.Value.(lore.Completer); !ok {
+			t.Fatalf("built %T, want a lore.Completer", built.Value)
+		}
+		if key := got.Secret("api_key"); key != "" {
+			t.Errorf("api_key = %q, want the plugin to receive no value", key)
+		}
+	})
+
+	t.Run("the same manifest without the optional marker", func(t *testing.T) {
+		plugin := keylessProvider(nil)
+		plugin.manifest.Secrets[0].Optional = false
+		r := newRegistry(t, plugin)
+
+		_, err := r.BuildProvider(binding, instances)
+		if err == nil {
+			t.Fatal("BuildProvider: want an error")
+		}
+		for _, want := range []string{
+			"providers[local].with.api_key_env",
+			"must name the environment variable holding the api_key",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+		}
+		if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+			t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+		}
+	})
+}
+
+func TestPrepareRefusalDoesNotEchoACredentialPastedAsAVariableName(t *testing.T) {
+	const pasted = "ghp_9zQ4XmT7pLvB2sNc"
+
+	t.Setenv("ACME_TOKEN", "t-example")
+
+	r := newRegistry(t, tokenSource(nil))
+
+	_, err := r.BuildSources([]Instance{{
+		Use:   "acme",
+		With:  map[string]any{"token_env": pasted},
+		Field: "sources[acme]",
+	}})
+	if err == nil {
+		t.Fatal("BuildSources: want an error")
+	}
+
+	message := internalerror.MessageOf(err)
+	const fragment = 4
+	for i := 0; i+fragment <= len(pasted); i++ {
+		if part := pasted[i : i+fragment]; strings.Contains(message, part) {
+			t.Errorf("refusal %q echoes %q from the pasted value", message, part)
+		}
+	}
+	for _, want := range []string{
+		"sources[acme].with.token_env",
+		"must be an environment variable name",
+		"upper-case letters, digits and underscores, not starting with a digit",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("refusal %q does not state the accepted shape: %q is missing", message, want)
+		}
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+}
+
+func TestRegisterExternalRefusesAnOriginItCannotTrust(t *testing.T) {
+	cases := map[string]string{
+		"no origin at all":            "",
+		"a forged compiled-in origin": OriginBuiltin,
+	}
+
+	for name, origin := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRegistry(t, stubSource{manifest: sourceManifest("acme")})
+
+			err := r.RegisterExternal(origin, "ghost", stubSource{manifest: sourceManifest("ghost")})
+			if err == nil {
+				t.Fatal("RegisterExternal: want an error")
+			}
+			for _, want := range []string{`plugin "ghost"`, "must carry its own origin", "cannot claim compiled-in trust"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindInternal {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindInternal)
+			}
+			if _, ok := r.Manifest("ghost"); ok {
+				t.Error("the refused plugin is resolvable by name")
+			}
+			if entries := r.List(); len(entries) != 1 || entries[0].Manifest.Name != "acme" {
+				t.Errorf("entries = %+v, want only the compiled-in plugin", entries)
+			}
+		})
 	}
 }
