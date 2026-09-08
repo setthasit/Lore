@@ -43,7 +43,11 @@ func newPluginListCommand(configPath *string, reg *registry.Registry) *cobra.Com
 			"between what the configuration asks for and what is on disk is visible.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			renderPlugins(cmd.OutOrStdout(), reg.List(), declaredExternals(*configPath, reg))
+			externals, err := declaredExternals(*configPath, reg)
+			if err != nil {
+				return err
+			}
+			renderPlugins(cmd.OutOrStdout(), reg.List(), externals)
 			return nil
 		},
 	}
@@ -56,10 +60,13 @@ type externalRow struct {
 	state string
 }
 
-func declaredExternals(configPath string, reg *registry.Registry) []externalRow {
+func declaredExternals(configPath string, reg *registry.Registry) ([]externalRow, error) {
 	workspace, err := plugindist.Open(configPath)
-	if err != nil {
-		return nil
+	switch {
+	case internalerror.IsNotFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, err
 	}
 
 	var rows []externalRow
@@ -81,7 +88,7 @@ func declaredExternals(configPath string, reg *registry.Registry) []externalRow 
 		}
 		rows = append(rows, row)
 	}
-	return rows
+	return rows, nil
 }
 
 func renderPlugins(out io.Writer, entries []registry.Entry, externals []externalRow) {
