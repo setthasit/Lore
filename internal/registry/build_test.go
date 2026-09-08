@@ -488,18 +488,25 @@ func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
 		Field:      "llm",
 	}
 
-	t.Run("optional and no variable named", func(t *testing.T) {
-		var got lore.ProviderConfig
-		r := newRegistry(t, keylessProvider(&got))
+	buildKeyless := func(t *testing.T, defaultEnv string) lore.ProviderConfig {
+		t.Helper()
 
-		built, err := r.BuildProvider(binding, instances)
+		var got lore.ProviderConfig
+		plugin := keylessProvider(&got)
+		plugin.manifest.Secrets[0].DefaultEnv = defaultEnv
+
+		built, err := newRegistry(t, plugin).BuildProvider(binding, instances)
 		if err != nil {
 			t.Fatalf("BuildProvider: %v", err)
 		}
 		if _, ok := built.Value.(lore.Completer); !ok {
 			t.Fatalf("built %T, want a lore.Completer", built.Value)
 		}
-		if key := got.Secret("api_key"); key != "" {
+		return got
+	}
+
+	t.Run("optional and no variable named", func(t *testing.T) {
+		if key := buildKeyless(t, "").Secret("api_key"); key != "" {
 			t.Errorf("api_key = %q, want the plugin to receive no value", key)
 		}
 	})
@@ -523,6 +530,24 @@ func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
 		}
 		if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
 			t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+		}
+	})
+
+	const apiKeyEnv = "LORE_ACME_API_KEY"
+
+	t.Run("optional with a manifest default whose variable is unset", func(t *testing.T) {
+		t.Setenv(apiKeyEnv, "")
+
+		if key := buildKeyless(t, apiKeyEnv).Secret("api_key"); key != "" {
+			t.Errorf("api_key = %q, want the plugin to receive no value", key)
+		}
+	})
+
+	t.Run("optional with a manifest default whose variable holds a value", func(t *testing.T) {
+		t.Setenv(apiKeyEnv, "k-example")
+
+		if key := buildKeyless(t, apiKeyEnv).Secret("api_key"); key != "k-example" {
+			t.Errorf("api_key = %q, want the value of the manifest's declared variable", key)
 		}
 	})
 }
