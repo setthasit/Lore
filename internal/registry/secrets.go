@@ -14,8 +14,13 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 	}
 
 	secrets := make(map[string]string, len(manifest.Secrets))
+	compiledIn := origin == OriginBuiltin
 	for _, s := range manifest.Secrets {
-		name := s.DefaultEnv
+		var name string
+		// An external plugin's own default would steer the host onto a variable the operator never granted.
+		if compiledIn {
+			name = s.DefaultEnv
+		}
 		if declared, set := in.With[s.ConfigField]; set {
 			named, ok := declared.(string)
 			if !ok || named == "" {
@@ -25,8 +30,7 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 			name = named
 		}
 		if name == "" {
-			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must name the environment variable holding the %s", in.Field, s.ConfigField, secretDoc(s)), nil)
+			return nil, unnamedSecret(in, s, compiledIn)
 		}
 		if !envPattern.MatchString(name) {
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
@@ -41,6 +45,15 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 		secrets[s.Key] = value
 	}
 	return secrets, nil
+}
+
+func unnamedSecret(in Instance, s lore.Secret, compiledIn bool) error {
+	message := fmt.Sprintf(
+		"%s.with.%s must name the environment variable holding the %s", in.Field, s.ConfigField, secretDoc(s))
+	if !compiledIn && s.DefaultEnv != "" {
+		message += "; a plugin installed from outside the binary cannot choose it"
+	}
+	return internalerror.NewBadRequestError(message, nil)
 }
 
 func secretDoc(s lore.Secret) string {
