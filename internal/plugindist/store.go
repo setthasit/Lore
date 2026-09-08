@@ -7,12 +7,15 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/fsx"
+	"github.com/setthasit/Lore/internal/urlx"
 )
 
 const RootEnv = "LORE_HOME"
@@ -96,7 +99,6 @@ func (s *Store) Binary(coord Coordinate, lock *Lock) (string, error) {
 	return report.Binary, nil
 }
 
-// Locate re-verifies the binary against its recorded digest; a mismatch refuses, and no flag makes it continue.
 func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 	name := coord.Name
 	if err := checkName(name); err != nil {
@@ -125,25 +127,34 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	binary, err := s.binaryIn(dir)
-	if err != nil {
-		return Report{}, err
-	}
-	if binary == "" {
-		return Report{}, notInstalled(name)
-	}
 
 	record, err := readInstallRecord(dir)
 	if err != nil {
-		return Report{}, internalerror.NewInternalError("cannot read the recorded provenance of "+binary, err)
+		if _, statErr := os.Stat(dir); errors.Is(statErr, fs.ErrNotExist) {
+			return Report{}, notInstalled(name)
+		}
+		return Report{}, unreadableProvenance(name, err)
+	}
+	if !isCacheEntryName(record.Binary) {
+		return Report{}, unreadableProvenance(name, errors.New("binary "+strconv.Quote(record.Binary)+
+			" is not one file name"))
 	}
 
+	binary := filepath.Join(dir, record.Binary)
 	actual, err := digestFile(binary)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Report{}, unreadableProvenance(name, err)
+		}
 		return Report{}, err
 	}
 	if record.BinaryDigest != actual {
 		return Report{}, digestMismatch(name, s.platform, record.BinaryDigest, actual)
+	}
+
+	pinnedFrom := safeFrom(entry.From)
+	if record.From != pinnedFrom || record.ArtifactDigest != artifact.Digest {
+		return Report{}, provenanceMismatch(name, s.platform, record, pinnedFrom, artifact.Digest)
 	}
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
@@ -151,36 +162,18 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 	return report, nil
 }
 
-func (s *Store) binaryIn(dir string) (string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil
-		}
-		return "", internalerror.NewInternalError("cannot read the plugin cache at "+dir, err)
-	}
-
-	found := ""
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !isCacheEntryName(name) {
-			continue
-		}
-		if found != "" {
-			return "", internalerror.NewPreconditionError("the plugin cache at "+dir+" holds more than one binary"+
-				" ("+found+" and "+name+"): delete the directory and install again", nil)
-		}
-		found = name
-	}
-	if found == "" {
-		return "", nil
-	}
-	return filepath.Join(dir, found), nil
-}
-
 func isCacheEntryName(name string) bool {
 	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`) &&
 		filepath.Base(name) == name
+}
+
+// lore.lock records from: verbatim, credential and all; an install record already holds it redacted.
+func safeFrom(from string) string {
+	parsed, err := url.Parse(from)
+	if err != nil || parsed.Scheme == "" {
+		return from
+	}
+	return urlx.Redact(parsed)
 }
 
 func (s *Store) write(
@@ -283,6 +276,17 @@ func notInstalled(name string) error {
 func digestMismatch(name string, p Platform, expected, actual string) error {
 	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
 		" (expected "+expected+", got "+actual+")", nil)
+}
+
+func unreadableProvenance(name string, cause error) error {
+	return internalerror.NewPreconditionError(Label(name)+": cannot read the recorded provenance of the"+
+		" cached install — run: lore plugin install "+name, cause)
+}
+
+func provenanceMismatch(name string, p Platform, record installRecord, pinnedFrom, pinnedDigest string) error {
+	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
+		" — the cache holds the install of "+record.From+" at artifact "+record.ArtifactDigest+", but "+
+		LockFileName+" pins "+pinnedFrom+" at "+pinnedDigest+" — run: lore plugin install "+name, nil)
 }
 
 const digestPrefix = "sha256:"
