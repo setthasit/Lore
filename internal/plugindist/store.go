@@ -3,6 +3,7 @@ package plugindist
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -17,8 +18,7 @@ import (
 const RootEnv = "LORE_HOME"
 
 const (
-	// digestFileName holds the digest re-checked at every launch, so a binary rewritten after install is caught too.
-	digestFileName = ".digest"
+	recordFileName = ".install.json"
 
 	pluginsDirName = "plugins"
 )
@@ -133,20 +133,17 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 		return Report{}, notInstalled(name)
 	}
 
-	recorded, err := os.ReadFile(filepath.Join(dir, digestFileName))
+	record, err := readInstallRecord(dir)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return Report{}, notInstalled(name)
-		}
-		return Report{}, internalerror.NewInternalError("cannot read the recorded digest of "+binary, err)
+		return Report{}, internalerror.NewInternalError("cannot read the recorded provenance of "+binary, err)
 	}
 
 	actual, err := digestFile(binary)
 	if err != nil {
 		return Report{}, err
 	}
-	if expected := strings.TrimSpace(string(recorded)); expected != actual {
-		return Report{}, digestMismatch(name, s.platform, expected, actual)
+	if record.BinaryDigest != actual {
+		return Report{}, digestMismatch(name, s.platform, record.BinaryDigest, actual)
 	}
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
@@ -186,14 +183,19 @@ func isCacheEntryName(name string) bool {
 		filepath.Base(name) == name
 }
 
-func (s *Store) write(name, version, binaryName string, body []byte) (path, digest string, err error) {
+func (s *Store) write(
+	coord Coordinate,
+	binaryName string,
+	body []byte,
+	artifactDigest string,
+) (path, digest string, err error) {
 	if !isCacheEntryName(binaryName) {
-		return "", "", internalerror.NewPreconditionError(Label(name)+": the artifact names its binary "+
+		return "", "", internalerror.NewPreconditionError(Label(coord.Name)+": the artifact names its binary "+
 			binaryName+", which is not a usable file name: a binary is one file in the plugin cache, so it"+
 			" must be a single name that does not start with a dot", nil)
 	}
 
-	dir, err := s.Dir(name, version)
+	dir, err := s.Dir(coord.Name, coord.Version)
 	if err != nil {
 		return "", "", err
 	}
@@ -207,12 +209,45 @@ func (s *Store) write(name, version, binaryName string, body []byte) (path, dige
 	}
 
 	digest = digestOf(body)
-	if err := fsx.WriteAtomic(filepath.Join(dir, digestFileName), []byte(digest+"\n"), 0o644); err != nil {
-		// Without the digest file the binary can never be launched, so the half-installed version goes.
+	record := installRecord{
+		Binary:         binaryName,
+		BinaryDigest:   digest,
+		ArtifactDigest: artifactDigest,
+		From:           coord.SafeFrom(),
+	}
+	if err := writeInstallRecord(dir, record); err != nil {
 		_ = os.RemoveAll(dir)
-		return "", "", internalerror.NewInternalError("cannot record the digest of "+path, err)
+		return "", "", internalerror.NewInternalError("cannot record the provenance of "+path, err)
 	}
 	return path, digest, nil
+}
+
+type installRecord struct {
+	Binary         string `json:"binary"`
+	BinaryDigest   string `json:"binary_digest"`
+	ArtifactDigest string `json:"artifact_digest"`
+	From           string `json:"from"`
+}
+
+func writeInstallRecord(dir string, record installRecord) error {
+	body, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsx.WriteAtomic(filepath.Join(dir, recordFileName), append(body, '\n'), 0o644)
+}
+
+func readInstallRecord(dir string) (installRecord, error) {
+	body, err := os.ReadFile(filepath.Join(dir, recordFileName))
+	if err != nil {
+		return installRecord{}, err
+	}
+
+	var record installRecord
+	if err := json.Unmarshal(body, &record); err != nil {
+		return installRecord{}, err
+	}
+	return record, nil
 }
 
 func (s *Store) Remove(name string) (int, error) {

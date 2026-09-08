@@ -109,8 +109,18 @@ func TestInstallPinsVerifiesAndCaches(t *testing.T) {
 	if body := readFile(t, result.Binary); body != stubBinary {
 		t.Fatalf("installed binary = %q, want the archive's entry", body)
 	}
-	if recorded := strings.TrimSpace(readFile(t, filepath.Join(filepath.Dir(result.Binary), digestFileName))); recorded != result.BinaryDigest {
-		t.Fatalf("%s = %q, want %q", digestFileName, recorded, result.BinaryDigest)
+	record, err := readInstallRecord(filepath.Dir(result.Binary))
+	if err != nil {
+		t.Fatalf("read the install record: %v", err)
+	}
+	wantRecord := installRecord{
+		Binary:         filepath.Base(result.Binary),
+		BinaryDigest:   result.BinaryDigest,
+		ArtifactDigest: result.LockedDigest,
+		From:           scene.coord.From,
+	}
+	if record != wantRecord {
+		t.Fatalf("install record = %+v, want %+v", record, wantRecord)
 	}
 
 	report, err := scene.store.Locate(scene.coord, lock)

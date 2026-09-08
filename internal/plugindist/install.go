@@ -118,7 +118,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	path, binaryDigest, err := ins.store.write(coord.Name, coord.Version, binaryName, body)
+	path, binaryDigest, err := ins.store.write(coord, binaryName, body, digest)
 	if err != nil {
 		return Result{}, err
 	}

