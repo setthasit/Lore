@@ -102,65 +102,71 @@ func (s *Store) Binary(coord Coordinate, lock *Lock) (string, error) {
 }
 
 func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
+	report, _, err := s.locate(coord, lock)
+	return report, err
+}
+
+func (s *Store) locate(coord Coordinate, lock *Lock) (Report, installRecord, error) {
 	name := coord.Name
 	if err := checkName(name); err != nil {
-		return Report{}, err
+		return Report{}, installRecord{}, err
 	}
 	report := Report{Name: name, Origin: coord.Origin, Platform: s.platform.Key(), Warning: coord.Warning()}
 
 	if coord.Origin == OriginLocal {
 		info, err := os.Stat(coord.Path)
 		if err != nil || info.IsDir() {
-			return Report{}, internalerror.NewPreconditionError(Label(name)+" runs "+coord.Path+
-				" in place, but there is no file there", err)
+			return Report{}, installRecord{}, internalerror.NewPreconditionError(Label(name)+" runs "+
+				coord.Path+" in place, but there is no file there", err)
 		}
 		report.Binary, report.Version = coord.Path, string(OriginLocal)
-		return report, nil
+		return report, installRecord{}, nil
 	}
 
 	artifact, locked := lock.Artifact(name, s.platform)
 	if !locked {
-		return Report{}, internalerror.NewPreconditionError(Label(name)+" has no "+LockFileName+" entry for "+
-			s.platform.Key()+reinstallRemedy(name), nil)
+		return Report{}, installRecord{}, internalerror.NewPreconditionError(Label(name)+" has no "+
+			LockFileName+" entry for "+s.platform.Key()+reinstallRemedy(name), nil)
 	}
 	entry, _ := lock.Entry(name)
 
 	dir, err := s.Dir(name, entry.Version)
 	if err != nil {
-		return Report{}, err
+		return Report{}, installRecord{}, err
 	}
 
 	record, err := readInstallRecord(dir)
 	if err != nil {
 		if _, statErr := os.Stat(dir); errors.Is(statErr, fs.ErrNotExist) {
-			return Report{}, notInstalled(name)
+			return Report{}, installRecord{}, notInstalled(name)
 		}
-		return Report{}, unreadableProvenance(name, err)
+		return Report{}, installRecord{}, unreadableProvenance(name, err)
 	}
 	if !isCacheEntryName(record.Binary) {
-		return Report{}, unreadableProvenance(name, errors.New("binary "+strconv.Quote(record.Binary)+
-			" is not one file name"))
+		return Report{}, installRecord{}, unreadableProvenance(name, errors.New("binary "+
+			strconv.Quote(record.Binary)+" is not one file name"))
 	}
 
 	binary := filepath.Join(dir, record.Binary)
 	actual, err := digestFile(binary)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return Report{}, unreadableProvenance(name, err)
+			return Report{}, installRecord{}, unreadableProvenance(name, err)
 		}
-		return Report{}, err
+		return Report{}, installRecord{}, err
 	}
 	if record.BinaryDigest != actual {
-		return Report{}, cachedBinaryMismatch(name, s.platform, record.BinaryDigest, actual)
+		return Report{}, installRecord{}, cachedBinaryMismatch(name, s.platform, record.BinaryDigest, actual)
 	}
 
 	if !sameFrom(record.From, entry.From) || record.ArtifactDigest != artifact.Digest {
-		return Report{}, provenanceMismatch(name, s.platform, record, safeFrom(entry.From), artifact.Digest)
+		return Report{}, installRecord{}, provenanceMismatch(name, s.platform, record,
+			safeFrom(entry.From), artifact.Digest)
 	}
 
 	report.Version, report.Binary, report.BinaryDigest = entry.Version, binary, actual
 	report.LockedURL, report.LockedDigest = safeTarget(artifact.URL), artifact.Digest
-	return report, nil
+	return report, record, nil
 }
 
 func isCacheEntryName(name string) bool {
@@ -266,16 +272,47 @@ func writeJSON(path string, value any) error {
 }
 
 func readInstallRecord(dir string) (installRecord, error) {
-	body, err := os.ReadFile(filepath.Join(dir, recordFileName))
-	if err != nil {
-		return installRecord{}, err
-	}
-
 	var record installRecord
-	if err := json.Unmarshal(body, &record); err != nil {
+	if err := readJSON(filepath.Join(dir, recordFileName), &record); err != nil {
 		return installRecord{}, err
 	}
 	return record, nil
+}
+
+func readJSON(path string, into any) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, into)
+}
+
+func storedManifest(binary string, record installRecord) (lore.Manifest, bool) {
+	if record.Manifest == "" || filepath.Base(record.Manifest) != record.Manifest {
+		return lore.Manifest{}, false
+	}
+
+	path := filepath.Join(filepath.Dir(binary), record.Manifest)
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return lore.Manifest{}, false
+	}
+
+	var manifest lore.Manifest
+	if err := readJSON(path, &manifest); err != nil {
+		return lore.Manifest{}, false
+	}
+	if !describesPlugin(manifest) {
+		return lore.Manifest{}, false
+	}
+	return manifest, true
+}
+
+func describesPlugin(manifest lore.Manifest) bool {
+	switch manifest.Kind {
+	case lore.KindSource, lore.KindProvider, lore.KindCode:
+		return manifest.Name != "" && manifest.APIVersion == lore.APIVersion
+	}
+	return false
 }
 
 func (s *Store) Remove(name string) (int, error) {
@@ -325,6 +362,15 @@ func cachedBinaryMismatch(name string, p Platform, recorded, actual string) erro
 func unreadableProvenance(name string, cause error) error {
 	return internalerror.NewPreconditionError(Label(name)+": cannot read the recorded provenance of the"+
 		" cached install"+reinstallRemedy(name), cause)
+}
+
+func protocolRefusal(name, binary string, cause error) error {
+	return internalerror.NewPreconditionError(Label(name)+" does not answer the plugin protocol at "+
+		binary+": "+internalerror.MessageOf(cause), cause)
+}
+
+func noHandshake(name, where string) error {
+	return internalerror.NewInternalError(Label(name)+" reached "+where+" with no manifest handshake", nil)
 }
 
 func provenanceMismatch(name string, p Platform, record installRecord, pinnedFrom, pinnedDigest string) error {

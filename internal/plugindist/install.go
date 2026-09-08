@@ -158,13 +158,12 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 
 func (ins *Installer) captureManifest(coord Coordinate, record installRecord, binary string) error {
 	if ins.handshake == nil {
-		return internalerror.NewInternalError(Label(coord.Name)+" reached install with no manifest handshake", nil)
+		return noHandshake(coord.Name, "install")
 	}
 
 	manifest, err := ins.handshake(binary)
 	if err != nil {
-		return internalerror.NewPreconditionError(Label(coord.Name)+" does not answer the plugin protocol at "+
-			binary+": "+internalerror.MessageOf(err), err)
+		return protocolRefusal(coord.Name, binary, err)
 	}
 	return ins.store.recordInstall(coord, record, manifest)
 }

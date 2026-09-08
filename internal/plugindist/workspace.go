@@ -12,6 +12,7 @@ import (
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/urlx"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const pluginsKey = "plugins"
@@ -85,6 +86,30 @@ func (w *Workspace) Installed(decl config.PluginDecl) (Installation, error) {
 	default:
 		return Installation{Fault: err}, nil
 	}
+}
+
+func (w *Workspace) Manifest(decl config.PluginDecl) (lore.Manifest, error) {
+	coord, err := Resolve(w.dir, decl)
+	if err != nil {
+		return lore.Manifest{}, err
+	}
+
+	report, record, err := w.store.locate(coord, w.lock)
+	if err != nil {
+		return lore.Manifest{}, err
+	}
+	if manifest, stored := storedManifest(report.Binary, record); stored {
+		return manifest, nil
+	}
+
+	if w.handshake == nil {
+		return lore.Manifest{}, noHandshake(coord.Name, "a manifest lookup")
+	}
+	manifest, err := w.handshake(report.Binary)
+	if err != nil {
+		return lore.Manifest{}, protocolRefusal(coord.Name, report.Binary, err)
+	}
+	return manifest, nil
 }
 
 func (w *Workspace) absent(coord Coordinate) bool {
