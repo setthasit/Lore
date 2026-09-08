@@ -2,6 +2,9 @@ package plugindist
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,17 +51,45 @@ func (w *Workspace) Plugins() []config.PluginDecl {
 	return w.config.Plugins
 }
 
-// An empty path with no error means nothing is installed; an error means the declaration does not resolve.
-func (w *Workspace) Installed(decl config.PluginDecl) (string, error) {
+// A Fault is the store's refusal; an empty Binary with no Fault means nothing is installed.
+type Installation struct {
+	Binary string
+	Fault  error
+}
+
+func (w *Workspace) Installed(decl config.PluginDecl) (Installation, error) {
 	coord, err := Resolve(w.dir, decl)
 	if err != nil {
-		return "", err
+		return Installation{}, err
 	}
+
 	binary, err := w.store.Binary(coord, w.lock)
-	if err != nil {
-		return "", nil
+	switch {
+	case err == nil:
+		return Installation{Binary: binary}, nil
+	case w.absent(coord):
+		return Installation{}, nil
+	default:
+		return Installation{Fault: err}, nil
 	}
-	return binary, nil
+}
+
+func (w *Workspace) absent(coord Coordinate) bool {
+	path := coord.Path
+	if coord.Origin != OriginLocal {
+		entry, pinned := w.lock.Entry(coord.Name)
+		if !pinned {
+			return true
+		}
+		dir, err := w.store.Dir(coord.Name, entry.Version)
+		if err != nil {
+			return false
+		}
+		path = dir
+	}
+
+	_, err := os.Stat(path)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // notice is called once the work is known, before the first byte is fetched; no results means nothing to install.

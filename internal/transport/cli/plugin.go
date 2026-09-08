@@ -69,13 +69,15 @@ func declaredExternals(configPath string, reg *registry.Registry) []externalRow 
 		}
 
 		row := externalRow{name: decl.Name, from: urlx.RedactIfUserinfo(decl.From)}
-		switch binary, err := workspace.Installed(decl); {
+		switch install, err := workspace.Installed(decl); {
 		case err != nil:
 			row.state = "unresolvable — " + internalerror.MessageOf(err)
-		case binary == "":
+		case install.Fault != nil:
+			row.state = internalerror.MessageOf(install.Fault)
+		case install.Binary == "":
 			row.state = "not installed — run: lore plugin install " + decl.Name
 		default:
-			row.state = registry.OriginExternal(binary)
+			row.state = registry.OriginExternal(install.Binary)
 		}
 		rows = append(rows, row)
 	}

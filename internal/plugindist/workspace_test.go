@@ -115,17 +115,17 @@ func TestInstalledAnswersEachDeclarationFromItsOwnCoordinate(t *testing.T) {
 		t.Fatalf("declarations = %+v, want the two the file holds", decls)
 	}
 
-	binary, err := workspace.Installed(decls[0])
-	if err != nil || binary != present {
-		t.Fatalf("binary = %q, err = %v, want %q", binary, err, present)
+	install, err := workspace.Installed(decls[0])
+	if err != nil || install.Fault != nil || install.Binary != present {
+		t.Fatalf("install = %+v, err = %v, want %q", install, err, present)
 	}
 
 	absent, err := workspace.Installed(decls[1])
 	if err != nil {
 		t.Fatalf("the second declaration of the same name: %v", err)
 	}
-	if absent != "" {
-		t.Errorf("binary = %q, want the empty path of a declaration nothing is installed for", absent)
+	if absent.Binary != "" || absent.Fault != nil {
+		t.Errorf("install = %+v, want the empty answer of a declaration nothing is installed for", absent)
 	}
 }
 
