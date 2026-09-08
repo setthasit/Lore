@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/setthasit/Lore/internal/plugindist"
@@ -97,6 +98,25 @@ func tamperCachedBinary(t *testing.T) {
 	}
 }
 
+type countingTransport struct {
+	base     http.RoundTripper
+	requests atomic.Int64
+}
+
+func (c *countingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	c.requests.Add(1)
+	return c.base.RoundTrip(request)
+}
+
+func countRequests(t *testing.T) *countingTransport {
+	t.Helper()
+
+	counter := &countingTransport{base: http.DefaultTransport}
+	http.DefaultTransport = counter
+	t.Cleanup(func() { http.DefaultTransport = counter.base })
+	return counter
+}
+
 func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -167,6 +187,56 @@ func TestPluginInstallRefusesAFloatingConfiguration(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(path), plugindist.LockFileName)); !os.IsNotExist(err) {
 		t.Fatal("a refused install wrote lore.lock")
+	}
+}
+
+func TestPluginInstallLatestRefusesAnOriginOnlyTheLockDisagreesWith(t *testing.T) {
+	locked := newFakeReleases(t)
+	publishPlugin(t, locked, "v0.3.1", pluginStub)
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	drifted := plugindisttest.NewGitHub(t, "acme", "lore-linear")
+	publishPlugin(t, drifted, "v0.3.1", pluginStub+"# acme\n")
+	trustFakeReleases(t, drifted.Certificate())
+	t.Setenv(plugindist.APIBaseEnv, drifted.URL)
+	if err := os.WriteFile(path, []byte(declaredConfig("github.com/acme/lore-linear@v0.3.1")), 0o600); err != nil {
+		t.Fatalf("rewrite the declared origin: %v", err)
+	}
+	declaredBefore, lockedBefore := readConfigFile(t, path), lockFile(t, path)
+	counter := countRequests(t)
+
+	res := run(t, nil, "plugin", "install", "linear@latest", "--config", path)
+	if res.exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d; stderr = %q", res.exitCode, exitPrecondition, res.stderr)
+	}
+	if asked := counter.requests.Load(); asked != 0 {
+		t.Errorf("release requests = %d, want 0: the drifted origin must be refused before any lookup", asked)
+	}
+	for _, want := range []string{
+		"is locked to github.com/jdoe/lore-linear@v0.3.1",
+		"not github.com/acme/lore-linear",
+		"lore plugin update linear",
+	} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr %q does not mention %q", res.stderr, want)
+		}
+	}
+	if after := readConfigFile(t, path); after != declaredBefore {
+		t.Errorf("the refused install rewrote the configuration:\n%s", after)
+	}
+	if after := lockFile(t, path); after != lockedBefore {
+		t.Errorf("the refused install rewrote lore.lock:\n%s", after)
+	}
+
+	if res := run(t, nil, "plugin", "update", "linear", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("update: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	if lock := lockFile(t, path); !strings.Contains(lock, "github.com/acme/lore-linear@v0.3.1") ||
+		strings.Contains(lock, "github.com/jdoe/lore-linear") {
+		t.Fatalf("lore.lock does not record the origin the update adopted:\n%s", lock)
 	}
 }
 
