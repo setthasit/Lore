@@ -73,6 +73,11 @@ func (r *Registry) Register(plugins ...lore.Plugin) error {
 }
 
 func (r *Registry) RegisterExternal(origin, name string, p lore.Plugin) error {
+	if origin == "" || origin == OriginBuiltin {
+		return internalerror.NewInternalError(fmt.Sprintf(
+			"plugin %q was registered externally with origin %q; an external registration must carry its own origin and cannot claim compiled-in trust",
+			name, origin), nil)
+	}
 	if got := p.Manifest().Name; got != name {
 		return internalerror.NewBadRequestError(fmt.Sprintf(
 			"plugins[%s] is a binary whose manifest calls itself %q; rename the declaration or the plugin",
