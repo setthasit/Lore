@@ -87,9 +87,7 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 		return nil
 	}
 
-	for _, result := range results {
-		renderInstall(out, result)
-	}
+	renderInstalls(out, configPath, results)
 	return nil
 }
 
@@ -153,6 +151,34 @@ func declaredManifest(binary string) (lore.Manifest, error) {
 		return lore.Manifest{}, err
 	}
 	return plugin.Manifest(), nil
+}
+
+func renderInstalls(out io.Writer, configPath string, results []plugindist.Result) {
+	workspace, openErr := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+	for _, result := range results {
+		renderInstall(out, result)
+
+		manifest, err := lore.Manifest{}, openErr
+		if err == nil {
+			manifest, err = installedManifest(workspace, configPath, result.Name)
+		}
+		if err != nil {
+			printfln(out, "  manifest: unreadable — %s", internalerror.MessageOf(err))
+			continue
+		}
+		printfln(out, "  kind:    %s", kindLabel(manifest))
+		printfln(out, "  summary: %s", manifest.Summary)
+	}
+}
+
+func installedManifest(workspace *plugindist.Workspace, configPath, name string) (lore.Manifest, error) {
+	for _, decl := range workspace.Plugins() {
+		if decl.Name == name {
+			return workspace.Manifest(decl)
+		}
+	}
+	return lore.Manifest{}, internalerror.NewPreconditionError(
+		plugindist.Label(name)+" is installed, but "+configPath+" no longer declares it", nil)
 }
 
 func renderInstall(out io.Writer, result plugindist.Result) {

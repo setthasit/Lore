@@ -165,6 +165,16 @@ func reportedManifest(t *testing.T, binary string) lore.Manifest {
 	return manifest
 }
 
+func assertDeclaredManifest(t *testing.T, stdout string) {
+	t.Helper()
+
+	for _, want := range []string{"  kind:    source", "  summary: a scripted external source"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not report %q, which the plugin declares", stdout, want)
+		}
+	}
+}
+
 func publishedDigest(fake *plugindisttest.GitHub, tag string) string {
 	return fake.Digest(tag, fake.AssetName(tag))
 }
@@ -255,6 +265,7 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	if !reflect.DeepEqual(stored, reported) {
 		t.Fatalf("captured manifest = %+v, want what the binary reports: %+v", stored, reported)
 	}
+	assertDeclaredManifest(t, res.stdout)
 }
 
 func TestPluginInstallLatestWritesTheVersionBack(t *testing.T) {
@@ -409,6 +420,7 @@ func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	if lock := lockFile(t, path); !strings.Contains(lock, "linear:") {
 		t.Fatalf("lore.lock does not declare the plugin:\n%s", lock)
 	}
+	assertDeclaredManifest(t, res.stdout)
 }
 
 func TestPluginInstallUnnameableCoordinatePrintsNoURLCredentials(t *testing.T) {
