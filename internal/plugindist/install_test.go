@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,6 +64,76 @@ func (s *scene) installed(t *testing.T) (*Lock, Result) {
 		t.Fatalf("install: %v", err)
 	}
 	return lock, result
+}
+
+type requestLog struct {
+	next http.RoundTripper
+
+	mu   sync.Mutex
+	seen []string
+}
+
+func recordRequests(installer *Installer) *requestLog {
+	client := installer.client
+	log := &requestLog{next: client.Transport}
+	client.Transport = log
+	return log
+}
+
+func (l *requestLog) RoundTrip(request *http.Request) (*http.Response, error) {
+	l.mu.Lock()
+	l.seen = append(l.seen, request.URL.String())
+	l.mu.Unlock()
+
+	return l.next.RoundTrip(request)
+}
+
+func (l *requestLog) fetched() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return slices.Clone(l.seen)
+}
+
+func (l *requestLog) matching(needle string) []string {
+	matched := []string(nil)
+	for _, target := range l.fetched() {
+		if strings.Contains(target, needle) {
+			matched = append(matched, target)
+		}
+	}
+	return matched
+}
+
+type credentialGate struct {
+	next http.RoundTripper
+}
+
+func demandCredential(installer *Installer) {
+	client := installer.client
+	client.Transport = credentialGate{next: client.Transport}
+}
+
+func (g credentialGate) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.Header.Get("Authorization") == "" || request.URL.RawQuery == "" {
+		return &http.Response{
+			Status:     "401 Unauthorized",
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{},
+			Body:       http.NoBody,
+			Request:    request,
+		}, nil
+	}
+	return g.next.RoundTrip(request)
+}
+
+func savedLock(t *testing.T, lock *Lock, dir string) string {
+	t.Helper()
+
+	if err := lock.Save(dir); err != nil {
+		t.Fatalf("save %s: %v", LockFileName, err)
+	}
+	return readFile(t, lockPath(dir))
 }
 
 func TestInstallWithNoDeclaredPubKeyIsUnsigned(t *testing.T) {
@@ -205,6 +277,78 @@ func TestInstallRefusesAVersionTheLockDisagreesWith(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesAnOriginTheLockDisagreesWith(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, _ := scene.installed(t)
+	dir := t.TempDir()
+	before := savedLock(t, lock, dir)
+
+	moved, err := Resolve(".", config.PluginDecl{Name: "linear", From: "github.com/acme/lore-linear@v0.3.1"})
+	if err != nil {
+		t.Fatalf("resolve the moved coordinate: %v", err)
+	}
+	scene.coord = moved
+
+	_, err = scene.install(t, lock, false)
+	if err == nil {
+		t.Fatal("installing an origin the lock disagrees with succeeded, want a refusal")
+	}
+	if !internalerror.IsPrecondition(err) {
+		t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	for _, want := range []string{
+		"is locked to github.com/jdoe/lore-linear@v0.3.1",
+		"not github.com/acme/lore-linear@v0.3.1",
+		"lore plugin update linear",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+	if after := savedLock(t, lock, dir); after != before {
+		t.Fatalf("the refused install rewrote %s:\n%s\nwant\n%s", LockFileName, after, before)
+	}
+}
+
+func TestInstallOfALockedVersionResolvesTheAssetFromItsRelease(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	withdrawn := scene.fake.DownloadURL("v0.3.1", "withdrawn-"+scene.asset)
+
+	lock := &Lock{}
+	lock.Set("linear", "v0.3.1", scene.coord.From, scene.store.platform,
+		LockArtifact{URL: withdrawn, Digest: digestOf(scene.archive)})
+
+	log := recordRequests(scene.installer)
+
+	result, err := scene.install(t, lock, false)
+	if err != nil {
+		t.Fatalf("re-install the locked version: %v", err)
+	}
+	if !result.Locked {
+		t.Fatalf("result pinned = %v, locked = %v; want the install to match the pin", result.Pinned, result.Locked)
+	}
+
+	published := scene.fake.DownloadURL("v0.3.1", scene.asset)
+	fetched := log.fetched()
+	if !slices.Contains(fetched, published) {
+		t.Fatalf("the re-install fetched %v, want the asset %q the locked tag's release publishes",
+			fetched, published)
+	}
+	if slices.Contains(fetched, withdrawn) {
+		t.Fatalf("the re-install fetched the URL %s recorded: %v", LockFileName, fetched)
+	}
+	if asked := log.matching("/releases/tags/v0.3.1"); len(asked) != 1 {
+		t.Fatalf("the re-install asked for %v, want the release for the locked tag once", fetched)
+	}
+	if asked := log.matching("/releases/latest"); len(asked) != 0 {
+		t.Fatalf("the re-install asked for %v, want no lookup of the newest release", asked)
+	}
+}
+
 func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 	t.Parallel()
 
@@ -238,6 +382,46 @@ func TestInstallUpdateRewritesTheLockedDigest(t *testing.T) {
 
 	if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); err != nil {
 		t.Fatalf("v0.3.1 was removed by an update: %v", err)
+	}
+}
+
+func TestUpdateDropsTheSiblingPlatformsPinOnlyWhenTheOriginMoves(t *testing.T) {
+	t.Parallel()
+
+	archive := plugindisttest.Archive(t, "acme-crm", []byte(stubBinary))
+	origin := serveArtifact(t, "acme-crm", "/lore/acme-crm/v2.0.1.tar.gz", archive)
+	mirror := serveArtifact(t, "acme-crm", "/mirror/acme-crm/v2.0.1.tar.gz", archive)
+	sibling := Platform{OS: "plan9", Arch: "mips"}
+
+	update := func(t *testing.T, served *urlArtifact, from string) *Lock {
+		t.Helper()
+
+		coord, err := Resolve(".", config.PluginDecl{Name: "acme-crm", From: from})
+		if err != nil {
+			t.Fatalf("resolve %s: %v", from, err)
+		}
+
+		lock := &Lock{}
+		lock.Set("acme-crm", "v2.0.1", origin.coord.URL, sibling,
+			LockArtifact{URL: "https://artifacts.invalid/acme-crm_2.0.1_plan9_mips.tar.gz", Digest: "sha256:fake"})
+		request := Request{Coordinate: coord, Rewrite: true}
+		if _, err := served.installer.Install(context.Background(), request, lock); err != nil {
+			t.Fatalf("update to %s: %v", from, err)
+		}
+		if _, pinned := lock.Artifact("acme-crm", hostPlatform()); !pinned {
+			t.Fatalf("the update wrote no pin for %s: %+v", hostPlatform().Key(), lock.Plugins)
+		}
+		return lock
+	}
+
+	rotated := update(t, origin, rotatedCredential(origin.coord.URL))
+	if _, kept := rotated.Artifact("acme-crm", sibling); !kept {
+		t.Errorf("a rotated credential dropped the pin for %s: %+v", sibling.Key(), rotated.Plugins)
+	}
+
+	moved := update(t, mirror, mirror.coord.URL)
+	if _, kept := moved.Artifact("acme-crm", sibling); kept {
+		t.Errorf("a moved origin kept the stale pin for %s: %+v", sibling.Key(), moved.Plugins)
 	}
 }
 
@@ -331,6 +515,43 @@ func TestInstallPinsLatestToAConcreteVersion(t *testing.T) {
 
 	if _, err := scene.installer.Install(context.Background(), Request{Coordinate: floating}, &Lock{}); err == nil {
 		t.Fatal("installing a floating coordinate succeeded")
+	}
+}
+
+func TestInstallAtLatestRefusesAnOriginTheDeclarationDisagreesWith(t *testing.T) {
+	const declared = "workspace: myproject\n\nplugins:\n  - name: linear\n" +
+		"    from: github.com/jdoe/lore-linear@v0.3.1\n"
+
+	path := scratchWorkspace(t, declared)
+	workspace := openScratch(t, path)
+
+	fake := plugindisttest.NewGitHub(t, "jdoe", "lore-linear")
+	workspace.installer = fakeInstaller(fake, workspace.store)
+	log := recordRequests(workspace.installer)
+
+	_, err := workspace.Install(context.Background(), []string{"github.com/acme/lore-linear@latest"}, func() {
+		t.Error("the trust notice fired for a refused install")
+	})
+	if err == nil {
+		t.Fatal("installing @latest from another origin succeeded, want a refusal")
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Fatalf("kind = %v, want bad request", internalerror.KindOf(err))
+	}
+	for _, want := range []string{
+		"declares linear from github.com/jdoe/lore-linear@v0.3.1",
+		"not github.com/acme/lore-linear@latest",
+		"lore plugin update linear",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+	if after := readFile(t, path); after != declared {
+		t.Fatalf("the refused install rewrote the declaration:\n%s", after)
+	}
+	if asked := log.fetched(); len(asked) != 0 {
+		t.Fatalf("the refused install asked for %v, want the origin checked before any release lookup", asked)
 	}
 }
 
@@ -690,28 +911,44 @@ func TestBoundedGetClassifiesTheResponse(t *testing.T) {
 }
 
 const (
-	fakeUser  = "svcaccount"
-	fakeToken = "fake-not-a-real-token"
-	fakeQuery = "sig=fake-signature"
+	fakeUser         = "svcaccount"
+	fakeToken        = "fake-not-a-real-token"
+	fakeQuery        = "sig=fake-signature"
+	fakeRotatedToken = "fake-not-a-real-token-either"
+	fakeRotatedQuery = "sig=fake-signature-too"
 )
 
 func credentialed(target string) string {
+	return withCredential(target, fakeToken, fakeQuery)
+}
+
+func rotatedCredential(target string) string {
+	return withCredential(target, fakeRotatedToken, fakeRotatedQuery)
+}
+
+func withCredential(target, token, query string) string {
 	scheme, rest, found := strings.Cut(target, "://")
 	if !found {
 		return target
 	}
-	return scheme + "://" + fakeUser + ":" + fakeToken + "@" + rest + "?" + fakeQuery
+	return scheme + "://" + fakeUser + ":" + token + "@" + rest + "?" + query
+}
+
+func assertNoCredential(t *testing.T, what, body string) {
+	t.Helper()
+
+	for _, secret := range []string{fakeUser, fakeToken, fakeQuery} {
+		if strings.Contains(body, secret) {
+			t.Errorf("%s echoes %q: %s", what, secret, body)
+		}
+	}
 }
 
 func assertRedacted(t *testing.T, err error, keep string) {
 	t.Helper()
 
 	message := internalerror.MessageOf(err)
-	for _, secret := range []string{fakeUser, fakeToken, fakeQuery} {
-		if strings.Contains(message, secret) {
-			t.Errorf("refusal %q echoes %q", message, secret)
-		}
-	}
+	assertNoCredential(t, "the refusal", message)
 	if !strings.Contains(message, keep) {
 		t.Errorf("refusal %q no longer names %q", message, keep)
 	}
@@ -826,6 +1063,101 @@ func TestChecksumsRefusalDoesNotEchoURLCredentials(t *testing.T) {
 		t.Fatalf("kind = %v, want not found", internalerror.KindOf(err))
 	}
 	assertRedacted(t, err, published)
+}
+
+func TestInstallOfACredentialedURLKeepsTheCredentialOutOfTheLockfile(t *testing.T) {
+	t.Parallel()
+
+	const artifactPath = "/lore/acme-crm/v2.0.1.tar.gz"
+
+	served := serveArtifact(t, "acme-crm", artifactPath, plugindisttest.Archive(t, "acme-crm", []byte(stubBinary)))
+	coord, err := Resolve(".", config.PluginDecl{Name: "acme-crm", From: credentialed(served.coord.URL)})
+	if err != nil {
+		t.Fatalf("resolve the credentialed coordinate: %v", err)
+	}
+	served.coord = coord
+
+	demandCredential(served.installer)
+	log := recordRequests(served.installer)
+
+	lock := &Lock{}
+	result, err := served.install(t, lock, "")
+	if err != nil {
+		t.Fatalf("install from a credentialed URL: %v", err)
+	}
+
+	fetched := log.matching(artifactPath)
+	if len(fetched) != 1 {
+		t.Fatalf("the install fetched %v, want the artifact once", log.fetched())
+	}
+	for _, secret := range []string{fakeUser, fakeToken, fakeQuery} {
+		if !strings.Contains(fetched[0], secret) {
+			t.Fatalf("the artifact was fetched from %q, without the %q the declaration supplies",
+				fetched[0], secret)
+		}
+	}
+
+	saved := savedLock(t, lock, t.TempDir())
+	assertNoCredential(t, LockFileName, saved)
+	if !strings.Contains(saved, artifactPath) {
+		t.Errorf("%s no longer names the artifact:\n%s", LockFileName, saved)
+	}
+
+	record, err := readInstallRecord(filepath.Dir(result.Binary))
+	if err != nil {
+		t.Fatalf("read the install record: %v", err)
+	}
+	assertNoCredential(t, "the install record", record.From)
+	if !strings.Contains(record.From, artifactPath) {
+		t.Errorf("the install record was written from %q, want the artifact it installed", record.From)
+	}
+}
+
+func TestInstallOfARotatedCredentialIsNotAnOriginChange(t *testing.T) {
+	t.Parallel()
+
+	const artifactPath = "/lore/acme-crm/v2.0.1.tar.gz"
+
+	served := serveArtifact(t, "acme-crm", artifactPath, plugindisttest.Archive(t, "acme-crm", []byte(stubBinary)))
+	target := served.coord.URL
+	declare := func(t *testing.T, from string) {
+		t.Helper()
+
+		coord, err := Resolve(".", config.PluginDecl{Name: "acme-crm", From: from})
+		if err != nil {
+			t.Fatalf("resolve %s: %v", from, err)
+		}
+		served.coord = coord
+	}
+
+	lock := &Lock{}
+	declare(t, credentialed(target))
+	if _, err := served.install(t, lock, ""); err != nil {
+		t.Fatalf("install from a credentialed URL: %v", err)
+	}
+
+	declare(t, rotatedCredential(target))
+	log := recordRequests(served.installer)
+
+	result, err := served.install(t, lock, "")
+	if err != nil {
+		t.Fatalf("re-install the same origin with a rotated credential: %v", err)
+	}
+	if !result.Locked {
+		t.Fatalf("result pinned = %v, locked = %v; want the re-install to match the pin",
+			result.Pinned, result.Locked)
+	}
+
+	fetched := log.matching(artifactPath)
+	if len(fetched) != 1 {
+		t.Fatalf("the re-install fetched %v, want the artifact once", log.fetched())
+	}
+	for _, secret := range []string{fakeRotatedToken, fakeRotatedQuery} {
+		if !strings.Contains(fetched[0], secret) {
+			t.Fatalf("the re-install fetched %q, without the rotated %q the declaration supplies",
+				fetched[0], secret)
+		}
+	}
 }
 
 func TestInstallOfAURLDerivedVersionCachesItUnderThatVersion(t *testing.T) {
