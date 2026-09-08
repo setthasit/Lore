@@ -119,7 +119,7 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 	artifact, locked := lock.Artifact(name, s.platform)
 	if !locked {
 		return Report{}, internalerror.NewPreconditionError(Label(name)+" has no "+LockFileName+" entry for "+
-			s.platform.Key()+" — run: lore plugin install "+name, nil)
+			s.platform.Key()+reinstallRemedy(name), nil)
 	}
 	entry, _ := lock.Entry(name)
 
@@ -149,7 +149,7 @@ func (s *Store) Locate(coord Coordinate, lock *Lock) (Report, error) {
 		return Report{}, err
 	}
 	if record.BinaryDigest != actual {
-		return Report{}, digestMismatch(name, s.platform, record.BinaryDigest, actual)
+		return Report{}, cachedBinaryMismatch(name, s.platform, record.BinaryDigest, actual)
 	}
 
 	pinnedFrom := safeFrom(entry.From)
@@ -269,8 +269,12 @@ func (s *Store) Remove(name string) (int, error) {
 	return versions, nil
 }
 
+func reinstallRemedy(name string) string {
+	return " — run: lore plugin install " + name
+}
+
 func notInstalled(name string) error {
-	return internalerror.NewPreconditionError(Label(name)+" is not installed — run: lore plugin install "+name, nil)
+	return internalerror.NewPreconditionError(Label(name)+" is not installed"+reinstallRemedy(name), nil)
 }
 
 func digestMismatch(name string, p Platform, expected, actual string) error {
@@ -278,15 +282,20 @@ func digestMismatch(name string, p Platform, expected, actual string) error {
 		" (expected "+expected+", got "+actual+")", nil)
 }
 
+func cachedBinaryMismatch(name string, p Platform, recorded, actual string) error {
+	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
+		" — the cached binary hashes to "+actual+", not the recorded "+recorded+reinstallRemedy(name), nil)
+}
+
 func unreadableProvenance(name string, cause error) error {
 	return internalerror.NewPreconditionError(Label(name)+": cannot read the recorded provenance of the"+
-		" cached install — run: lore plugin install "+name, cause)
+		" cached install"+reinstallRemedy(name), cause)
 }
 
 func provenanceMismatch(name string, p Platform, record installRecord, pinnedFrom, pinnedDigest string) error {
 	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
-		" — the cache holds the install of "+record.From+" at artifact "+record.ArtifactDigest+", but "+
-		LockFileName+" pins "+pinnedFrom+" at "+pinnedDigest+" — run: lore plugin install "+name, nil)
+		" — the cache holds the install of "+safeFrom(record.From)+" at artifact "+record.ArtifactDigest+", but "+
+		LockFileName+" pins "+pinnedFrom+" at "+pinnedDigest+reinstallRemedy(name), nil)
 }
 
 const digestPrefix = "sha256:"

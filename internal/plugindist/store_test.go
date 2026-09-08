@@ -28,7 +28,10 @@ func TestPluginBinaryRefusesARewrittenCachedBinary(t *testing.T) {
 	if !internalerror.IsPrecondition(err) {
 		t.Fatalf("kind = %v, want precondition", internalerror.KindOf(err))
 	}
-	for _, want := range []string{"plugins[linear]", "digest mismatch", scene.store.platform.Key(), result.BinaryDigest} {
+	for _, want := range []string{
+		"plugins[linear]", "digest mismatch", scene.store.platform.Key(), result.BinaryDigest,
+		"lore plugin install linear",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}
