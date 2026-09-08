@@ -271,7 +271,7 @@ func (w *Workspace) requests(args []string) ([]Request, string, error) {
 		return nil, "", err
 	}
 	if declared {
-		if decl.From != coord.From && version != LatestVersion {
+		if !matchesDeclaration(decl.From, coord, version) {
 			return nil, "", internalerror.NewBadRequestError(w.path+" declares "+name+" from "+
 				urlx.RedactIfUserinfo(decl.From)+", not "+coord.SafeFrom()+
 				" — edit the declaration, or run: lore plugin update "+name, nil)
@@ -279,6 +279,14 @@ func (w *Workspace) requests(args []string) ([]Request, string, error) {
 		return []Request{{Coordinate: coord}}, "", nil
 	}
 	return []Request{{Coordinate: coord}}, name, nil
+}
+
+func matchesDeclaration(declared string, coord Coordinate, version string) bool {
+	if version != LatestVersion {
+		return declared == coord.From
+	}
+	owner, repo, isGitHub := gitHubRepo(declared)
+	return isGitHub && owner == coord.Owner && repo == coord.Repo
 }
 
 func neverPinned(name string) error {
