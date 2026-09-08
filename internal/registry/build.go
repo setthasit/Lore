@@ -191,6 +191,10 @@ func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 		if err != nil {
 			return nil, unbuildable(clone.Field, clone.Use, err)
 		}
+		if repo == nil {
+			return nil, internalerror.NewInternalError(fmt.Sprintf(
+				"plugin %q built no accessor for clone %s and reported no error", clone.Use, clone.Path), nil)
+		}
 		out = append(out, Code{Path: clone.Path, Remote: clone.Remote, Repo: repo})
 	}
 	return out, nil
