@@ -35,6 +35,7 @@ type Connector struct {
 	client    *client
 	instance  string
 	repos     []string
+	slugs     []string
 	batchSize int
 }
 
@@ -75,6 +76,7 @@ func NewConnector(instance, token string, repos []string, baseURL string, opts .
 		client:    newClient(token, baseURL),
 		instance:  instance,
 		repos:     slices.Clone(repos),
+		slugs:     repoSlugs(repos),
 		batchSize: defaultBatchSize,
 	}
 	for _, opt := range opts {
@@ -91,8 +93,8 @@ func (c *Connector) MatchesRemote(remote string) bool {
 		return false
 	}
 	// GitHub owner and repository names are case-insensitive.
-	return slices.ContainsFunc(c.repos, func(ingested string) bool {
-		return strings.EqualFold(ingested, path)
+	return slices.ContainsFunc(c.slugs, func(configured string) bool {
+		return strings.EqualFold(configured, path)
 	})
 }
 
@@ -157,6 +159,16 @@ func parseRepo(s string) (repo, error) {
 		return repo{}, fmt.Errorf("github: invalid repository %q: want \"owner/name\"", s)
 	}
 	return repo{owner: owner, name: name, slug: s}, nil
+}
+
+func repoSlugs(repos []string) []string {
+	slugs := make([]string, 0, len(repos))
+	for _, name := range repos {
+		if r, err := parseRepo(name); err == nil {
+			slugs = append(slugs, r.slug)
+		}
+	}
+	return slugs
 }
 
 func (r repo) ref() string { return forgeName + ":" + r.slug }

@@ -40,6 +40,7 @@ type Connector struct {
 	client    *client
 	webRoot   string
 	projects  []string
+	paths     []string
 	batchSize int
 }
 
@@ -82,6 +83,7 @@ func NewConnector(instance, token string, projects []string, baseURL string, opt
 		client:    newClient(root, token),
 		webRoot:   root,
 		projects:  slices.Clone(projects),
+		paths:     projectPaths(projects),
 		batchSize: defaultBatchSize,
 	}
 	for _, opt := range opts {
@@ -98,7 +100,7 @@ func (c *Connector) MatchesRemote(remote string) bool {
 		return false
 	}
 	// GitLab paths are case-sensitive; compare verbatim.
-	return slices.Contains(c.projects, path)
+	return slices.Contains(c.paths, path)
 }
 
 // Changes walks the configured projects in order, oldest-first within each.
@@ -162,6 +164,16 @@ func parseProject(s string) (project, error) {
 		return project{}, fmt.Errorf("gitlab: invalid project %q: want \"group/project\"", s)
 	}
 	return project{path: path, encoded: strings.ReplaceAll(path, "/", "%2F")}, nil
+}
+
+func projectPaths(projects []string) []string {
+	paths := make([]string, 0, len(projects))
+	for _, name := range projects {
+		if p, err := parseProject(name); err == nil {
+			paths = append(paths, p.path)
+		}
+	}
+	return paths
 }
 
 func (p project) ref() string { return forgeName + ":" + p.path }
