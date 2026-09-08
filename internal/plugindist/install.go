@@ -27,7 +27,7 @@ func newInstaller(store *Store, client *http.Client, apiBase string) *Installer 
 
 type Request struct {
 	Coordinate Coordinate
-	Rewrite    bool // `lore plugin update` sets it: only update may replace a locked version, URL or digest
+	Rewrite    bool
 }
 
 type Result struct {
@@ -78,10 +78,17 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	}}
 
 	platform := ins.store.platform
+	from := coord.SafeFrom()
 	entry, hasEntry := lock.Entry(coord.Name)
-	if hasEntry && !req.Rewrite && entry.Version != coord.Version {
-		return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
-			" but "+coord.SafeFrom()+" asks for "+coord.Version+" — run: lore plugin update "+coord.Name, nil)
+	if hasEntry && !req.Rewrite {
+		if entry.Version != coord.Version {
+			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked at "+entry.Version+
+				" but "+from+" asks for "+coord.Version+updateRemedy(coord.Name), nil)
+		}
+		if pinnedFrom := safeFrom(entry.From); pinnedFrom != from {
+			return Result{}, internalerror.NewPreconditionError(Label(coord.Name)+" is locked to "+
+				lockedOrigin(pinnedFrom)+", not "+from+updateRemedy(coord.Name), nil)
+		}
 	}
 	locked, hasLocked := lock.Artifact(coord.Name, platform)
 	pinned := hasLocked && !req.Rewrite
@@ -129,6 +136,17 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 		result.Pinned = true
 	}
 	return result, nil
+}
+
+func updateRemedy(name string) string {
+	return " — run: lore plugin update " + name
+}
+
+func lockedOrigin(from string) string {
+	if from == "" {
+		return "an origin " + LockFileName + " does not record"
+	}
+	return from
 }
 
 // A pinned platform is fetched from the URL the lockfile recorded; the release is not consulted at all.

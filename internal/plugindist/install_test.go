@@ -196,8 +196,12 @@ func TestInstallRefusesAVersionTheLockDisagreesWith(t *testing.T) {
 
 	if _, err := scene.install(t, lock, false); err == nil {
 		t.Fatal("installing a version the lock disagrees with succeeded, want a refusal")
-	} else if !strings.Contains(err.Error(), "lore plugin update linear") {
-		t.Fatalf("error %q does not name the command that moves it", err)
+	} else {
+		for _, want := range []string{"is locked at v0.3.1", "lore plugin update linear"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not mention %q", err, want)
+			}
+		}
 	}
 }
 
