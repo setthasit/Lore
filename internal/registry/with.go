@@ -115,6 +115,11 @@ func checkType(field string, declared lore.Field, value any) error {
 		if !ok {
 			return typeError(field, "a list of strings", value)
 		}
+		if declared.Required && len(items) == 0 {
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"%s must list at least one entry: an empty list selects nothing, so this instance would ingest nothing%s",
+				field, doc(declared.Doc)), nil)
+		}
 		for i, item := range items {
 			if _, ok := item.(string); !ok {
 				return typeError(field+"["+strconv.Itoa(i)+"]", "a string", item)
