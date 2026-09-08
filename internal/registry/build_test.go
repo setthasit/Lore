@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -391,6 +392,28 @@ func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
 	}
 }
 
+func TestBuildCodeRefusesAPluginThatBuiltNoAccessor(t *testing.T) {
+	r := newRegistry(t, codePlugin{
+		manifest: codeManifest("git"),
+		build: func(lore.CodeConfig) (lore.CodeRepo, error) {
+			return nil, nil
+		},
+	})
+
+	_, err := r.BuildCode([]LocalClone{{Path: "/w/app", Use: "git", Field: "repos[0]"}})
+	if err == nil {
+		t.Fatal("BuildCode: want an error instead of an accessor nothing can call")
+	}
+	for _, want := range []string{`plugin "git"`, "built no accessor", "/w/app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindInternal {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindInternal)
+	}
+}
+
 func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
 	logged := false
 	r := newRegistry(t, codePlugin{
@@ -619,4 +642,160 @@ func TestRegisterExternalRefusesAnOriginItCannotTrust(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckDeclarationsChecksAnInstanceNoRoleBinds(t *testing.T) {
+	r := newRegistry(t, honest(lore.Capabilities{Complete: true}), stubSource{manifest: sourceManifest("ghost")})
+
+	refused := func(t *testing.T, in Instance, want ...string) {
+		t.Helper()
+
+		err := r.CheckDeclarations([]Instance{in}, lore.KindProvider)
+		if err == nil {
+			t.Fatal("CheckDeclarations: want an error")
+		}
+		for _, fragment := range want {
+			if !strings.Contains(err.Error(), fragment) {
+				t.Errorf("error %q does not contain %q", err, fragment)
+			}
+		}
+		if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+			t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+		}
+	}
+
+	t.Run("a plugin name nothing registers", func(t *testing.T) {
+		refused(t, Instance{ID: "openrouter", Use: "acmee", Field: "providers[openrouter]"},
+			`providers[openrouter].use names "acmee"`, "neither a compiled plugin")
+	})
+
+	t.Run("a with key the plugin does not accept", func(t *testing.T) {
+		refused(t, Instance{
+			ID:    "openrouter",
+			Use:   "acme",
+			With:  map[string]any{"bse_url": "https://openrouter.ai/api"},
+			Field: "providers[openrouter]",
+		}, "providers[openrouter].with.bse_url", "is not a key", "base_url")
+	})
+
+	t.Run("a plugin of another kind", func(t *testing.T) {
+		refused(t, Instance{ID: "ghost", Use: "ghost", Field: "providers[ghost]"},
+			`providers[ghost].use names "ghost"`, "is a source plugin, not a provider plugin")
+	})
+
+	t.Run("a well-formed instance whose secret variable is unset", func(t *testing.T) {
+		t.Setenv("ACME_API_KEY", "")
+
+		in := Instance{
+			ID:    "openrouter",
+			Use:   "acme",
+			With:  map[string]any{"base_url": "https://openrouter.ai/api"},
+			Field: "providers[openrouter]",
+		}
+		if err := r.CheckDeclarations([]Instance{in}, lore.KindProvider); err != nil {
+			t.Errorf("CheckDeclarations: %v, want an unbound instance to need no exported variable", err)
+		}
+	})
+}
+
+func suggestedProvider(t *testing.T, message string) (config.Instance, map[string]any) {
+	t.Helper()
+
+	_, quoted, opened := strings.Cut(message, "`")
+	snippet, _, closed := strings.Cut(quoted, "`")
+	if !opened || !closed {
+		t.Fatalf("refusal %q quotes no configuration to add", message)
+	}
+
+	cfg, err := config.Decode(strings.NewReader(snippet))
+	if err != nil {
+		t.Fatalf("the suggested %q is not loadable configuration: %v", snippet, err)
+	}
+	if len(cfg.Providers) != 1 {
+		t.Fatalf("the suggested %q declares %d provider instances, want one", snippet, len(cfg.Providers))
+	}
+	with, err := cfg.Providers[0].WithValues()
+	if err != nil {
+		t.Fatalf("the suggested %q carries an unreadable with block: %v", snippet, err)
+	}
+	return cfg.Providers[0], with
+}
+
+func TestBuildProviderRefusesAnImplicitInstanceWithConfigurationTheOperatorCanAdd(t *testing.T) {
+	binding := Binding{
+		Provider:   "acme",
+		Model:      "acme-embed",
+		Capability: lore.CapabilityEmbed,
+		Field:      "embedder",
+	}
+
+	cases := map[string]string{
+		"the secret names no default variable": "",
+		"the default variable is not set":      "ACME_API_KEY",
+	}
+
+	for name, defaultEnv := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ACME_API_KEY", "")
+
+			plugin := honest(lore.Capabilities{Embed: true})
+			plugin.manifest.Secrets[0].DefaultEnv = defaultEnv
+
+			_, err := newRegistry(t, plugin).BuildProvider(binding, nil)
+			if err == nil {
+				t.Fatal("BuildProvider: want an error")
+			}
+
+			message := internalerror.MessageOf(err)
+			if strings.Contains(message, "embedder.provider.with") {
+				t.Errorf("refusal %q names a key no role binding accepts", message)
+			}
+
+			suggested, with := suggestedProvider(t, message)
+			if suggested.ID != binding.Provider || suggested.Use != binding.Provider {
+				t.Errorf("suggested instance has id %q and use %q, want both %q so %s still resolves",
+					suggested.ID, suggested.Use, binding.Provider, binding.Field)
+			}
+			if named, ok := with["api_key_env"].(string); !ok || named == "" {
+				t.Errorf("suggested with block %v leaves the operator nowhere to name the variable", with)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+		})
+	}
+}
+
+func TestPrepareRejectsAnEmptyListForARequiredScopeKey(t *testing.T) {
+	scopedSource := func(required bool) stubSource {
+		manifest := sourceManifest("acme")
+		manifest.Fields = []lore.Field{{Name: "projects", Type: lore.FieldStringList, Required: required}}
+		return stubSource{manifest: manifest}
+	}
+	instances := []Instance{{Use: "acme", With: map[string]any{"projects": []any{}}, Field: "sources[acme]"}}
+
+	t.Run("the plugin marks the key required", func(t *testing.T) {
+		_, err := newRegistry(t, scopedSource(true)).BuildSources(instances)
+		if err == nil {
+			t.Fatal("BuildSources: want an error instead of an instance that ingests nothing")
+		}
+		for _, want := range []string{"sources[acme].with.projects", "must list at least one entry"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+		}
+		if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+			t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+		}
+	})
+
+	t.Run("the plugin leaves the key optional", func(t *testing.T) {
+		built, err := newRegistry(t, scopedSource(false)).BuildSources(instances)
+		if err != nil {
+			t.Fatalf("BuildSources: %v", err)
+		}
+		if len(built) != 1 {
+			t.Errorf("built %d connectors, want the instance to start and scope itself to everything", len(built))
+		}
+	})
 }
