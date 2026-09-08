@@ -178,6 +178,13 @@ func safeFrom(from string) string {
 	return safe
 }
 
+func lockedOrigin(from string) string {
+	if from == "" {
+		return "an unrecorded origin"
+	}
+	return from
+}
+
 func sameFrom(a, b string) bool {
 	left, leftReadable := redactFrom(a)
 	right, rightReadable := redactFrom(b)
@@ -303,7 +310,7 @@ func unreadableProvenance(name string, cause error) error {
 func provenanceMismatch(name string, p Platform, record installRecord, pinnedFrom, pinnedDigest string) error {
 	return internalerror.NewPreconditionError(Label(name)+": digest mismatch for "+p.Key()+
 		" — the cache holds the install of "+safeFrom(record.From)+" at artifact "+record.ArtifactDigest+", but "+
-		LockFileName+" pins "+pinnedFrom+" at "+pinnedDigest+reinstallRemedy(name), nil)
+		LockFileName+" pins "+lockedOrigin(pinnedFrom)+" at "+pinnedDigest+reinstallRemedy(name), nil)
 }
 
 const digestPrefix = "sha256:"

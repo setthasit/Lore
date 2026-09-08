@@ -103,6 +103,33 @@ func TestPluginBinaryRefusesACacheWrittenByAnotherInstall(t *testing.T) {
 	}
 }
 
+func TestPluginBinaryRefusesAPinWithNoRecordedOrigin(t *testing.T) {
+	t.Parallel()
+
+	scene := newScene(t)
+	lock, _ := scene.installed(t)
+
+	entry, _ := lock.Entry("linear")
+	entry.From = ""
+	lock.Plugins["linear"] = entry
+
+	path, err := scene.store.Binary(scene.coord, lock)
+	if err == nil {
+		t.Fatalf("a pin with no recorded origin resolved to %q, want a refusal", path)
+	}
+	if path != "" {
+		t.Errorf("the refusal still reported the binary %q", path)
+	}
+	if !internalerror.IsPrecondition(err) {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	for _, want := range []string{"plugins[linear]", "digest mismatch", "an unrecorded origin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
 func TestPluginBinaryRefusesACachedInstallWithNoRecordedProvenance(t *testing.T) {
 	t.Parallel()
 

@@ -143,13 +143,6 @@ func updateRemedy(name string) string {
 	return " — run: lore plugin update " + name
 }
 
-func lockedOrigin(from string) string {
-	if from == "" {
-		return "an origin " + LockFileName + " does not record"
-	}
-	return from
-}
-
 func (ins *Installer) locate(
 	ctx context.Context,
 	coord Coordinate,
