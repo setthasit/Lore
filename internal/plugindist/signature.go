@@ -78,8 +78,13 @@ func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, err
 	loaded := verifier{name: name, format: "cosign", suffix: cosignSuffix}
 	switch key := key.(type) {
 	case ed25519.PublicKey:
+		// cosign emits Ed25519ph over SHA-512 when uploading to the transparency log, its default, and pure otherwise.
 		loaded.cosign = cosignKey{algorithm: "Ed25519", verify: func(signed, signature []byte) bool {
-			return ed25519.Verify(key, signed, signature)
+			if ed25519.Verify(key, signed, signature) {
+				return true
+			}
+			digest := sha512.Sum512(signed)
+			return ed25519.VerifyWithOptions(key, digest[:], signature, &ed25519.Options{Hash: crypto.SHA512}) == nil
 		}}
 	case *ecdsa.PublicKey:
 		newCurveHash, usable := cosignCurveHashes[key.Curve]
