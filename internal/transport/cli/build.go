@@ -12,6 +12,7 @@ func newBuildCommand() *cobra.Command {
 	var (
 		with   []string
 		output string
+		engine string
 	)
 
 	build := &cobra.Command{
@@ -25,17 +26,19 @@ func newBuildCommand() *cobra.Command {
 			"`lore plugin install`.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runBuild(cmd, with, output)
+			return runBuild(cmd, with, output, engine)
 		},
 	}
 
 	build.Flags().StringSliceVar(&with, "with", nil,
 		"plugin module to compile in: github.com/owner/repo@v1.2.3[=package]; repeatable and comma-separated")
 	build.Flags().StringVarP(&output, "output", "o", plugbuild.DefaultOutput, "path of the binary to write")
+	build.Flags().StringVar(&engine, "engine", "",
+		"engine module version to build against; overrides the version resolved from the running binary")
 	return build
 }
 
-func runBuild(cmd *cobra.Command, with []string, output string) error {
+func runBuild(cmd *cobra.Command, with []string, output, engine string) error {
 	coordinates := make([]plugbuild.Coordinate, 0, len(with))
 	for _, raw := range with {
 		coordinate, err := plugbuild.ParseCoordinate(raw)
@@ -49,6 +52,7 @@ func runBuild(cmd *cobra.Command, with []string, output string) error {
 	result, err := plugbuild.Build(cmd.Context(), plugbuild.Request{
 		Coordinates: coordinates,
 		Output:      output,
+		Engine:      engine,
 		Progress:    cmd.ErrOrStderr(),
 	})
 	if err != nil {
