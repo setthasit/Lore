@@ -109,7 +109,7 @@ func (t syncNowTool) handle(ctx context.Context, _ *sdk.CallToolRequest, in sync
 		return nil, syncAcknowledgment{}, toolError(t.log, syncNowName, err)
 	}
 
-	return nil, newSyncAcknowledgment(in.Source, result, time.Now()), nil
+	return nil, newSyncAcknowledgment(t.log, in.Source, result, time.Now()), nil
 }
 
 func (t syncStatusTool) handle(ctx context.Context, _ *sdk.CallToolRequest, _ syncStatusInput) (*sdk.CallToolResult, indexStatus, error) {
@@ -121,7 +121,7 @@ func (t syncStatusTool) handle(ctx context.Context, _ *sdk.CallToolRequest, _ sy
 	return nil, newIndexStatus(stats, time.Now()), nil
 }
 
-func newSyncAcknowledgment(source string, result services.SyncResult, now time.Time) syncAcknowledgment {
+func newSyncAcknowledgment(log *slog.Logger, source string, result services.SyncResult, now time.Time) syncAcknowledgment {
 	ack := syncAcknowledgment{Synced: source}
 	if source == "" {
 		ack.Synced = allSources
@@ -133,8 +133,10 @@ func newSyncAcknowledgment(source string, result services.SyncResult, now time.T
 		}
 	}
 	for _, failure := range result.Failures {
-		_, message := transport.Classify(failure.Err)
-		ack.Failures = append(ack.Failures, instanceFailure{Instance: failure.Instance, Error: message})
+		ack.Failures = append(ack.Failures, instanceFailure{
+			Instance: failure.Instance,
+			Error:    transport.ClassifyInstanceFailure(log, syncNowName, failure.Instance, failure.Err),
+		})
 	}
 
 	return ack
