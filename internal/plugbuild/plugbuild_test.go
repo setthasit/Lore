@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -270,6 +271,103 @@ func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
 		}
 	}
 	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildFetchesTheEngineVersionTheRequestNames(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		engine  string
+		fetched string
+	}{
+		{
+			name:    "a named version wins over the one the running binary resolves",
+			engine:  "v0.4.0",
+			fetched: "v0.4.0",
+		},
+		{
+			name:    "an unnamed version leaves the running binary to resolve one",
+			fetched: engineVersion(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scratchParent, output := buildDirs(t, "lore")
+
+			runner := &fakeRunner{}
+			if _, err := Build(context.Background(), Request{
+				Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+				Output:      output,
+				Engine:      tc.engine,
+				Runner:      runner,
+			}); err != nil {
+				t.Fatalf("Build() = %v", err)
+			}
+
+			want := "go get " + engineModule + "@" + tc.fetched
+			if got := runner.commands(); !slices.Contains(got, want) {
+				t.Errorf("commands =\n%s\nwant %q among them", strings.Join(got, "\n"), want)
+			}
+			assertNoScratchModule(t, scratchParent)
+		})
+	}
+}
+
+func TestStampedVersionResolvesTheEngineTheBinaryWasLinkedAgainst(t *testing.T) {
+	const pseudo = "v0.4.2-0.20260115120000-abcdef123456"
+	linear := &debug.Module{Path: "github.com/jdoe/lore-linear", Version: "v0.3.1"}
+
+	for _, tc := range []struct {
+		name string
+		main string
+		deps []*debug.Module
+		want string
+	}{
+		{
+			name: "the binary carries a release version of its own",
+			main: "v0.5.0",
+			deps: []*debug.Module{{Path: engineModule, Version: "v0.4.0"}},
+			want: "v0.5.0",
+		},
+		{
+			name: "a customised binary links the engine as a dependency",
+			main: develVersion,
+			deps: []*debug.Module{linear, {Path: engineModule, Version: pseudo}},
+			want: pseudo,
+		},
+		{
+			name: "the binary carries no version at all",
+			deps: []*debug.Module{{Path: engineModule, Version: "v0.4.0"}},
+			want: "v0.4.0",
+		},
+		{
+			name: "the engine dependency is a local checkout no proxy serves",
+			main: develVersion,
+			deps: []*debug.Module{{
+				Path:    engineModule,
+				Version: "v0.4.0",
+				Replace: &debug.Module{Path: engineModule, Version: develVersion},
+			}},
+			want: latestVersion,
+		},
+		{
+			name: "the engine dependency is unstamped as well",
+			main: develVersion,
+			deps: []*debug.Module{{Path: engineModule, Version: develVersion}},
+			want: latestVersion,
+		},
+		{
+			name: "nothing in the build links the engine",
+			main: develVersion,
+			deps: []*debug.Module{linear},
+			want: latestVersion,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := debug.BuildInfo{Main: debug.Module{Version: tc.main}, Deps: tc.deps}
+			if got := stampedVersion(&info); got != tc.want {
+				t.Errorf("stampedVersion() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestBuildProducesARunnableBinary(t *testing.T) {

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,6 +61,67 @@ func TestBuildWithoutAToolchainIsAPreconditionFailure(t *testing.T) {
 	if res.exitCode != exitPrecondition {
 		t.Errorf("exit = %d, want %d; stderr = %q", res.exitCode, exitPrecondition, res.stderr)
 	}
+}
+
+func TestBuildBuildsAgainstTheEngineTheFlagNames(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		flag    []string
+		fetched string
+	}{
+		{
+			name:    "the flag pins the engine",
+			flag:    []string{"--engine", "v0.4.0"},
+			fetched: "v0.4.0",
+		},
+		{
+			name:    "no flag leaves the version to the running binary",
+			fetched: "latest",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invocations := fakeToolchain(t)
+
+			args := append([]string{
+				"build",
+				"--with", "github.com/jdoe/lore-linear@v0.3.1",
+				"--output", filepath.Join(t.TempDir(), "lore"),
+			}, tc.flag...)
+			res := run(t, nil, args...)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, want %d; stderr = %q", res.exitCode, exitOK, res.stderr)
+			}
+
+			raw, err := os.ReadFile(invocations)
+			if err != nil {
+				t.Fatalf("read the recorded go invocations: %v", err)
+			}
+			calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
+
+			want := "get github.com/setthasit/Lore@" + tc.fetched
+			if !slices.Contains(calls, want) {
+				t.Errorf("go was called as\n%s\nwant %q among them", strings.Join(calls, "\n"), want)
+			}
+		})
+	}
+}
+
+func fakeToolchain(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	invocations := filepath.Join(dir, "invocations")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> \"" + invocations + "\"\n" +
+		"case \"$1\" in\n" +
+		"list) echo v0.4.2 ;;\n" +
+		"build) printf '#!/bin/sh\\necho no plugins\\n' > \"$3\"; /bin/chmod +x \"$3\" ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write a fake toolchain: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	return invocations
 }
 
 func TestPluginSearchPrintsEveryColumnAMatchNeeds(t *testing.T) {
