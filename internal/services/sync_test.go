@@ -433,6 +433,40 @@ func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
 	}
 }
 
+func TestSyncRefusesABatchCarryingAnUnknownReferenceKindBeforeItIsStored(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+	m.linkedPending()
+
+	// The unknown kind rides the second document, so a check that wrote as it went would already have stored the first.
+	tainted := syncDoc("github:pr:2")
+	tainted.Refs = []lore.RawRef{{Kind: "jira_epic", Value: "PROJ-1"}}
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(
+		newSyncStream(syncBatch(lore.Cursor{"page": "1"}, syncDoc("github:pr:1"), tainted)).seq())
+	m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil)
+	// No UpsertDocuments, no ReplaceChunks and no SetCursor are declared: a write, an embedding or a checkpoint on this batch is an unexpected call.
+
+	res, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+	if err != nil {
+		t.Fatalf("Sync() = %v, want the round to survive its only instance failing", err)
+	}
+
+	failure := onlySyncFailure(t, res, "github")
+	assertSyncFailureKind(t, failure, internalerror.KindBadRequest)
+
+	message := syncMessage(t, failure.Err)
+	for _, want := range []string{`"github:pr:2"`, `"jira_epic"`} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the github instance failed with %q, want it to name %s", message, want)
+		}
+	}
+}
+
 func TestSyncRunsTheRemainingInstancesAfterOneFails(t *testing.T) {
 	t.Parallel()
 
