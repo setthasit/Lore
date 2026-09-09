@@ -46,7 +46,6 @@ type cosignKey struct {
 	verify    func(signed, signature []byte) bool
 }
 
-// cosign hashes with the digest the curve's size implies; a P-384 signature checked against SHA-256 is rejected.
 var cosignCurveHashes = map[elliptic.Curve]func() hash.Hash{
 	elliptic.P256(): sha256.New,
 	elliptic.P384(): sha512.New384,
@@ -83,15 +82,25 @@ func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, err
 			return ed25519.Verify(key, signed, signature)
 		}}
 	case *ecdsa.PublicKey:
-		newHash, usable := cosignCurveHashes[key.Curve]
+		newCurveHash, usable := cosignCurveHashes[key.Curve]
 		if !usable {
 			return verifier{}, refuse("an ECDSA key on curve " + key.Curve.Params().Name +
 				", which this build cannot verify — publish a key on P-256 (the cosign default), P-384 or P-521")
 		}
+		// cosign hashes ECDSA with SHA-256 on every curve; other signers use the digest the curve implies — both verify.
+		newDigests := []func() hash.Hash{sha256.New}
+		if key.Curve != elliptic.P256() {
+			newDigests = append(newDigests, newCurveHash)
+		}
 		loaded.cosign = cosignKey{algorithm: "ECDSA", verify: func(signed, signature []byte) bool {
-			digest := newHash()
-			digest.Write(signed)
-			return ecdsa.VerifyASN1(key, digest.Sum(nil), signature)
+			for _, newDigest := range newDigests {
+				digest := newDigest()
+				digest.Write(signed)
+				if ecdsa.VerifyASN1(key, digest.Sum(nil), signature) {
+					return true
+				}
+			}
+			return false
 		}}
 	default:
 		return verifier{}, refuse("a " + fmt.Sprintf("%T", key) + " public key, which this build cannot verify" +
