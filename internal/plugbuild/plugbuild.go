@@ -24,6 +24,8 @@ const scratchModule = "lorecustom"
 // Without VCS info the go command stamps "(devel)", which no proxy resolves.
 const develVersion = "(devel)"
 
+const latestVersion = "latest"
+
 const goCommand = "go"
 
 // Runner returns the program's combined stdout and stderr, on success and on failure.
@@ -221,15 +223,31 @@ func (execRunner) Run(ctx context.Context, dir, program string, args ...string) 
 
 func engineVersion() string {
 	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == develVersion {
-		return "latest"
+	if !ok {
+		return latestVersion
 	}
-	return info.Main.Version
+	return stampedVersion(info)
+}
+
+func stampedVersion(info *debug.BuildInfo) string {
+	if isStamped(info.Main.Version) {
+		return info.Main.Version
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == engineModule && dep.Replace == nil && isStamped(dep.Version) {
+			return dep.Version
+		}
+	}
+	return latestVersion
+}
+
+func isStamped(version string) bool {
+	return version != "" && version != develVersion
 }
 
 // A replaced module still needs a version on its require line, and nothing fetches it.
 func replacedVersion(version string) string {
-	if version == "" || version == develVersion || version == "latest" {
+	if !isStamped(version) || version == latestVersion {
 		return "v0.0.0"
 	}
 	return version
