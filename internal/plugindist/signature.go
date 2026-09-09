@@ -92,7 +92,7 @@ func loadCosignKey(name, pubkeyPath string, key crypto.PublicKey) (verifier, err
 			return verifier{}, refuse("an ECDSA key on curve " + key.Curve.Params().Name +
 				", which this build cannot verify — publish a key on P-256 (the cosign default), P-384 or P-521")
 		}
-		// cosign hashes ECDSA with SHA-256 on every curve; other signers use the digest the curve implies — both verify.
+		// cosign before 2.6 hashed SHA-256 on every curve; newer cosign and other signers use the curve's digest.
 		newDigests := []func() hash.Hash{sha256.New}
 		if key.Curve != elliptic.P256() {
 			newDigests = append(newDigests, newCurveHash)
