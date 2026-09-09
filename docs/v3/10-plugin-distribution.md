@@ -232,10 +232,11 @@ Which tool signed the release is read from the key file's own shape, so a
 workspace never declares it twice. Both formats are recognised because both are
 verifiable with the standard library alone:
 
-| Format | Public key | Signature |
+| Format, key | Public key | Signature |
 |---|---|---|
-| cosign | a PEM public key — ECDSA on P-256 (the cosign default), P-384 or P-521, or Ed25519 | base64 in a `<file>.sig` sibling, as `cosign sign-blob --key` produces and goreleaser publishes |
-| minisign | the 42-byte `Ed` key line | a `<file>.minisig` sibling, Ed25519 over the file's own bytes |
+| cosign, ECDSA | a PEM key on P-256 (the cosign default), P-384 or P-521; any other curve is refused when the key loads | base64 in a `<file>.sig` sibling, as `cosign sign-blob --key` produces and goreleaser publishes — over SHA-256 or the digest the curve implies; either verifies |
+| cosign, Ed25519 | a PEM Ed25519 key | the same `<file>.sig` sibling, pure or Ed25519ph over SHA-512; either verifies |
+| minisign | the 42-byte `Ed` key line | a `<file>.minisig` sibling, Ed25519 over the file's own bytes, as `minisign -S -l -m checksums.txt` produces. Plain `minisign -S` prehashes instead, and that signature is refused |
 
 Minisign's prehashed `ED` variant hashes with BLAKE2b, which the standard
 library does not offer, so such a signature is refused by name rather than
