@@ -251,6 +251,16 @@ func newCosignKey(t *testing.T, curve elliptic.Curve) (*ecdsa.PrivateKey, string
 	return key, cosignPublicKeyFile(t, &key.PublicKey)
 }
 
+func newCosignEd25519Key(t *testing.T) (ed25519.PrivateKey, string) {
+	t.Helper()
+
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate an ed25519 key: %v", err)
+	}
+	return private, cosignPublicKeyFile(t, public)
+}
+
 func cosignPublicKeyFile(t *testing.T, public crypto.PublicKey) string {
 	t.Helper()
 
@@ -285,33 +295,147 @@ func cosignSign(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte {
 	default:
 		t.Fatalf("no cosign digest for curve %s", curve)
 	}
+	return cosignSignDigest(t, key, hashed)
+}
+
+func cosignSignSHA256(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte {
+	t.Helper()
+
+	sum := sha256.Sum256(signed)
+	return cosignSignDigest(t, key, sum[:])
+}
+
+func cosignSignDigest(t *testing.T, key *ecdsa.PrivateKey, hashed []byte) []byte {
+	t.Helper()
 
 	signature, err := ecdsa.SignASN1(rand.Reader, key, hashed)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
+	return cosignSignatureFile(signature)
+}
+
+func cosignSignPure(t *testing.T, key ed25519.PrivateKey, signed []byte) []byte {
+	t.Helper()
+
+	return cosignSignatureFile(ed25519.Sign(key, signed))
+}
+
+func cosignSignPrehashed(t *testing.T, key ed25519.PrivateKey, signed []byte) []byte {
+	t.Helper()
+
+	digest := sha512.Sum512(signed)
+	signature, err := key.Sign(rand.Reader, digest[:], &ed25519.Options{Hash: crypto.SHA512})
+	if err != nil {
+		t.Fatalf("sign over a sha-512 digest: %v", err)
+	}
+	return cosignSignatureFile(signature)
+}
+
+func cosignSignatureFile(signature []byte) []byte {
 	return []byte(base64.StdEncoding.EncodeToString(signature) + "\n")
 }
 
 func TestInstallVerifiesACosignSignatureOnTheLargerCurves(t *testing.T) {
 	t.Parallel()
 
-	for _, curve := range []elliptic.Curve{elliptic.P384(), elliptic.P521()} {
-		t.Run(curve.Params().Name, func(t *testing.T) {
+	for _, signer := range []struct {
+		digest string
+		sign   func(t *testing.T, key *ecdsa.PrivateKey, signed []byte) []byte
+	}{
+		{digest: "the curve digest", sign: cosignSign},
+		{digest: "sha-256", sign: cosignSignSHA256},
+	} {
+		for _, curve := range []elliptic.Curve{elliptic.P384(), elliptic.P521()} {
+			t.Run(curve.Params().Name+" over "+signer.digest, func(t *testing.T) {
+				t.Parallel()
+
+				scene := newScene(t)
+				key, pubkeyPath := newCosignKey(t, curve)
+				scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix,
+					signer.sign(t, key, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
+
+				result, err := scene.installer.Install(context.Background(),
+					Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{})
+				if err != nil {
+					t.Fatalf("install a release signed on %s over %s: %v",
+						curve.Params().Name, signer.digest, err)
+				}
+				if !result.Signed {
+					t.Fatal("a verified signature is not reported")
+				}
+			})
+		}
+	}
+}
+
+func TestInstallVerifiesACosignEd25519Signature(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		sign func(t *testing.T, key ed25519.PrivateKey, signed []byte) []byte
+	}{
+		{name: "pure", sign: cosignSignPure},
+		{name: "prehashed over sha-512", sign: cosignSignPrehashed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
 			scene := newScene(t)
-			key, pubkeyPath := newCosignKey(t, curve)
+			key, pubkeyPath := newCosignEd25519Key(t)
 			scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix,
-				cosignSign(t, key, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
+				test.sign(t, key, scene.fake.Asset("v0.3.1", ChecksumsAsset)))
 
 			result, err := scene.installer.Install(context.Background(),
 				Request{Coordinate: scene.requiring(pubkeyPath)}, &Lock{})
 			if err != nil {
-				t.Fatalf("install a release signed on %s: %v", curve.Params().Name, err)
+				t.Fatalf("install a release signed with an ed25519 key: %v", err)
 			}
 			if !result.Signed {
 				t.Fatal("a verified signature is not reported")
+			}
+		})
+	}
+}
+
+func TestInstallRefusesACosignSignatureFromAnotherKey(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		forge func(t *testing.T, signed []byte) (signature []byte, declared string)
+	}{
+		{
+			name: "an ecdsa signature over sha-256 on p-384",
+			forge: func(t *testing.T, signed []byte) ([]byte, string) {
+				attacker, _ := newCosignKey(t, elliptic.P384())
+				_, declared := newCosignKey(t, elliptic.P384())
+				return cosignSignSHA256(t, attacker, signed), declared
+			},
+		},
+		{
+			name: "a prehashed ed25519 signature",
+			forge: func(t *testing.T, signed []byte) ([]byte, string) {
+				attacker, _ := newCosignEd25519Key(t)
+				_, declared := newCosignEd25519Key(t)
+				return cosignSignPrehashed(t, attacker, signed), declared
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			scene := newScene(t)
+			signature, declared := test.forge(t, scene.fake.Asset("v0.3.1", ChecksumsAsset))
+			scene.fake.Attach("v0.3.1", ChecksumsAsset+cosignSuffix, signature)
+
+			if _, err := scene.installer.Install(context.Background(),
+				Request{Coordinate: scene.requiring(declared)}, &Lock{}); err == nil {
+				t.Fatal("a signature from another key verified, want a refusal")
+			}
+			if _, err := os.Stat(cacheDir(t, scene.store, "linear", "v0.3.1")); !os.IsNotExist(err) {
+				t.Fatal("a refused install left a cached version behind")
 			}
 		})
 	}
