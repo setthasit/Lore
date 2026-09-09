@@ -380,6 +380,10 @@ func (s *syncOrchestrator) commitBatch(ctx context.Context, instance string, bat
 		return 0, err
 	}
 
+	if err := assertDocumentRefKinds(batch.Docs); err != nil {
+		return 0, err
+	}
+
 	if err := s.store.UpsertDocuments(ctx, batch.Docs); err != nil {
 		return 0, internalerror.NewInternalError(
 			fmt.Sprintf("could not store %d documents from %s", len(batch.Docs), instance), err)
@@ -411,6 +415,18 @@ func assertInstanceIdentity(instance string, docs []lore.Document) error {
 			return internalerror.NewBadRequestError(fmt.Sprintf(
 				"the %s source emitted document %q; every document id of an instance must start with %q",
 				instance, doc.ID, prefix), nil)
+		}
+	}
+
+	return nil
+}
+
+func assertDocumentRefKinds(docs []lore.Document) error {
+	for _, doc := range docs {
+		for _, ref := range doc.Refs {
+			if err := assertKnownRefKind(doc.ID, ref.Kind); err != nil {
+				return err
+			}
 		}
 	}
 

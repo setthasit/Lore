@@ -57,16 +57,22 @@ var refKindVocabulary = func() string {
 
 func assertKnownRefKinds(refs []entities.PendingRef) error {
 	for _, ref := range refs {
-		if slices.Contains(knownRefKinds, ref.Ref.Kind) {
-			continue
+		if err := assertKnownRefKind(ref.SourceDoc, ref.Ref.Kind); err != nil {
+			return err
 		}
-
-		return internalerror.NewBadRequestError(fmt.Sprintf(
-			"document %q carries a reference of unknown kind %q; the reference vocabulary is closed and holds %s",
-			ref.SourceDoc, ref.Ref.Kind, refKindVocabulary), nil)
 	}
 
 	return nil
+}
+
+func assertKnownRefKind(source lore.DocID, kind lore.RefKind) error {
+	if slices.Contains(knownRefKinds, kind) {
+		return nil
+	}
+
+	return internalerror.NewBadRequestError(fmt.Sprintf(
+		"document %q carries a reference of unknown kind %q; the reference vocabulary is closed and holds %s",
+		source, kind, refKindVocabulary), nil)
 }
 
 var supersedePhrases = []string{"supersede", "replaces", "replaced by"}
