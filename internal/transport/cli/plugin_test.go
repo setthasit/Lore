@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
 	lore "github.com/setthasit/Lore/sdk"
 )
@@ -75,7 +79,7 @@ func TestRenderPluginsOutput(t *testing.T) {
 
 func TestPluginListReportsATamperedCacheAsTampered(t *testing.T) {
 	fake := newFakeReleases(t)
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t))
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), pluginScript)
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1")+
 		"  - name: crm\n    from: github.com/acme/lore-crm@v2.0.1\n")
 
@@ -99,5 +103,88 @@ func TestPluginListReportsATamperedCacheAsTampered(t *testing.T) {
 	}
 	if strings.Contains(res.stdout, "not installed — run: lore plugin install linear") {
 		t.Errorf("stdout %q reports the tampered cache as not installed", res.stdout)
+	}
+}
+
+func TestPluginListReportsAWorkspaceThatDoesNotParse(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		lock     string
+		wantFile string
+	}{
+		{
+			name:     "a lore.yaml that does not parse",
+			body:     "workspace: myproject\nplugins:\n  - name: [linear\n",
+			wantFile: "lore.yaml",
+		},
+		{
+			name:     "a lockfile that does not parse",
+			body:     declaredConfig("github.com/jdoe/lore-linear@v0.3.1"),
+			lock:     "plugins: [linear\n",
+			wantFile: plugindist.LockFileName,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfigFile(t, test.body)
+			if test.lock != "" {
+				lock := filepath.Join(filepath.Dir(path), plugindist.LockFileName)
+				if err := os.WriteFile(lock, []byte(test.lock), 0o600); err != nil {
+					t.Fatalf("seed the lockfile: %v", err)
+				}
+			}
+
+			res := runOn(t, stubRegistry(t, forgePlugin()), nil, "", "plugin", "list", "--config", path)
+			if res.exitCode != exitBadRequest {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+			}
+			if want := "cannot parse " + filepath.Join(filepath.Dir(path), test.wantFile); !strings.Contains(res.stderr, want) {
+				t.Errorf("stderr = %q, want it to name %q", res.stderr, want)
+			}
+			if res.stdout != "" {
+				t.Errorf("stdout = %q, want no table for a workspace that cannot be read", res.stdout)
+			}
+		})
+	}
+}
+
+func TestPluginListReportsAConfigurationItCannotRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows ignores mode 0000, so the file stays readable")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores mode 0000, so the file stays readable")
+	}
+
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("make the configuration unreadable: %v", err)
+	}
+
+	res := runOn(t, stubRegistry(t, forgePlugin()), nil, "", "plugin", "list", "--config", path)
+	if res.exitCode != exitInternal {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitInternal, res.stderr)
+	}
+	if want := "cannot read " + path; !strings.Contains(res.stderr, want) {
+		t.Errorf("stderr = %q, want it to name %q", res.stderr, want)
+	}
+	if res.stdout != "" {
+		t.Errorf("stdout = %q, want no table for a workspace that cannot be read", res.stdout)
+	}
+}
+
+func TestPluginListWithoutAConfigurationListsThisBuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+
+	res := runOn(t, stubRegistry(t, forgePlugin()), nil, "", "plugin", "list", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	for _, want := range []string{"forge", "builtin", "a stub forge source"} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout = %q, want it to list %q", res.stdout, want)
+		}
 	}
 }

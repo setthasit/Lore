@@ -31,6 +31,12 @@ const forgeAnswers = "\nacme/app\n\n\n\n\n"
 
 const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
 
+const linearManifest = `{"name":"linear","kind":"source","api_version":1,` +
+	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
+	`"fields":[{"name":"team","type":"string","required":true,"prompt":"Linear team key"},` +
+	`{"name":"include_backlog","type":"bool","prompt":"Include the backlog"}],` +
+	`"secrets":[{"key":"api_key","config_field":"api_key_env","default_env":"LINEAR_API_KEY"}]}`
+
 func TestSourceAddAppendsASequenceItem(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
@@ -323,6 +329,182 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 				t.Errorf("file = %q, want it untouched after the refusal", after)
 			}
 		})
+	}
+}
+
+func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
+	path := installLinearSource(t)
+	before := readConfigFile(t, path)
+
+	res := runOn(t, sourceRegistry(t), nil, "LINEAR_TOKEN\nSRE\ntrue\n",
+		"source", "add", "linear", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	const transcript = "the questions below are the ones this plugin's own manifest declares;" +
+		" answer each one with configuration, and a secret with the NAME of an environment variable," +
+		" never the value\n" +
+		"name of the environment variable holding the linear api key — the name, never the value: " +
+		"Linear team key: " +
+		"Include the backlog: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want it to open with the notice and the manifest's own questions\n%q",
+			res.stdout, transcript)
+	}
+	if !strings.Contains(res.stdout, "added sources[linear] to "+path) ||
+		!strings.Contains(res.stdout, "next: export LINEAR_TOKEN") {
+		t.Errorf("stdout = %q, want the path written and the variable to export", res.stdout)
+	}
+
+	after := readConfigFile(t, path)
+	const item = `  - use: linear
+    with:
+      api_key_env: LINEAR_TOKEN
+      team: SRE
+      include_backlog: true
+`
+	if !strings.Contains(after, item) {
+		t.Errorf("file =\n%s\nwant it to hold\n%s", after, item)
+	}
+	assertOriginalLinesKept(t, before, after)
+
+	cfg := decodeConfigFile(t, after)
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("the file no longer validates: %v", err)
+	}
+	if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "linear" {
+		t.Fatalf("sources = %+v, want the installed plugin's instance appended", cfg.Sources)
+	}
+	values, err := cfg.Sources[1].WithValues()
+	if err != nil {
+		t.Fatalf("with: does not decode: %v", err)
+	}
+	for key, want := range map[string]any{"api_key_env": "LINEAR_TOKEN", "team": "SRE", "include_backlog": true} {
+		if values[key] != want {
+			t.Errorf("with.%s = %v, want %v", key, values[key], want)
+		}
+	}
+}
+
+func TestSourceAddRefusesACaptureTheRuntimeRejects(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		wantExit int
+		wantErr  string
+	}{
+		{
+			name:     "a manifest that renames the plugin",
+			manifest: strings.Replace(linearManifest, `"name":"linear"`, `"name":"linear-cloud"`, 1),
+			wantExit: exitBadRequest,
+			wantErr:  `plugins[linear] is a binary whose manifest calls itself "linear-cloud"`,
+		},
+		{
+			name:     "a field name that is not snake_case",
+			manifest: strings.Replace(linearManifest, `"name":"team"`, `"name":"TeamKey"`, 1),
+			wantExit: exitInternal,
+			wantErr:  `plugin "linear" declares field "TeamKey"; a field name must be snake_case`,
+		},
+		{
+			name:     "a secret whose config field would hold the credential",
+			manifest: strings.Replace(linearManifest, `"config_field":"api_key_env"`, `"config_field":"api_key"`, 1),
+			wantExit: exitInternal,
+			wantErr:  `plugin "linear" declares secret "api_key" with config field "api_key"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := installLinearSource(t)
+			rewriteCapturedManifest(t, test.manifest)
+			before := readConfigFile(t, path)
+
+			res := runOn(t, sourceRegistry(t), nil, "LINEAR_TOKEN\nSRE\ntrue\n",
+				"source", "add", "linear", "--config", path)
+			if res.exitCode != test.wantExit {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, test.wantExit, res.stderr)
+			}
+			if !strings.Contains(res.stderr, test.wantErr) {
+				t.Errorf("stderr = %q, want it to contain %q", res.stderr, test.wantErr)
+			}
+			if res.stdout != "" {
+				t.Errorf("stdout = %q, want nothing asked before the refusal", res.stdout)
+			}
+			if after := readConfigFile(t, path); after != before {
+				t.Errorf("file =\n%s\nwant it untouched after the refusal:\n%s", after, before)
+			}
+		})
+	}
+}
+
+func TestSourceAddOnAnUnknownPluginListsInstalledAndCompiledInSources(t *testing.T) {
+	path := installLinearSource(t)
+
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+	for _, want := range []string{"nosuchforge", "linear", "forge", "tracker", "lore plugin list"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", res.stderr, want)
+		}
+	}
+}
+
+func TestSourceAddNeverOffersAnInstalledPluginThatIsNoSource(t *testing.T) {
+	path := installLinearSource(t)
+	rewriteCapturedManifest(t, strings.NewReplacer(
+		`"kind":"source"`, `"kind":"provider"`,
+		`"embed":false`, `"embed":true`,
+	).Replace(linearManifest))
+	before := readConfigFile(t, path)
+
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+	if strings.Contains(res.stderr, "linear") {
+		t.Errorf("stderr = %q, want an installed provider left out of the source plugins to add", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "forge") {
+		t.Errorf("stderr = %q, want the compiled-in sources still listed", res.stderr)
+	}
+
+	named := runOn(t, sourceRegistry(t), nil, "", "source", "add", "linear", "--config", path)
+	if named.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", named.exitCode, exitBadRequest, named.stderr)
+	}
+	if !strings.Contains(named.stderr, "unknown source plugin linear") {
+		t.Errorf("stderr = %q, want the named provider refused as no source", named.stderr)
+	}
+	if named.stdout != "" {
+		t.Errorf("stdout = %q, want nothing asked before the refusal", named.stdout)
+	}
+	if after := readConfigFile(t, path); after != before {
+		t.Errorf("file =\n%s\nwant it untouched after the refusal:\n%s", after, before)
+	}
+}
+
+func installLinearSource(t *testing.T) string {
+	t.Helper()
+
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(linearManifest))
+
+	path := writeConfigFile(t, seeded+"\nplugins:\n  - name: linear\n    from: github.com/jdoe/lore-linear@v0.3.1\n")
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	return path
+}
+
+func rewriteCapturedManifest(t *testing.T, manifest string) {
+	t.Helper()
+
+	path := capturedManifestPath(t, installedPluginDir("v0.3.1"))
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("rewrite the captured manifest: %v", err)
 	}
 }
 
