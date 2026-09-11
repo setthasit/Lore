@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -375,6 +376,8 @@ func TestBuildProducesARunnableBinary(t *testing.T) {
 		t.Skip("compiling the engine takes about a minute")
 	}
 
+	warmModuleCache(t)
+
 	// `lore build` gets no -mod=mod, so the sequence has to complete go.sum in the readonly mode the toolchain defaults to.
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")
@@ -403,6 +406,18 @@ func TestBuildProducesARunnableBinary(t *testing.T) {
 		t.Errorf("plugin list =\n%s\nwant the official set alongside it", result.Plugins)
 	}
 	assertNoScratchModule(t, scratchParent)
+}
+
+// A scratch module resolves imports for every platform, so an offline build needs
+// requirements a host build never fetches, such as cobra's windows-only mousetrap.
+func warmModuleCache(t *testing.T) {
+	t.Helper()
+
+	cmd := exec.CommandContext(t.Context(), goCommand, "mod", "download")
+	cmd.Dir = repoRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go mod download: %v\n%s", err, out)
+	}
 }
 
 func writeFakePlugin(t *testing.T) string {
