@@ -169,9 +169,10 @@ func (s *Store) locate(coord Coordinate, lock *Lock) (Report, installRecord, err
 	return report, record, nil
 }
 
+// On Windows, filepath.IsLocal also refuses reserved device names such as NUL, which a base name check accepts.
 func isCacheEntryName(name string) bool {
-	return name != "" && !strings.HasPrefix(name, ".") && !strings.ContainsAny(name, `/\`) &&
-		filepath.Base(name) == name
+	return filepath.IsLocal(name) && !strings.HasPrefix(name, ".") &&
+		!strings.ContainsAny(name, `/\`) && filepath.Base(name) == name
 }
 
 func redactFrom(from string) (safe string, readable bool) {
