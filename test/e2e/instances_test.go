@@ -40,6 +40,13 @@ const (
 	acmeCommentID   = "10101"
 	legacyCommentID = "20202"
 
+	primaryInstance = "jira-primary"
+	mirrorInstance  = "jira-mirror"
+
+	mirroredQuestion = "who owns the invoice ordering?"
+
+	ticketKeyConfidence = 0.9
+
 	instanceJiraEmail = "lore-bot@example.invalid"
 	instanceJiraToken = "e2e_instances_jira_token"
 
@@ -48,6 +55,7 @@ const (
 
 	instanceDocuments    = 4
 	perInstanceDocuments = 2
+	mirroredDocuments    = 2 * perInstanceDocuments
 
 	noFailingInstance = ""
 
@@ -80,6 +88,29 @@ sources:
     with:
       base_url: %[2]s/legacy
       projects: [OLD]
+      email_env: LORE_E2E_JIRA_EMAIL
+      token_env: LORE_E2E_JIRA_TOKEN
+embedder:
+  provider: e2e-stub
+  model: bag-of-words
+`
+
+// Both sources address the one site on purpose: that is what leaves ACME-1 in two instances at once.
+const mirroredConfig = `workspace: lore-e2e-instances
+index_path: %[1]s
+sources:
+  - id: jira-primary
+    use: jira
+    with:
+      base_url: %[2]s/acme
+      projects: [ACME]
+      email_env: LORE_E2E_JIRA_EMAIL
+      token_env: LORE_E2E_JIRA_TOKEN
+  - id: jira-mirror
+    use: jira
+    with:
+      base_url: %[2]s/acme
+      projects: [ACME]
       email_env: LORE_E2E_JIRA_EMAIL
       token_env: LORE_E2E_JIRA_TOKEN
 embedder:
@@ -146,10 +177,23 @@ type instanceWorkspace struct {
 	store  repositories.IndexStore
 	round  services.SyncOrchestrator
 	status services.StatusService
+	query  services.QueryService
 }
 
 // failing is the instance whose site answers every request with a hard error; empty leaves both healthy.
 func newInstanceWorkspace(t *testing.T, failing string) *instanceWorkspace {
+	t.Helper()
+
+	return startInstanceWorkspace(t, instanceConfig, failing)
+}
+
+func newMirroredWorkspace(t *testing.T) *instanceWorkspace {
+	t.Helper()
+
+	return startInstanceWorkspace(t, mirroredConfig, noFailingInstance)
+}
+
+func startInstanceWorkspace(t *testing.T, config, failing string) *instanceWorkspace {
 	t.Helper()
 
 	t.Setenv(instanceEmailEnv, instanceJiraEmail)
@@ -166,8 +210,8 @@ func newInstanceWorkspace(t *testing.T, failing string) *instanceWorkspace {
 	w := &instanceWorkspace{api: api}
 	graph := fx.New(
 		fx.NopLogger,
-		di.Workspace(writeInstanceConfig(t, api.server.URL), reg),
-		fx.Populate(&w.store, &w.round, &w.status),
+		di.Workspace(writeInstanceConfig(t, config, api.server.URL), reg),
+		fx.Populate(&w.store, &w.round, &w.status, &w.query),
 	)
 	if err := graph.Err(); err != nil {
 		t.Fatalf("build the workspace graph: %v", err)
@@ -184,12 +228,12 @@ func newInstanceWorkspace(t *testing.T, failing string) *instanceWorkspace {
 	return w
 }
 
-func writeInstanceConfig(t *testing.T, baseURL string) string {
+func writeInstanceConfig(t *testing.T, config, baseURL string) string {
 	t.Helper()
 
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "lore.yaml")
-	body := fmt.Sprintf(instanceConfig, strconv.Quote(filepath.Join(dir, instanceWorkspaceIndex)), baseURL)
+	body := fmt.Sprintf(config, strconv.Quote(filepath.Join(dir, instanceWorkspaceIndex)), baseURL)
 	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write %s: %v", configPath, err)
 	}
@@ -305,6 +349,36 @@ func (w *instanceWorkspace) assertNotIndexed(ctx context.Context, t *testing.T, 
 	}
 }
 
+func (w *instanceWorkspace) edgesOut(ctx context.Context, t *testing.T, from lore.DocID) []entities.Edge {
+	t.Helper()
+
+	edges, err := w.store.Neighbors(ctx, []lore.DocID{from}, nil, entities.DirOut)
+	if err != nil {
+		t.Fatalf("read the edges out of %s: %v", from, err)
+	}
+
+	return edges
+}
+
+func (w *instanceWorkspace) pendingRefs(ctx context.Context, t *testing.T) []entities.PendingRef {
+	t.Helper()
+
+	refs, err := w.store.PendingRefs(ctx)
+	if err != nil {
+		t.Fatalf("read the references awaiting a target: %v", err)
+	}
+
+	return refs
+}
+
+func mirroredTicket(instance string) lore.DocID {
+	return lore.NewDocID(instance, lore.DocTypeTicket, acmeTicket)
+}
+
+func mirroredComment(instance string) lore.DocID {
+	return lore.NewDocID(instance, lore.DocTypeTicketComment, acmeTicket+"#"+acmeCommentID)
+}
+
 func cursorKeys(stats entities.IndexStats) []string {
 	keys := make([]string, len(stats.Cursors))
 	for i, cursor := range stats.Cursors {
@@ -417,5 +491,71 @@ func TestAFailingJiraInstanceDoesNotStopTheHealthyOne(t *testing.T) {
 	}
 	if cursor := w.cursor(ctx, t, acmeInstance); len(cursor) != 0 {
 		t.Errorf("the broken instance checkpointed %v, want its position untouched", cursor)
+	}
+}
+
+func TestMirroredJiraInstancesLinkTheSharedTicketKeyInsideThemselves(t *testing.T) {
+	ctx := context.Background()
+	w := newMirroredWorkspace(t)
+
+	if result := w.sync(ctx, t, services.SyncOptions{}); len(result.Failures) != 0 {
+		t.Fatalf("a round over two mirrored sites reported failures %+v", result.Failures)
+	}
+
+	if stats := w.stats(ctx, t); stats.Documents != mirroredDocuments {
+		t.Fatalf("indexed documents = %d, want %d: each instance holds %s and its comment",
+			stats.Documents, mirroredDocuments, acmeTicket)
+	}
+
+	for _, instance := range []string{primaryInstance, mirrorInstance} {
+		xrefAssertEdges(t, "edges out of the "+instance+" comment",
+			w.edgesOut(ctx, t, mirroredComment(instance)),
+			[]entities.Edge{{
+				Src:        mirroredComment(instance),
+				Dst:        mirroredTicket(instance),
+				Kind:       entities.EdgeKindReferencesDoc,
+				Confidence: ticketKeyConfidence,
+			}})
+	}
+
+	if refs := w.pendingRefs(ctx, t); len(refs) != 0 {
+		t.Errorf("references still awaiting a target = %+v, want %s resolved in both instances", refs, acmeTicket)
+	}
+}
+
+func TestAQueryFilteredToOneMirroredInstanceCitesOnlyItsOwnDocuments(t *testing.T) {
+	ctx := context.Background()
+	w := newMirroredWorkspace(t)
+
+	if result := w.sync(ctx, t, services.SyncOptions{}); len(result.Failures) != 0 {
+		t.Fatalf("a round over two mirrored sites reported failures %+v", result.Failures)
+	}
+
+	for _, instance := range []string{primaryInstance, mirrorInstance} {
+		bundle, err := w.query.FindDecision(ctx, services.FindDecisionRequest{
+			Question: mirroredQuestion,
+			Source:   instance,
+			DocType:  string(lore.DocTypeTicketComment),
+		})
+		if err != nil {
+			t.Fatalf("find_decision %q over %s: %v", mirroredQuestion, instance, err)
+		}
+
+		cited := make([]lore.DocID, len(bundle.Nodes))
+		for i, node := range bundle.Nodes {
+			if node.Doc.Source != instance {
+				t.Errorf("a query over %s cites %s, whose source is %q",
+					instance, node.Doc.ID, node.Doc.Source)
+			}
+			cited[i] = node.Doc.ID
+		}
+		slices.Sort(cited)
+
+		want := []lore.DocID{mirroredComment(instance), mirroredTicket(instance)}
+		slices.Sort(want)
+		if !slices.Equal(cited, want) {
+			t.Errorf("a query over %s cites %v, want its comment and the ticket that comment's reference reaches: %v",
+				instance, cited, want)
+		}
 	}
 }
