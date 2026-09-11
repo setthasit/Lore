@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +106,13 @@ func TestOpenRefusesAnOlderSchemaGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	current, err := strconv.Atoi(schemaVersion)
+	if err != nil {
+		t.Fatalf("schema version %q is not a number: %v", schemaVersion, err)
+	}
+	previous := strconv.Itoa(current - 1)
 	_, err = s.db.ExecContext(context.Background(),
-		`UPDATE meta SET value = '1' WHERE key = ?`, metaKeySchemaVersion)
+		`UPDATE meta SET value = ? WHERE key = ?`, previous, metaKeySchemaVersion)
 	if err != nil {
 		t.Fatalf("age the recorded generation: %v", err)
 	}
@@ -117,10 +123,14 @@ func TestOpenRefusesAnOlderSchemaGeneration(t *testing.T) {
 	stale, err := Open(path, testDims)
 	if err == nil {
 		_ = stale.Close()
-		t.Fatal("reopening a generation-1 file succeeded, want a refusal")
+		t.Fatal("reopening a previous-generation file succeeded, want a refusal")
 	}
 	if !strings.Contains(err.Error(), metaKeySchemaVersion) || !strings.Contains(err.Error(), schemaVersion) {
 		t.Errorf("error %q does not name the recorded and expected generations", err)
+	}
+	const rebuild = "this workspace index was built by a different generation and has to be rebuilt — delete the index file and re-sync"
+	if !strings.Contains(err.Error(), rebuild) {
+		t.Errorf("error %q does not tell the operator to rebuild", err)
 	}
 }
 

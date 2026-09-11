@@ -175,6 +175,64 @@ func TestPendingRefsSurviveUpsertAndTargetedDelete(t *testing.T) {
 	}
 }
 
+func TestPendingRefsKeepTheirInstanceScope(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	src := lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/42")
+	anywhere := entities.PendingRef{
+		SourceDoc: src,
+		Ref:       lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+	}
+	eu := entities.PendingRef{
+		SourceDoc: src,
+		Ref:       lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-eu"},
+	}
+	us := entities.PendingRef{
+		SourceDoc: src,
+		Ref:       lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-us"},
+	}
+
+	if err := s.UpsertPendingRefs(ctx, []entities.PendingRef{anywhere, eu, us}); err != nil {
+		t.Fatalf("UpsertPendingRefs: %v", err)
+	}
+	if err := s.UpsertPendingRefs(ctx, []entities.PendingRef{eu}); err != nil {
+		t.Fatalf("UpsertPendingRefs (again): %v", err)
+	}
+
+	got, err := s.PendingRefs(ctx)
+	if err != nil {
+		t.Fatalf("PendingRefs: %v", err)
+	}
+	if want := []entities.PendingRef{anywhere, eu, us}; !slices.Equal(got, want) {
+		t.Fatalf("PendingRefs = %+v, want %+v", got, want)
+	}
+
+	if err := s.DeletePendingRefs(ctx, []entities.PendingRef{eu}); err != nil {
+		t.Fatalf("DeletePendingRefs: %v", err)
+	}
+
+	got, err = s.PendingRefs(ctx)
+	if err != nil {
+		t.Fatalf("PendingRefs (after delete): %v", err)
+	}
+	if want := []entities.PendingRef{anywhere, us}; !slices.Equal(got, want) {
+		t.Fatalf("PendingRefs (after delete) = %+v, want %+v", got, want)
+	}
+
+	if err := s.DeletePendingRefs(ctx, []entities.PendingRef{anywhere}); err != nil {
+		t.Fatalf("DeletePendingRefs (unscoped): %v", err)
+	}
+
+	got, err = s.PendingRefs(ctx)
+	if err != nil {
+		t.Fatalf("PendingRefs (after unscoped delete): %v", err)
+	}
+	if want := []entities.PendingRef{us}; !slices.Equal(got, want) {
+		t.Errorf("PendingRefs (after unscoped delete) = %+v, want %+v", got, want)
+	}
+}
+
 func TestGraphWritesIgnoreEmptyInput(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

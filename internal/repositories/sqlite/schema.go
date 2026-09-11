@@ -8,7 +8,7 @@ import (
 )
 
 // An incompatible generation means the workspace file is rebuilt, not migrated.
-const schemaVersion = "3"
+const schemaVersion = "4"
 
 // Keys the store itself owns in the meta table.
 const (
@@ -70,10 +70,11 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS edges_dst_idx ON edges(dst);
 
 CREATE TABLE IF NOT EXISTS pending_refs (
-	src_doc TEXT NOT NULL,
-	kind    TEXT NOT NULL,
-	value   TEXT NOT NULL,
-	PRIMARY KEY (src_doc, kind, value)
+	src_doc  TEXT NOT NULL,
+	kind     TEXT NOT NULL,
+	value    TEXT NOT NULL,
+	instance TEXT NOT NULL,
+	PRIMARY KEY (src_doc, kind, value, instance)
 ) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS cursors (
