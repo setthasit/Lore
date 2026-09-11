@@ -67,6 +67,9 @@ func RefKinds() []RefKind {
 type RawRef struct {
 	Kind  RefKind `json:"kind"`
 	Value string  `json:"value"`
+
+	// The instance the target lives in; empty resolves anywhere.
+	Instance string `json:"instance,omitempty"`
 }
 
 // Cursor is opaque and per-instance: only the connector that produced it

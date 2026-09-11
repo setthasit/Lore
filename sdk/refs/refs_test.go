@@ -43,6 +43,24 @@ func TestKindIsPartOfIdentity(t *testing.T) {
 	}
 }
 
+func TestInstanceIsPartOfIdentity(t *testing.T) {
+	var s Set
+	s.Add(lore.RefKindTicketKey, "PROJ-123")
+	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
+	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-us")
+	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
+	s.AddScoped(lore.RefKindTicketKey, "", "jira-eu")
+
+	want := []lore.RawRef{
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-eu"},
+		{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-us"},
+	}
+	if got := s.Refs(); !slices.Equal(got, want) {
+		t.Errorf("Refs()\n got %v\nwant %v", got, want)
+	}
+}
+
 func TestTextScanners(t *testing.T) {
 	tests := []struct {
 		name string

@@ -27,10 +27,14 @@ type Set struct {
 }
 
 func (s *Set) Add(kind lore.RefKind, value string) {
+	s.AddScoped(kind, value, "")
+}
+
+func (s *Set) AddScoped(kind lore.RefKind, value, instance string) {
 	if value == "" {
 		return
 	}
-	ref := lore.RawRef{Kind: kind, Value: value}
+	ref := lore.RawRef{Kind: kind, Value: value, Instance: instance}
 	if _, ok := s.seen[ref]; ok {
 		return
 	}
