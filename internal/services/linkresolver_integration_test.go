@@ -20,6 +20,10 @@ const (
 	xrefMissingKey = "PROJ-777"
 	xrefLateKey    = "PROJ-42"
 	xrefLateURL    = "https://acme.atlassian.net/browse/" + xrefLateKey
+
+	xrefJiraEU    = "jira-eu"
+	xrefJiraUS    = "jira-us"
+	xrefSourceKey = "PROJ-9"
 )
 
 var (
@@ -76,6 +80,19 @@ func xrefTicket() lore.Document {
 		Body:   "Signing in lands the user on the wrong tenant.",
 		Author: "sam",
 		URL:    "https://acme.atlassian.net/browse/" + xrefTicketKey,
+	}
+}
+
+func xrefInstanceTicket(instance, key, body string, refs ...lore.RawRef) lore.Document {
+	return lore.Document{
+		ID:     lore.NewDocID(instance, lore.DocTypeTicket, key),
+		Source: instance,
+		Type:   lore.DocTypeTicket,
+		Title:  "Post-login redirect drops the tenant",
+		Body:   body,
+		Author: "sam",
+		URL:    "https://" + instance + ".atlassian.net/browse/" + key,
+		Refs:   refs,
 	}
 }
 
@@ -231,4 +248,82 @@ func TestLinkResolverResolvesADeferredRefOnALaterSyncRound(t *testing.T) {
 	}
 	xrefAssertEdges(t, "round 3 edges", xrefEdges(t, store, corpus...), round2)
 	xrefAssertPending(t, "round 3 pending refs", xrefPending(t, store), nil)
+}
+
+func TestLinkResolverKeepsTwoInstancesOfOneSourceApart(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+
+	var (
+		corpus []lore.DocID
+		docs   []lore.Document
+	)
+	for _, instance := range []string{xrefJiraEU, xrefJiraUS} {
+		source := xrefInstanceTicket(instance, xrefSourceKey,
+			"Blocked by "+xrefTicketKey+" on this deployment.",
+			lore.RawRef{Kind: lore.RefKindTicketKey, Value: xrefTicketKey, Instance: instance})
+		target := xrefInstanceTicket(instance, xrefTicketKey,
+			"Signing in lands the user on the wrong tenant.")
+
+		xrefIngest(t, store, source, target)
+		corpus = append(corpus, source.ID, target.ID)
+		docs = append(docs, source, target)
+	}
+
+	if err := NewLinkResolver(store, nil).Link(ctx, docs); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+
+	xrefAssertEdges(t, "corpus edges", xrefEdges(t, store, corpus...), []entities.Edge{
+		{
+			Src:        lore.NewDocID(xrefJiraEU, lore.DocTypeTicket, xrefSourceKey),
+			Dst:        lore.NewDocID(xrefJiraEU, lore.DocTypeTicket, xrefTicketKey),
+			Kind:       entities.EdgeKindReferencesDoc,
+			Confidence: 0.9,
+		},
+		{
+			Src:        lore.NewDocID(xrefJiraUS, lore.DocTypeTicket, xrefSourceKey),
+			Dst:        lore.NewDocID(xrefJiraUS, lore.DocTypeTicket, xrefTicketKey),
+			Kind:       entities.EdgeKindReferencesDoc,
+			Confidence: 0.9,
+		},
+	})
+	xrefAssertPending(t, "pending refs", xrefPending(t, store), nil)
+}
+
+func TestLinkResolverKeepsAScopedRefPendingUntilItsOwnInstanceIsIndexed(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+	resolver := NewLinkResolver(store, nil)
+
+	ref := lore.RawRef{Kind: lore.RefKindTicketKey, Value: xrefTicketKey, Instance: xrefJiraEU}
+	source := xrefInstanceTicket(xrefJiraEU, xrefSourceKey,
+		"Blocked by "+xrefTicketKey+" on this deployment.", ref)
+	foreign := xrefInstanceTicket(xrefJiraUS, xrefTicketKey,
+		"Signing in lands the user on the wrong tenant.")
+	own := xrefInstanceTicket(xrefJiraEU, xrefTicketKey,
+		"Signing in lands the user on the wrong tenant.")
+
+	xrefIngest(t, store, source, foreign)
+	if err := resolver.Link(ctx, []lore.Document{source, foreign}); err != nil {
+		t.Fatalf("round 1 Link: %v", err)
+	}
+
+	corpus := []lore.DocID{source.ID, foreign.ID, own.ID}
+	xrefAssertEdges(t, "round 1 edges", xrefEdges(t, store, corpus...), nil)
+	xrefAssertPending(t, "round 1 pending refs", xrefPending(t, store),
+		[]entities.PendingRef{{SourceDoc: source.ID, Ref: ref}})
+
+	xrefIngest(t, store, own)
+	if err := resolver.LinkPending(ctx); err != nil {
+		t.Fatalf("round 2 LinkPending: %v", err)
+	}
+
+	xrefAssertEdges(t, "round 2 edges", xrefEdges(t, store, corpus...), []entities.Edge{{
+		Src:        source.ID,
+		Dst:        own.ID,
+		Kind:       entities.EdgeKindReferencesDoc,
+		Confidence: 0.9,
+	}})
+	xrefAssertPending(t, "round 2 pending refs", xrefPending(t, store), nil)
 }

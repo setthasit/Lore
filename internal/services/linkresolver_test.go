@@ -25,6 +25,9 @@ const (
 	linkTicket  = "PROJ-123"
 	linkFile    = "internal/auth/auth.go"
 	linkClone   = "/clones/lore"
+
+	linkJiraEU  = "jira-eu"
+	linkGitHubB = "github-b"
 )
 
 // Mirrors the resolver's own cap on how much of one path's history it takes.
@@ -80,6 +83,13 @@ func (m linkMocks) expectCommit(sha string) *gomock.Call {
 		Return([]entities.DocumentMeta{linkMeta(linkCommitDocID(sha), lore.DocTypeCommit)}, nil)
 }
 
+func (m linkMocks) expectInstanceCommit(instance, sha string) *gomock.Call {
+	return m.store.EXPECT().ResolveRef(gomock.Any(), sha).
+		Return([]entities.DocumentMeta{
+			linkInstanceMeta(instance, lore.DocTypeCommit, linkSlug+"/commit/"+sha),
+		}, nil)
+}
+
 func linkPathSHA(n int) string { return fmt.Sprintf("%040x", n) }
 
 func linkCommitDocID(sha string) lore.DocID {
@@ -110,6 +120,14 @@ func linkDoc(id lore.DocID, docType lore.DocType, body string, refs ...lore.RawR
 
 func linkMeta(id lore.DocID, docType lore.DocType) entities.DocumentMeta {
 	return entities.DocumentMeta{ID: id, Type: docType}
+}
+
+func linkInstanceMeta(instance string, docType lore.DocType, key string) entities.DocumentMeta {
+	return entities.DocumentMeta{
+		ID:     lore.NewDocID(instance, docType, key),
+		Source: instance,
+		Type:   docType,
+	}
 }
 
 func linkStored(doc lore.Document) lore.Document {
@@ -288,6 +306,55 @@ func TestLinkKeepsAReferenceItCannotPinToOneDocument(t *testing.T) {
 
 			err := m.resolver().Link(context.Background(), []lore.Document{tt.source})
 			if err != nil {
+				t.Fatalf("Link() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestLinkKeepsAScopedReferenceItCannotPinToOneOwnInstanceDocument(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		ref        lore.RawRef
+		candidates []entities.DocumentMeta
+	}{
+		{
+			name: "the scope matches the candidate's instance only in case",
+			ref:  lore.RawRef{Kind: lore.RefKindTicketKey, Value: linkTicket, Instance: "JIRA-EU"},
+			candidates: []entities.DocumentMeta{
+				linkInstanceMeta(linkJiraEU, lore.DocTypeTicket, linkTicket),
+			},
+		},
+		{
+			name: "the only candidate in its own instance is the referencing document itself",
+			ref:  lore.RawRef{Kind: lore.RefKindPRNumber, Value: linkSlug + "#12", Instance: "github"},
+			candidates: []entities.DocumentMeta{
+				linkInstanceMeta("github", lore.DocTypePR, linkSlug+"/pull/12"),
+			},
+		},
+		{
+			name: "its own instance answers with both a pull request and an issue",
+			ref:  lore.RawRef{Kind: lore.RefKindPRNumber, Value: linkSlug + "#9", Instance: "github"},
+			candidates: []entities.DocumentMeta{
+				linkInstanceMeta("github", lore.DocTypePR, linkSlug+"/pull/9"),
+				linkInstanceMeta("github", lore.DocTypeIssue, linkSlug+"/issues/9"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newLinkMocks(t)
+			source := linkDoc(linkPRID, lore.DocTypePR, "tracked as "+tt.ref.Value, tt.ref)
+
+			m.store.EXPECT().ResolveRef(gomock.Any(), tt.ref.Value).Return(tt.candidates, nil)
+			m.store.EXPECT().UpsertPendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+			if err := m.resolver().Link(context.Background(), []lore.Document{source}); err != nil {
 				t.Fatalf("Link() = %v, want nil", err)
 			}
 		})
@@ -474,6 +541,42 @@ func TestLinkNeverPointsACommitAtItselfThroughItsOwnPath(t *testing.T) {
 	m.store.EXPECT().UpsertEdges(gomock.Any(),
 		[]entities.Edge{linkPathEdge(linkCommitDocID(own), earlier)}).Return(nil)
 	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []lore.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkTurnsAScopedPathIntoAnEdgeOnItsOwnInstancesCommit(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	sha := linkPathSHA(1)
+	source := linkDoc(linkPRID, lore.DocTypePR, "rewrites "+linkFile,
+		lore.RawRef{Kind: lore.RefKindFilePath, Value: linkFile, Instance: "github"})
+
+	m.expectLog(sha)
+	m.expectInstanceCommit("github", sha)
+	m.store.EXPECT().UpsertEdges(gomock.Any(),
+		[]entities.Edge{linkPathEdge(linkPRID, sha)}).Return(nil)
+	m.store.EXPECT().DeletePendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
+
+	if err := m.resolver().Link(context.Background(), []lore.Document{source}); err != nil {
+		t.Fatalf("Link() = %v, want nil", err)
+	}
+}
+
+func TestLinkKeepsAScopedPathPendingWhenAnotherInstanceLoggedTheCommit(t *testing.T) {
+	t.Parallel()
+
+	m := newLinkMocks(t)
+	sha := linkPathSHA(1)
+	source := linkDoc(linkPRID, lore.DocTypePR, "rewrites "+linkFile,
+		lore.RawRef{Kind: lore.RefKindFilePath, Value: linkFile, Instance: "github"})
+
+	m.expectLog(sha)
+	m.expectInstanceCommit(linkGitHubB, sha)
+	m.store.EXPECT().UpsertPendingRefs(gomock.Any(), linkOnly(source)).Return(nil)
 
 	if err := m.resolver().Link(context.Background(), []lore.Document{source}); err != nil {
 		t.Fatalf("Link() = %v, want nil", err)
