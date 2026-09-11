@@ -172,9 +172,10 @@ func (l *linkResolver) appendTargets(
 			return into, err
 		}
 		for _, commit := range commits {
-			if commit.ID != ref.SourceDoc {
-				into = append(into, resolvedRef{ref: ref, target: commit})
+			if outOfScope(ref.Ref, commit) || commit.ID == ref.SourceDoc {
+				continue
 			}
+			into = append(into, resolvedRef{ref: ref, target: commit})
 		}
 
 		return into, nil
@@ -251,7 +252,7 @@ func (l *linkResolver) target(ctx context.Context, ref entities.PendingRef) (ent
 	var only entities.DocumentMeta
 	found := 0
 	for _, c := range candidates {
-		if c.ID == ref.SourceDoc || !admitsTarget(ref.Ref.Kind, c.Type) {
+		if outOfScope(ref.Ref, c) || c.ID == ref.SourceDoc || !admitsTarget(ref.Ref.Kind, c.Type) {
 			continue
 		}
 		found++
@@ -262,6 +263,10 @@ func (l *linkResolver) target(ctx context.Context, ref entities.PendingRef) (ent
 	}
 
 	return only, found == 1, nil
+}
+
+func outOfScope(ref lore.RawRef, candidate entities.DocumentMeta) bool {
+	return ref.Instance != "" && candidate.Source != ref.Instance
 }
 
 func admitsTarget(kind lore.RefKind, target lore.DocType) bool {
