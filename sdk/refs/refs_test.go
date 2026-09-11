@@ -134,6 +134,21 @@ func TestScopedClaimHoldsAcrossInterleavedAdds(t *testing.T) {
 	}
 }
 
+func TestRefsAlreadyHandedOutSurvivesALaterSupersedingAdd(t *testing.T) {
+	var s Set
+	s.Add(lore.RefKindPRNumber, "acme/widgets#41")
+	s.Add(lore.RefKindCommitSHA, "1a2b3c4")
+
+	held := s.Refs()
+	want := slices.Clone(held)
+
+	s.AddScoped(lore.RefKindPRNumber, "acme/widgets#41", "github")
+
+	if !slices.Equal(held, want) {
+		t.Errorf("held Refs()\n got %v\nwant %v", held, want)
+	}
+}
+
 func TestTextScanners(t *testing.T) {
 	tests := []struct {
 		name string
