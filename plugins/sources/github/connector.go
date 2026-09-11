@@ -296,7 +296,7 @@ func (c *Connector) commitUnit(ctx context.Context, r repo, n *commitNode) (unit
 		found.AddAll(lore.RefKindFilePath, paths)
 	}
 	addTextRefs(&found, r, n.Message)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 
 	return unit{
 		key:         unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID},
@@ -325,7 +325,7 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 	found.AddAll(lore.RefKindCommitSHA, oids)
 	// The head branch name carries ticket keys ("feature/PROJ-123-retry").
 	addTextRefs(&found, r, n.Title+"\n"+n.Body+"\n"+n.HeadRefName)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 
 	reviews, err := c.client.reviews(ctx, r, n.Number, n.Reviews)
 	if err != nil {
@@ -354,7 +354,7 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 	var found refs.Set
 	c.addOwnedNumberRef(&found, r, number)
 	addTextRefs(&found, r, rv.Body)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 
 	comments, err := c.client.reviewComments(ctx, rv.ID, rv.Comments)
 	if err != nil {
@@ -375,7 +375,7 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 		crefs.Add(lore.RefKindFilePath, cm.Path)
 		c.addOwnedNumberRef(&crefs, r, number)
 		addTextRefs(&crefs, r, cm.Body)
-		cdoc.Refs = withoutUnscopedDuplicates(crefs.Refs())
+		cdoc.Refs = crefs.Refs()
 
 		docs = append(docs, cdoc)
 	}
@@ -413,7 +413,7 @@ func (c *Connector) issueUnit(ctx context.Context, r repo, n *issueNode) (unit, 
 		var crefs refs.Set
 		c.addOwnedNumberRef(&crefs, r, n.Number)
 		addTextRefs(&crefs, r, cm.Body)
-		cdoc.Refs = withoutUnscopedDuplicates(crefs.Refs())
+		cdoc.Refs = crefs.Refs()
 
 		docs = append(docs, cdoc)
 	}
@@ -431,21 +431,6 @@ func (c *Connector) newDocument(t lore.DocType, r repo, externalID string) lore.
 
 func (c *Connector) addOwnedNumberRef(s *refs.Set, r repo, number int) {
 	s.AddScoped(lore.RefKindPRNumber, r.numberRef(number), c.instance)
-}
-
-func withoutUnscopedDuplicates(rs []lore.RawRef) []lore.RawRef {
-	var scoped []lore.RawRef
-	for _, r := range rs {
-		if r.Instance != "" {
-			scoped = append(scoped, lore.RawRef{Kind: r.Kind, Value: r.Value})
-		}
-	}
-	if len(scoped) == 0 {
-		return rs
-	}
-	return slices.DeleteFunc(rs, func(r lore.RawRef) bool {
-		return r.Instance == "" && slices.Contains(scoped, r)
-	})
 }
 
 func timestamps(created, updated time.Time) (time.Time, time.Time) {

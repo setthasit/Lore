@@ -213,7 +213,7 @@ func (c *Connector) commentDoc(key string, cm *comment) lore.Document {
 	var found refs.Set
 	found.AddScoped(lore.RefKindTicketKey, key, c.instance)
 	addTextRefs(&found, doc.Body)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 	return doc
 }
 
@@ -278,21 +278,6 @@ func addTextRefs(s *refs.Set, text string) {
 func withoutKey(refs []lore.RawRef, key string) []lore.RawRef {
 	return slices.DeleteFunc(refs, func(r lore.RawRef) bool {
 		return r.Kind == lore.RefKindTicketKey && r.Value == key
-	})
-}
-
-func withoutUnscopedDuplicates(rs []lore.RawRef) []lore.RawRef {
-	var scoped []lore.RawRef
-	for _, r := range rs {
-		if r.Instance != "" {
-			scoped = append(scoped, lore.RawRef{Kind: r.Kind, Value: r.Value})
-		}
-	}
-	if len(scoped) == 0 {
-		return rs
-	}
-	return slices.DeleteFunc(rs, func(r lore.RawRef) bool {
-		return r.Instance == "" && slices.Contains(scoped, r)
 	})
 }
 

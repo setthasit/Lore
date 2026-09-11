@@ -28,7 +28,7 @@ func TestSetKeepsFirstSeenOrderAndDropsRepeats(t *testing.T) {
 
 func TestZeroSetHasNoRefs(t *testing.T) {
 	var s Set
-	if got := s.Refs(); len(got) != 0 {
+	if got := s.Refs(); got != nil {
 		t.Errorf("Refs() = %v, want none", got)
 	}
 }
@@ -45,19 +45,92 @@ func TestKindIsPartOfIdentity(t *testing.T) {
 
 func TestInstanceIsPartOfIdentity(t *testing.T) {
 	var s Set
-	s.Add(lore.RefKindTicketKey, "PROJ-123")
 	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
 	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-us")
 	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
 	s.AddScoped(lore.RefKindTicketKey, "", "jira-eu")
 
 	want := []lore.RawRef{
-		{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 		{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-eu"},
 		{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-us"},
 	}
 	if got := s.Refs(); !slices.Equal(got, want) {
 		t.Errorf("Refs()\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestScopedSupersedesUnscopedTwin(t *testing.T) {
+	tests := []struct {
+		name string
+		add  func(s *Set)
+		want []lore.RawRef
+	}{
+		{
+			name: "an unscoped entry gives way to the later scoped claim",
+			add: func(s *Set) {
+				s.Add(lore.RefKindPRNumber, "acme/widgets#41")
+				s.Add(lore.RefKindCommitSHA, "1a2b3c4")
+				s.AddScoped(lore.RefKindPRNumber, "acme/widgets#41", "github")
+			},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindCommitSHA, Value: "1a2b3c4"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41", Instance: "github"},
+			},
+		},
+		{
+			name: "an unscoped restatement of a scoped claim is dropped",
+			add: func(s *Set) {
+				s.AddScoped(lore.RefKindPRNumber, "acme/widgets#41", "github")
+				s.AddAll(lore.RefKindPRNumber, []string{"acme/widgets#41", "acme/widgets#7"})
+			},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41", Instance: "github"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+			},
+		},
+		{
+			name: "a scoped claim leaves another kind with the same value alone",
+			add: func(s *Set) {
+				s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
+				s.Add(lore.RefKindURL, "PROJ-123")
+			},
+			want: []lore.RawRef{
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-eu"},
+				{Kind: lore.RefKindURL, Value: "PROJ-123"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s Set
+			tt.add(&s)
+			if got := s.Refs(); !slices.Equal(got, tt.want) {
+				t.Errorf("Refs()\n got %v\nwant %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScopedClaimHoldsAcrossInterleavedAdds(t *testing.T) {
+	eu := lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-eu"}
+	us := lore.RawRef{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: "jira-us"}
+
+	var s Set
+	s.Add(lore.RefKindTicketKey, "PROJ-123")
+	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-eu")
+	if got := s.Refs(); !slices.Equal(got, []lore.RawRef{eu}) {
+		t.Fatalf("after the scoped claim\n got %v\nwant %v", got, []lore.RawRef{eu})
+	}
+
+	s.Add(lore.RefKindTicketKey, "PROJ-123")
+	if got := s.Refs(); !slices.Equal(got, []lore.RawRef{eu}) {
+		t.Fatalf("after the unscoped restatement\n got %v\nwant %v", got, []lore.RawRef{eu})
+	}
+
+	s.AddScoped(lore.RefKindTicketKey, "PROJ-123", "jira-us")
+	if got := s.Refs(); !slices.Equal(got, []lore.RawRef{eu, us}) {
+		t.Errorf("after the second instance\n got %v\nwant %v", got, []lore.RawRef{eu, us})
 	}
 }
 

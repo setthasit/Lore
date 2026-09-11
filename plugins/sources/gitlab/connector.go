@@ -403,7 +403,7 @@ func (c *Connector) reviewDoc(p project, mr parent, n *note) lore.Document {
 	found.AddAll(lore.RefKindFilePath, n.Position.paths())
 	c.addOwnedNumberRef(&found, p, mr.iid)
 	addTextRefs(&found, p, n.Body)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 	return doc
 }
 
@@ -419,7 +419,7 @@ func (c *Connector) reviewCommentDoc(p project, mr parent, n *note) lore.Documen
 	found.AddAll(lore.RefKindFilePath, n.Position.paths())
 	c.addOwnedNumberRef(&found, p, mr.iid)
 	addTextRefs(&found, p, n.Body)
-	doc.Refs = withoutUnscopedDuplicates(found.Refs())
+	doc.Refs = found.Refs()
 	return doc
 }
 
@@ -452,7 +452,7 @@ func (c *Connector) issueUnit(ctx context.Context, p project, n *issue) (unit, e
 		var crefs refs.Set
 		c.addOwnedNumberRef(&crefs, p, n.IID)
 		addTextRefs(&crefs, p, cm.Body)
-		cdoc.Refs = withoutUnscopedDuplicates(crefs.Refs())
+		cdoc.Refs = crefs.Refs()
 
 		docs = append(docs, cdoc)
 	}
@@ -470,21 +470,6 @@ func (c *Connector) newDocument(t lore.DocType, p project, externalID string) lo
 
 func (c *Connector) addOwnedNumberRef(s *refs.Set, p project, number int) {
 	s.AddScoped(lore.RefKindPRNumber, p.numberRef(number), c.instance)
-}
-
-func withoutUnscopedDuplicates(rs []lore.RawRef) []lore.RawRef {
-	var scoped []lore.RawRef
-	for _, r := range rs {
-		if r.Instance != "" {
-			scoped = append(scoped, lore.RawRef{Kind: r.Kind, Value: r.Value})
-		}
-	}
-	if len(scoped) == 0 {
-		return rs
-	}
-	return slices.DeleteFunc(rs, func(r lore.RawRef) bool {
-		return r.Instance == "" && slices.Contains(scoped, r)
-	})
 }
 
 // The chunker recovers a note's thread by cutting its external id at the last
