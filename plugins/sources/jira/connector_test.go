@@ -588,7 +588,7 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 		{
 			id: proj101c1ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101", Instance: defaultInstance},
 				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
 			},
 		},
@@ -596,20 +596,20 @@ func TestRefsQualifyEveryDocument(t *testing.T) {
 			// The body repeats the parent key; the explicit relation already covers it.
 			id: proj101c2ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101", Instance: defaultInstance},
 			},
 		},
 		{
 			id: proj101c3ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindTicketKey, Value: "PROJ-101"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-101", Instance: defaultInstance},
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/retry.go"},
 			},
 		},
 		{
 			id: proj123c1ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
+				{Kind: lore.RefKindTicketKey, Value: "PROJ-123", Instance: defaultInstance},
 				{Kind: lore.RefKindTicketKey, Value: "INFRA-7"},
 			},
 		},
@@ -814,6 +814,7 @@ func TestInstanceIDPrefixesDocumentIdentity(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("Changes streamed no documents")
 	}
+	scoped := 0
 	for _, d := range docs {
 		if d.Source != instance {
 			t.Errorf("%s: Source = %q, want %q", d.ID, d.Source, instance)
@@ -821,6 +822,18 @@ func TestInstanceIDPrefixesDocumentIdentity(t *testing.T) {
 		if want := instance + ":"; !strings.HasPrefix(string(d.ID), want) {
 			t.Errorf("ID = %q, want the %q prefix", d.ID, want)
 		}
+		for _, ref := range d.Refs {
+			if ref.Instance == "" {
+				continue
+			}
+			scoped++
+			if ref.Instance != d.Source {
+				t.Errorf("%s: %v is scoped to %q, want the document's own source %q", d.ID, ref, ref.Instance, d.Source)
+			}
+		}
+	}
+	if scoped == 0 {
+		t.Error("no document scoped a reference to its own instance")
 	}
 }
 

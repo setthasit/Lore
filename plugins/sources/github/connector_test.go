@@ -578,10 +578,10 @@ func TestReferenceExtraction(t *testing.T) {
 		want []lore.RawRef
 	}{
 		{
-			name: "commit: associated pr, touched files including the rename, then text",
+			name: "commit: associated pr scoped to the instance, touched files including the rename, then unscoped text",
 			id:   commitAID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42", Instance: forgeName},
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth_test.go"},
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/old_auth_test.go"},
@@ -600,10 +600,10 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			name: "pr: closing issue and every commit, branch ticket key, no duplicate #41",
+			name: "pr: closing issue scoped, every commit, branch ticket key, no duplicate #41",
 			id:   pr42ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41", Instance: forgeName},
 				{Kind: lore.RefKindCommitSHA, Value: shaA},
 				{Kind: lore.RefKindCommitSHA, Value: shaB},
 				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
@@ -612,10 +612,10 @@ func TestReferenceExtraction(t *testing.T) {
 			},
 		},
 		{
-			name: "review: parent pull request plus body text",
+			name: "review: parent pull request scoped, body text unscoped",
 			id:   review1ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42", Instance: forgeName},
 				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 			},
 		},
@@ -624,7 +624,7 @@ func TestReferenceExtraction(t *testing.T) {
 			id:   comment1ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#42", Instance: forgeName},
 				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
 			},
 		},
@@ -641,7 +641,7 @@ func TestReferenceExtraction(t *testing.T) {
 			name: "issue comment: parent thread and a full sha in the body",
 			id:   icomment2ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#41", Instance: forgeName},
 				{Kind: lore.RefKindCommitSHA, Value: shaA},
 			},
 		},
@@ -846,6 +846,7 @@ func TestInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("no documents")
 	}
+	scoped := 0
 	for _, d := range docs {
 		if d.Source != "github-acme" {
 			t.Errorf("%s: source %q, want %q", d.ID, d.Source, "github-acme")
@@ -856,6 +857,18 @@ func TestInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 		if d.RepoRef != "github:acme/widgets" {
 			t.Errorf("%s: repo ref %q, want %q", d.ID, d.RepoRef, "github:acme/widgets")
 		}
+		for _, ref := range d.Refs {
+			if ref.Instance == "" {
+				continue
+			}
+			scoped++
+			if ref.Instance != d.Source {
+				t.Errorf("%s: %v is scoped to %q, want the document's own source %q", d.ID, ref, ref.Instance, d.Source)
+			}
+		}
+	}
+	if scoped == 0 {
+		t.Error("no document scoped a reference to its own instance")
 	}
 }
 

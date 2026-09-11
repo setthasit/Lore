@@ -690,21 +690,21 @@ func TestReferenceExtraction(t *testing.T) {
 			id: review7ID,
 			want: []lore.RawRef{
 				{Kind: lore.RefKindFilePath, Value: "internal/auth/auth.go"},
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7", Instance: instanceID},
 				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
 			},
 		},
 		{
 			id: reply7ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7", Instance: instanceID},
 				{Kind: lore.RefKindCommitSHA, Value: "9f8e7d6"},
 			},
 		},
 		{
 			id: single7ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7", Instance: instanceID},
 				{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 			},
 		},
@@ -723,7 +723,7 @@ func TestReferenceExtraction(t *testing.T) {
 		{
 			id: note12ID,
 			want: []lore.RawRef{
-				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12"},
+				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#12", Instance: instanceID},
 				{Kind: lore.RefKindPRNumber, Value: "acme/widgets#7"},
 			},
 		},
@@ -888,6 +888,7 @@ func TestANonDefaultInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("no documents were yielded")
 	}
+	scoped := 0
 	for _, d := range docs {
 		if d.Source != "gitlab-acme" {
 			t.Errorf("Source = %q, want %q", d.Source, "gitlab-acme")
@@ -898,6 +899,18 @@ func TestANonDefaultInstanceIDPrefixesIdentityButNotRepoRef(t *testing.T) {
 		if d.RepoRef != repoRefAll {
 			t.Errorf("RepoRef = %q, want %q", d.RepoRef, repoRefAll)
 		}
+		for _, ref := range d.Refs {
+			if ref.Instance == "" {
+				continue
+			}
+			scoped++
+			if ref.Instance != d.Source {
+				t.Errorf("%s: %v is scoped to %q, want the document's own source %q", d.ID, ref, ref.Instance, d.Source)
+			}
+		}
+	}
+	if scoped == 0 {
+		t.Error("no document scoped a reference to its own instance")
 	}
 }
 

@@ -69,7 +69,7 @@
       {
         "id": 1003,
         "type": null,
-        "body": "LGTM once PROJ-123 is linked.",
+        "body": "LGTM once PROJ-123 is linked, see !7.",
         "author": {
           "id": 13,
           "username": "ravi",

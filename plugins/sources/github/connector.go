@@ -286,7 +286,7 @@ func (c *Connector) commitUnit(ctx context.Context, r repo, n *commitNode) (unit
 
 	var found refs.Set
 	for _, pr := range n.AssociatedPullRequests.Nodes {
-		found.Add(lore.RefKindPRNumber, r.numberRef(pr.Number))
+		c.addOwnedNumberRef(&found, r, pr.Number)
 	}
 	if n.touchesFiles() {
 		paths, err := c.client.commitFiles(ctx, r, n.OID)
@@ -296,7 +296,7 @@ func (c *Connector) commitUnit(ctx context.Context, r repo, n *commitNode) (unit
 		found.AddAll(lore.RefKindFilePath, paths)
 	}
 	addTextRefs(&found, r, n.Message)
-	doc.Refs = found.Refs()
+	doc.Refs = withoutUnscopedDuplicates(found.Refs())
 
 	return unit{
 		key:         unitKey{updatedAt: doc.UpdatedAt, docID: doc.ID},
@@ -316,7 +316,7 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 
 	var found refs.Set
 	for _, issue := range n.ClosingIssuesReferences.Nodes {
-		found.Add(lore.RefKindPRNumber, r.numberRef(issue.Number))
+		c.addOwnedNumberRef(&found, r, issue.Number)
 	}
 	oids, err := c.client.commitOIDs(ctx, r, n.Number, n.Commits)
 	if err != nil {
@@ -325,7 +325,7 @@ func (c *Connector) pullRequestUnit(ctx context.Context, r repo, n *prNode) (uni
 	found.AddAll(lore.RefKindCommitSHA, oids)
 	// The head branch name carries ticket keys ("feature/PROJ-123-retry").
 	addTextRefs(&found, r, n.Title+"\n"+n.Body+"\n"+n.HeadRefName)
-	doc.Refs = found.Refs()
+	doc.Refs = withoutUnscopedDuplicates(found.Refs())
 
 	reviews, err := c.client.reviews(ctx, r, n.Number, n.Reviews)
 	if err != nil {
@@ -352,9 +352,9 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 	doc.CreatedAt, doc.UpdatedAt = timestamps(rv.CreatedAt, rv.UpdatedAt)
 
 	var found refs.Set
-	found.Add(lore.RefKindPRNumber, r.numberRef(number))
+	c.addOwnedNumberRef(&found, r, number)
 	addTextRefs(&found, r, rv.Body)
-	doc.Refs = found.Refs()
+	doc.Refs = withoutUnscopedDuplicates(found.Refs())
 
 	comments, err := c.client.reviewComments(ctx, rv.ID, rv.Comments)
 	if err != nil {
@@ -373,9 +373,9 @@ func (c *Connector) reviewDocs(ctx context.Context, r repo, prExternal string, n
 
 		var crefs refs.Set
 		crefs.Add(lore.RefKindFilePath, cm.Path)
-		crefs.Add(lore.RefKindPRNumber, r.numberRef(number))
+		c.addOwnedNumberRef(&crefs, r, number)
 		addTextRefs(&crefs, r, cm.Body)
-		cdoc.Refs = crefs.Refs()
+		cdoc.Refs = withoutUnscopedDuplicates(crefs.Refs())
 
 		docs = append(docs, cdoc)
 	}
@@ -411,9 +411,9 @@ func (c *Connector) issueUnit(ctx context.Context, r repo, n *issueNode) (unit, 
 		cdoc.CreatedAt, cdoc.UpdatedAt = timestamps(cm.CreatedAt, cm.UpdatedAt)
 
 		var crefs refs.Set
-		crefs.Add(lore.RefKindPRNumber, r.numberRef(n.Number))
+		c.addOwnedNumberRef(&crefs, r, n.Number)
 		addTextRefs(&crefs, r, cm.Body)
-		cdoc.Refs = crefs.Refs()
+		cdoc.Refs = withoutUnscopedDuplicates(crefs.Refs())
 
 		docs = append(docs, cdoc)
 	}
@@ -427,6 +427,25 @@ func (c *Connector) newDocument(t lore.DocType, r repo, externalID string) lore.
 		Type:    t,
 		RepoRef: r.ref(),
 	}
+}
+
+func (c *Connector) addOwnedNumberRef(s *refs.Set, r repo, number int) {
+	s.AddScoped(lore.RefKindPRNumber, r.numberRef(number), c.instance)
+}
+
+func withoutUnscopedDuplicates(rs []lore.RawRef) []lore.RawRef {
+	var scoped []lore.RawRef
+	for _, r := range rs {
+		if r.Instance != "" {
+			scoped = append(scoped, lore.RawRef{Kind: r.Kind, Value: r.Value})
+		}
+	}
+	if len(scoped) == 0 {
+		return rs
+	}
+	return slices.DeleteFunc(rs, func(r lore.RawRef) bool {
+		return r.Instance == "" && slices.Contains(scoped, r)
+	})
 }
 
 func timestamps(created, updated time.Time) (time.Time, time.Time) {
