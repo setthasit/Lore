@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/setthasit/Lore/internal/connectors/gitrepo"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const askOnlyRefusal = "no repositories registered — code anchoring disabled for this workspace"
@@ -15,11 +15,10 @@ const askOnlyRefusal = "no repositories registered — code anchoring disabled f
 // The width the index stores commit SHAs at, so a shortened SHA still resolves.
 const shortSHAChars = 12
 
-// Remote is the "github:acme/lore" name mapping the clone onto a source repo.
 type CodeRepo struct {
 	Path   string
-	Remote string
-	Git    gitrepo.GitRepo
+	Remote string // "github:acme/lore", the source repo this clone maps onto
+	Repo   lore.CodeRepo
 }
 
 func (r CodeRepo) name() string {
@@ -73,7 +72,7 @@ func unsyncedCommitGap(sha string) string {
 }
 
 func requireTrackedFile(ctx context.Context, repo CodeRepo, file string) error {
-	tracked, err := repo.Git.HasFileAtHEAD(ctx, file)
+	tracked, err := repo.Repo.HasFileAtHEAD(ctx, file)
 	if err != nil {
 		return internalerror.NewInternalError(
 			fmt.Sprintf("looking up %s in %s failed", file, repo.name()), err)
@@ -99,7 +98,7 @@ func indexedCommits(ctx context.Context, s commitSource, sha string) ([]entities
 
 	var commits []entities.DocumentMeta
 	for _, candidate := range candidates {
-		if candidate.Type == entities.DocTypeCommit {
+		if candidate.Type == lore.DocTypeCommit {
 			commits = append(commits, candidate)
 		}
 	}

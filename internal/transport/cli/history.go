@@ -50,7 +50,7 @@ func newHistoryCommand(resolve Resolver, configPath *string) *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&flags.repo, "repo", "",
-		"the registered clone the file belongs to, by remote (github:owner/repo) or by path; omit it when only one is registered")
+		"the registered clone the file belongs to, by remote (<forge>:owner/repo) or by path; omit it when only one is registered")
 	f.IntVar(&flags.limit, "limit", 0, "how many commits the page holds; omit it for the server default, which the server also caps")
 	f.StringVar(&flags.before, "before", "", "commit SHA to page backwards from: the page holds the commits older than it")
 	flags.out.flags(cmd)

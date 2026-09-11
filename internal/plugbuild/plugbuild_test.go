@@ -1,0 +1,506 @@
+package plugbuild
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+)
+
+type recordedRun struct {
+	dir     string
+	program string
+	args    []string
+}
+
+func (r recordedRun) command() string {
+	return strings.Join(append([]string{filepath.Base(r.program)}, r.args...), " ")
+}
+
+type fakeRunner struct {
+	runs   []recordedRun
+	answer func(recordedRun) (string, error)
+}
+
+func (f *fakeRunner) Run(_ context.Context, dir, program string, args ...string) (string, error) {
+	run := recordedRun{dir: dir, program: program, args: args}
+	f.runs = append(f.runs, run)
+	if f.answer == nil {
+		return "", nil
+	}
+	return f.answer(run)
+}
+
+func (f *fakeRunner) commands() []string {
+	out := make([]string, 0, len(f.runs))
+	for _, r := range f.runs {
+		out = append(out, r.command())
+	}
+	return out
+}
+
+func TestBuildFetchesCompilesAndReadsTheArtifactBack(t *testing.T) {
+	scratchParent, output := buildDirs(t, "lore")
+
+	const listing = "NAME    KIND    ORIGIN   SUMMARY\nlinear  source  builtin  Linear issues\n"
+	var generated string
+
+	runner := &fakeRunner{}
+	runner.answer = func(run recordedRun) (string, error) {
+		// Build deletes the scratch module when it returns, so the generated root can only be read from inside a run.
+		if run.program == goCommand && len(run.args) > 0 && run.args[0] == "build" {
+			raw, err := os.ReadFile(filepath.Join(run.dir, generatedFile))
+			if err != nil {
+				return "", err
+			}
+			generated = string(raw)
+		}
+		if len(run.args) > 0 && run.args[0] == "list" {
+			return "v0.4.1\n", nil
+		}
+		if run.program == output {
+			return listing, nil
+		}
+		return "", nil
+	}
+
+	var progress strings.Builder
+	result, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t,
+			"github.com/jdoe/lore-linear@v0.3.1",
+			"github.com/acme/lore-crm/v2@v2.0.1=acmecrm"),
+		Output:   output,
+		Engine:   "v0.4.0",
+		Progress: &progress,
+		Runner:   runner,
+	})
+	if err != nil {
+		t.Fatalf("Build() = %v", err)
+	}
+
+	want := []string{
+		"go mod init " + scratchModule,
+		"go get github.com/setthasit/Lore@v0.4.0",
+		"go get github.com/acme/lore-crm/v2@v2.0.1",
+		"go get github.com/jdoe/lore-linear@v0.3.1",
+		"go get .",
+		"go list -m -f {{.Version}} " + engineModule,
+		"go build -o " + output + " .",
+		filepath.Base(output) + " plugin list",
+	}
+	if got := runner.commands(); !slices.Equal(got, want) {
+		t.Errorf("commands =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	if generated != goldenRoot {
+		t.Errorf("scratch module holds\n%s\nwant the generated composition root", generated)
+	}
+	if result.Output != output {
+		t.Errorf("Output = %q, want %q", result.Output, output)
+	}
+	if result.Engine != "v0.4.1" {
+		t.Errorf("Engine = %q, want the version go list reported", result.Engine)
+	}
+	if result.Plugins != listing {
+		t.Errorf("Plugins = %q, want the artifact's own plugin list", result.Plugins)
+	}
+	if len(result.Added) != 2 || result.Added[0].Module != "github.com/acme/lore-crm/v2" {
+		t.Errorf("Added = %+v, want both plugins in module order", result.Added)
+	}
+	if !strings.Contains(progress.String(), "compiling "+output) {
+		t.Errorf("progress = %q, want the compile step announced", progress.String())
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildRemovesTheScratchModuleWhenTheCompileFails(t *testing.T) {
+	scratchParent, output := buildDirs(t, "lore")
+
+	compileFailed := errors.New("exit status 1")
+	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
+		if len(run.args) > 0 && run.args[0] == "build" {
+			return "plugin.go:9:2: undefined: lore.Connector", compileFailed
+		}
+		return "", nil
+	}}
+
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+		Engine:      "v0.4.0",
+		Runner:      runner,
+	})
+	if err == nil {
+		t.Fatal("Build() succeeded although the compile failed")
+	}
+	if internalerror.KindOf(err) != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	if !errors.Is(err, compileFailed) {
+		t.Errorf("error = %v, want it to wrap the toolchain failure", err)
+	}
+	for _, want := range []string{"api version", "undefined: lore.Connector"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
+	scratchParent, output := buildDirs(t, "lore")
+
+	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
+		if run.program == output {
+			return "lore: plugin \"linear\" speaks api_version 2, host speaks 1", errors.New("exit status 3")
+		}
+		return "", nil
+	}}
+
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+		Engine:      "v0.4.0",
+		Runner:      runner,
+	})
+	if err == nil {
+		t.Fatal("Build() reported success for a binary that does not run")
+	}
+	if !strings.Contains(err.Error(), "failed to register") {
+		t.Errorf("error = %q, want it to say the plugin set failed to register", err)
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildUsesReplaceInsteadOfFetching(t *testing.T) {
+	local := t.TempDir()
+	scratchParent, output := buildDirs(t, "lore")
+
+	runner := &fakeRunner{}
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+		Engine:      develVersion,
+		Replace:     map[string]string{engineModule: local},
+		Runner:      runner,
+	})
+	if err != nil {
+		t.Fatalf("Build() = %v", err)
+	}
+
+	commands := strings.Join(runner.commands(), "\n")
+	// No proxy can resolve "(devel)", which is what a checkout stamps, so a replaced module must never be fetched by version.
+	if strings.Contains(commands, "go get "+engineModule) {
+		t.Errorf("commands =\n%s\nwant the replaced engine to be edited in, not fetched", commands)
+	}
+	want := "go mod edit -require=" + engineModule + "@v0.0.0 -replace=" + engineModule + "=" + local
+	if !strings.Contains(commands, want) {
+		t.Errorf("commands =\n%s\nwant %q", commands, want)
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildWithoutAToolchainNamesTheWayAroundIt(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	scratchParent, output := buildDirs(t, "lore")
+
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+	})
+	if err == nil {
+		t.Fatal("Build() succeeded with no Go toolchain on PATH")
+	}
+	if internalerror.KindOf(err) != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	if !strings.Contains(err.Error(), "lore plugin install") {
+		t.Errorf("error = %q, want it to name the way around a missing toolchain", err)
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildComplainsAboutTheMissingFlagBeforeTheMissingToolchain(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := Build(context.Background(), Request{})
+	if err == nil {
+		t.Fatal("Build() built a binary with nothing added to it")
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Errorf("kind = %v, want bad request", internalerror.KindOf(err))
+	}
+}
+
+func TestBuildFailsWhenTheEngineVersionCannotBeRead(t *testing.T) {
+	scratchParent, output := buildDirs(t, "lore")
+
+	listFailed := errors.New("exit status 1")
+	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
+		if len(run.args) > 0 && run.args[0] == "list" {
+			return "go: github.com/setthasit/Lore: missing go.sum entry", listFailed
+		}
+		return "", nil
+	}}
+
+	_, err := Build(context.Background(), Request{
+		Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+		Output:      output,
+		Engine:      "latest",
+		Runner:      runner,
+	})
+	if err == nil {
+		t.Fatal("Build() reported an engine version it could not read")
+	}
+	if internalerror.KindOf(err) != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want precondition", internalerror.KindOf(err))
+	}
+	if !errors.Is(err, listFailed) {
+		t.Errorf("error = %v, want it to wrap the toolchain failure", err)
+	}
+	for _, want := range []string{"engine version", "missing go.sum entry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+func TestBuildFetchesTheEngineVersionTheRequestNames(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		engine  string
+		fetched string
+	}{
+		{
+			name:    "a named version wins over the one the running binary resolves",
+			engine:  "v0.4.0",
+			fetched: "v0.4.0",
+		},
+		{
+			name:    "an unnamed version leaves the running binary to resolve one",
+			fetched: engineVersion(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scratchParent, output := buildDirs(t, "lore")
+
+			runner := &fakeRunner{}
+			if _, err := Build(context.Background(), Request{
+				Coordinates: parseAll(t, "github.com/jdoe/lore-linear@v0.3.1"),
+				Output:      output,
+				Engine:      tc.engine,
+				Runner:      runner,
+			}); err != nil {
+				t.Fatalf("Build() = %v", err)
+			}
+
+			want := "go get " + engineModule + "@" + tc.fetched
+			if got := runner.commands(); !slices.Contains(got, want) {
+				t.Errorf("commands =\n%s\nwant %q among them", strings.Join(got, "\n"), want)
+			}
+			assertNoScratchModule(t, scratchParent)
+		})
+	}
+}
+
+func TestStampedVersionResolvesTheEngineTheBinaryWasLinkedAgainst(t *testing.T) {
+	const pseudo = "v0.4.2-0.20260115120000-abcdef123456"
+	linear := &debug.Module{Path: "github.com/jdoe/lore-linear", Version: "v0.3.1"}
+
+	for _, tc := range []struct {
+		name string
+		main string
+		deps []*debug.Module
+		want string
+	}{
+		{
+			name: "the binary carries a release version of its own",
+			main: "v0.5.0",
+			deps: []*debug.Module{{Path: engineModule, Version: "v0.4.0"}},
+			want: "v0.5.0",
+		},
+		{
+			name: "a customised binary links the engine as a dependency",
+			main: develVersion,
+			deps: []*debug.Module{linear, {Path: engineModule, Version: pseudo}},
+			want: pseudo,
+		},
+		{
+			name: "the binary carries no version at all",
+			deps: []*debug.Module{{Path: engineModule, Version: "v0.4.0"}},
+			want: "v0.4.0",
+		},
+		{
+			name: "the engine dependency is a local checkout no proxy serves",
+			main: develVersion,
+			deps: []*debug.Module{{
+				Path:    engineModule,
+				Version: "v0.4.0",
+				Replace: &debug.Module{Path: engineModule, Version: develVersion},
+			}},
+			want: latestVersion,
+		},
+		{
+			name: "the engine dependency is unstamped as well",
+			main: develVersion,
+			deps: []*debug.Module{{Path: engineModule, Version: develVersion}},
+			want: latestVersion,
+		},
+		{
+			name: "nothing in the build links the engine",
+			main: develVersion,
+			deps: []*debug.Module{linear},
+			want: latestVersion,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := debug.BuildInfo{Main: debug.Module{Version: tc.main}, Deps: tc.deps}
+			if got := stampedVersion(&info); got != tc.want {
+				t.Errorf("stampedVersion() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildProducesARunnableBinary(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiling the engine takes about a minute")
+	}
+
+	warmModuleCache(t)
+
+	// `lore build` gets no -mod=mod, so the sequence has to complete go.sum in the readonly mode the toolchain defaults to.
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+
+	fakePlugin := writeFakePlugin(t)
+	scratchParent, output := buildDirs(t, "lore-custom")
+
+	result, err := Build(context.Background(), Request{
+		Coordinates: []Coordinate{{Module: "example.com/loreconform", Version: "v0.1.0", Package: "conform"}},
+		Output:      output,
+		Replace: map[string]string{
+			engineModule:              repoRoot(t),
+			"example.com/loreconform": fakePlugin,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() = %v", err)
+	}
+	if _, err := os.Stat(result.Output); err != nil {
+		t.Fatalf("the binary lore build reported does not exist: %v", err)
+	}
+	if !strings.Contains(result.Plugins, "conform-fake") {
+		t.Errorf("plugin list =\n%s\nwant the compiled-in plugin listed", result.Plugins)
+	}
+	if !strings.Contains(result.Plugins, "github") {
+		t.Errorf("plugin list =\n%s\nwant the official set alongside it", result.Plugins)
+	}
+	assertNoScratchModule(t, scratchParent)
+}
+
+// A scratch module resolves imports for every platform, so an offline build needs
+// requirements a host build never fetches, such as cobra's windows-only mousetrap.
+func warmModuleCache(t *testing.T) {
+	t.Helper()
+
+	cmd := exec.CommandContext(t.Context(), goCommand, "mod", "download")
+	cmd.Dir = repoRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go mod download: %v\n%s", err, out)
+	}
+}
+
+func writeFakePlugin(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/loreconform\n\ngo 1.27\n\nrequire " + engineModule + " v0.0.0\n",
+		"plugin.go": `package conform
+
+import (
+	"context"
+	"iter"
+
+	"` + engineModule + `/sdk"
+)
+
+// Plugin is the constructor every lore plugin exposes.
+func Plugin() lore.Plugin { return plugin{} }
+
+type plugin struct{}
+
+func (plugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:       "conform-fake",
+		Summary:    "a plugin a test compiled in",
+		Kind:       lore.KindSource,
+		APIVersion: lore.APIVersion,
+	}
+}
+
+func (plugin) NewSource(lore.SourceConfig) (lore.Connector, error) { return connector{}, nil }
+
+type connector struct{}
+
+func (connector) Name() string { return "conform-fake" }
+
+func (connector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(func(lore.Batch, error) bool) {}
+}
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this test file, so cannot locate the engine to build against")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
+func assertNoScratchModule(t *testing.T, parent string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatalf("read %s: %v", parent, err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("%s still holds %v, want the scratch module removed", parent, names)
+	}
+}
+
+// buildDirs points the system temporary directory at a parent of its own, so
+// the scratch module a build creates and removes is visible to a test.
+func buildDirs(t *testing.T, name string) (scratchParent, output string) {
+	t.Helper()
+
+	output = filepath.Join(t.TempDir(), name)
+	scratchParent = t.TempDir()
+	t.Setenv("TMPDIR", scratchParent)
+	return scratchParent, output
+}

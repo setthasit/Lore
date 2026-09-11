@@ -24,6 +24,8 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type serveResult struct {
@@ -43,13 +45,13 @@ func runResolving(t *testing.T, ctx context.Context, cfg *config.Config, args ..
 		return &Runtime{Config: cfg}, func() error { return nil }, nil
 	}
 
-	root := newRootCommand(resolve)
+	root := newRootCommand(resolve, registry.New(lore.Host{}))
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&errOut)
 	root.SetArgs(args)
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stderr = errOut.String()
 	return res

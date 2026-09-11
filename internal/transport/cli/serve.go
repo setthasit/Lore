@@ -159,8 +159,6 @@ func serverTLS(mtls *config.MTLS) (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}, nil
 }
 
-// A configured server.mtls.client_ca means verify clients, so it turns mutual TLS on
-// with or without --mtls.
 func grpcTransportTLS(mtls *config.MTLS, serverSide *tls.Config, asked bool) (*tls.Config, error) {
 	requestedBy := ""
 	switch {

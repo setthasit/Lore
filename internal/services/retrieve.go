@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const anchorExcerptChars = 500
@@ -18,13 +18,13 @@ type searchSource interface {
 }
 
 type documentSource interface {
-	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
+	DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error)
 }
 
 func hybridSearch(
 	ctx context.Context,
 	s searchSource,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	query string,
 	f entities.Filters,
 	k int,
@@ -56,8 +56,8 @@ func liftDocuments(ctx context.Context, s documentSource, fused []fusedChunk) ([
 		return nil, nil
 	}
 
-	ids := make([]entities.DocID, 0, len(fused))
-	best := make(map[entities.DocID]fusedChunk, len(fused))
+	ids := make([]lore.DocID, 0, len(fused))
+	best := make(map[lore.DocID]fusedChunk, len(fused))
 	for _, chunk := range fused {
 		if _, seen := best[chunk.DocID]; seen {
 			continue
@@ -70,7 +70,7 @@ func liftDocuments(ctx context.Context, s documentSource, fused []fusedChunk) ([
 	if err != nil {
 		return nil, internalerror.NewInternalError("loading document metadata failed", err)
 	}
-	byID := make(map[entities.DocID]entities.DocumentMeta, len(metas))
+	byID := make(map[lore.DocID]entities.DocumentMeta, len(metas))
 	for _, meta := range metas {
 		byID[meta.ID] = meta
 	}

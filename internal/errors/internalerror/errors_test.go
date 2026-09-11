@@ -189,6 +189,33 @@ func TestKindOfReturnsOutermostClassification(t *testing.T) {
 	}
 }
 
+func TestMessageOf(t *testing.T) {
+	t.Parallel()
+
+	classified := internalerror.NewPreconditionError("no repositories registered", errCause)
+
+	projections := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"classified", classified, "no repositories registered"},
+		{"wrapped classified", fmt.Errorf("start runtime: %w", classified), "no repositories registered"},
+		{"outermost classified wins", internalerror.NewInternalError("open index", classified), "open index"},
+		{"unclassified", errCause, "disk offline"},
+		{"wrapped unclassified keeps the wrapper", fmt.Errorf("open index: %w", errCause), "open index: disk offline"},
+	}
+
+	for _, p := range projections {
+		t.Run(p.name, func(t *testing.T) {
+			if got := internalerror.MessageOf(p.err); got != p.want {
+				t.Errorf("MessageOf() = %q, want %q", got, p.want)
+			}
+		})
+	}
+}
+
 func TestKindString(t *testing.T) {
 	t.Parallel()
 

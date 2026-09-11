@@ -17,9 +17,7 @@ const (
 	exitNotFound     = 4
 )
 
-// The kinds a caller can act on say everything actionable in Message; only an
-// error the caller cannot act on falls back to the cause for diagnosis.
-func report(w io.Writer, err error) int {
+func Report(w io.Writer, err error) int {
 	if err == nil {
 		return exitOK
 	}
@@ -43,14 +41,4 @@ func report(w io.Writer, err error) int {
 
 	_, _ = fmt.Fprintln(w, "lore: "+message)
 	return code
-}
-
-// Diagnostic lines want the classified message alone: the fx wrapper that carries
-// it names constructors the reader has no use for.
-func actionableMessage(err error) string {
-	var classified *internalerror.Error
-	if errors.As(err, &classified) {
-		return classified.Message
-	}
-	return err.Error()
 }

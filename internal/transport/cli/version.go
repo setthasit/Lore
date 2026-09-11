@@ -8,11 +8,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
 
-// Stamped by the release build with -ldflags "-X". A plain `go build` leaves
-// them empty and the values below come from the binary's own build info, so an
-// unstamped binary still identifies itself.
+// Stamped by the release build with -ldflags "-X"; empty in a plain `go build`.
 var (
 	version   string
 	commit    string
@@ -57,8 +56,7 @@ func stamp() buildStamp {
 	return s
 }
 
-// A module built by `go install path@version` carries its version; a build from
-// a working tree carries the VCS stamp instead, dirty flag included.
+// `go install path@version` stamps info.Main.Version; a working-tree build stamps vcs.* instead.
 func (s *buildStamp) fillFromBuildInfo(info *debug.BuildInfo) {
 	if s.Version == "" && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		s.Version = info.Main.Version
@@ -92,15 +90,13 @@ func shortSHA(sha string) string {
 	return sha[:short]
 }
 
-// A missing or unopenable workspace is reported, never fatal: `lore --version`
-// is the first thing a bug report runs, including on a machine with no config.
 func runVersion(cmd *cobra.Command, resolve Resolver, configPath string) error {
 	out := cmd.OutOrStdout()
 	renderStamp(out, stamp())
 
 	rt, stop, err := resolve(cmd.Context(), configPath)
 	if err != nil {
-		printfln(out, "workspace: unavailable — %s", actionableMessage(err))
+		printfln(out, "workspace: unavailable — %s", internalerror.MessageOf(err))
 		return nil
 	}
 	defer func() { _ = stop() }()
@@ -118,7 +114,7 @@ func renderStamp(w io.Writer, s buildStamp) {
 
 func renderEmbedder(w io.Writer, identity entities.EmbedderIdentity, err error) {
 	if err != nil {
-		printfln(w, "embedder:  unavailable — %s", actionableMessage(err))
+		printfln(w, "embedder:  unavailable — %s", internalerror.MessageOf(err))
 		return
 	}
 

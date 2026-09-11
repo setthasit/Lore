@@ -51,7 +51,7 @@ func newAskCommand(resolve Resolver, configPath *string) *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&flags.around, "around", "", "event text or date the question is anchored to")
-	f.StringVar(&flags.source, "source", "", "only cite documents from this source (github, notion, jira)")
+	f.StringVar(&flags.source, "source", "", "only cite documents from this source instance, by the id it has in lore.yaml")
 	f.StringVar(&flags.repo, "repo", "", "only cite documents from this repository (owner/name)")
 	f.StringVar(&flags.docType, "doc-type", "", "only cite documents of this type (commit, pr, issue, page, ticket, …)")
 	f.StringVar(&flags.since, "since", "", "only cite documents created on or after this date (YYYY-MM-DD, from 00:00:00Z, or an RFC 3339 timestamp)")

@@ -1,0 +1,170 @@
+package plugexec
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/setthasit/Lore/sdk"
+)
+
+func codeOf(t *testing.T, text, root string) lore.CodeRepo {
+	t.Helper()
+	plugin := mustOpenScript(t, text)
+
+	code, ok := plugin.(lore.CodePlugin)
+	if !ok {
+		t.Fatalf("a code manifest produced %T, want a lore.CodePlugin", plugin)
+	}
+	repo, err := code.NewCode(lore.CodeConfig{Root: root, Host: testHost(nil)})
+	if err != nil {
+		t.Fatalf("NewCode: %v", err)
+	}
+	return repo
+}
+
+func TestACloneLogsUnderTheHostItsConfigSupplied(t *testing.T) {
+	text := script(codeManifest,
+		"log stderr reading history\n"+`log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`,
+		shutdownOK)
+	plugin := mustOpenScript(t, text)
+	host, logs := instanceHost("git")
+
+	repo, err := plugin.(lore.CodePlugin).NewCode(lore.CodeConfig{Root: t.TempDir(), Host: host})
+	if err != nil {
+		t.Fatalf("NewCode: %v", err)
+	}
+	if _, err := repo.Log(context.Background(), "internal/auth/auth.go"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+
+	if out := logs.String(); !strings.Contains(out, `instance=git`) || !strings.Contains(out, "reading history") {
+		t.Errorf("the host NewCode was given logged %q, want the clone's stderr", out)
+	}
+}
+
+func TestBlameReturnsSpansForAWorkspaceAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	text := script(codeManifest,
+		`blame emit {"v":1,"id":"$ID","ok":true,"spans":[{"sha":"9c1f0ab3e5d4","line_start":40,"line_end":42,`+
+			`"author":"Ada Lovelace","time":"2026-05-14T08:31:02Z","lines":["if !tok.Valid() {","\treturn errUnauthorized","}"]}],`+
+			`"text":"$PATH"}`,
+		shutdownOK)
+
+	spans, err := codeOf(t, text, root).Blame(context.Background(), "internal/auth/auth.go", 40, 42)
+	if err != nil {
+		t.Fatalf("Blame: %v", err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	if spans[0].SHA != "9c1f0ab3e5d4" || spans[0].LineStart != 40 || spans[0].LineEnd != 42 {
+		t.Errorf("span = %+v, want the one the plugin sent", spans[0])
+	}
+	if len(spans[0].Lines) != 3 {
+		t.Errorf("span holds %d lines, want one per line in the span", len(spans[0].Lines))
+	}
+	if spans[0].Time.IsZero() {
+		t.Error("span time did not decode")
+	}
+}
+
+func TestTheHostResolvesThePathAgainstTheCloneRoot(t *testing.T) {
+	root := t.TempDir()
+	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`, shutdownOK)
+
+	commits, err := codeOf(t, text, root).Log(context.Background(), "internal/auth/auth.go")
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	want := filepath.Join(root, "internal", "auth", "auth.go")
+	if commits[0].SHA != want {
+		t.Errorf("the plugin was sent %q, want the workspace-absolute %q", commits[0].SHA, want)
+	}
+}
+
+func TestAPathThatClimbsOutOfTheCloneIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "clone")
+	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
+	repo := codeOf(t, text, root)
+
+	for _, path := range []string{"../secrets.env", "internal/../../etc/passwd"} {
+		if _, err := repo.Log(context.Background(), path); err == nil {
+			t.Errorf("Log(%q) was sent to the plugin, want a refusal", path)
+		} else if !strings.Contains(err.Error(), "climbs out of the clone") {
+			t.Errorf("Log(%q) error = %q, want it to name the escape", path, err)
+		}
+	}
+}
+
+func TestAnAbsolutePathIsRefusedInsteadOfReRootedUnderTheClone(t *testing.T) {
+	root := t.TempDir()
+	text := script(codeManifest,
+		`log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`,
+		shutdownOK)
+	repo := codeOf(t, text, root)
+
+	for name, tt := range map[string]struct{ path, want string }{
+		"posix absolute": {path: "/etc/passwd", want: "is absolute"},
+		"unc share":      {path: "//host/share/secrets.env", want: "is absolute"},
+		"windows drive":  {path: `C:\Windows\win.ini`, want: `separates components with \`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			commits, err := repo.Log(context.Background(), tt.path)
+			if err == nil {
+				t.Fatalf("Log(%q) reached the plugin as %v, want a refusal", tt.path, commits)
+			}
+			if commits != nil {
+				t.Errorf("Log(%q) returned %v, want nothing re-rooted under the clone", tt.path, commits)
+			}
+			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), opLog) {
+				t.Errorf("Log(%q) error = %q, want it to name %s and %q", tt.path, err, opLog, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogWithNoHistoryIsAnAnswerNotAnError(t *testing.T) {
+	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
+
+	commits, err := codeOf(t, text, t.TempDir()).Log(context.Background(), "untracked.go")
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if len(commits) != 0 {
+		t.Errorf("got %d commits, want none", len(commits))
+	}
+}
+
+func TestHasFileAtHEADAnswersPresenceWithoutFailing(t *testing.T) {
+	for name, tt := range map[string]struct {
+		frame string
+		want  bool
+	}{
+		"present":  {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":true}`, want: true},
+		"absent":   {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":false}`},
+		"unstated": {frame: `has_file emit {"v":1,"id":"$ID","ok":true}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := codeOf(t, script(codeManifest, tt.frame, shutdownOK), t.TempDir()).
+				HasFileAtHEAD(context.Background(), "internal/auth/auth.go")
+			if err != nil {
+				t.Fatalf("HasFileAtHEAD: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("HasFileAtHEAD = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAFailureToReadTheCloneIsAnError(t *testing.T) {
+	text := script(codeManifest,
+		`has_file emit {"v":1,"id":"$ID","error":{"message":"not a git repository","kind":"invalid_config"}}`,
+		shutdownOK)
+
+	if _, err := codeOf(t, text, t.TempDir()).HasFileAtHEAD(context.Background(), "auth.go"); err == nil {
+		t.Fatal("a clone that cannot be read was reported as a missing file")
+	}
+}

@@ -4,13 +4,14 @@ import (
 	"sort"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // k = 60 is the constant the original RRF paper reports as robust across collections.
 const rrfK = 60
 
 type chunkKey struct {
-	doc     entities.DocID
+	doc     lore.DocID
 	ordinal int
 }
 

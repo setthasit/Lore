@@ -1022,9 +1022,12 @@ func (x *TriggerRequest) GetReembed() bool {
 }
 
 type TriggerResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Synced        string                 `protobuf:"bytes,1,opt,name=synced,proto3" json:"synced,omitempty"`
-	TookOverFrom  *LeaseState            `protobuf:"bytes,2,opt,name=took_over_from,json=tookOverFrom,proto3" json:"took_over_from,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Synced       string                 `protobuf:"bytes,1,opt,name=synced,proto3" json:"synced,omitempty"`
+	TookOverFrom *LeaseState            `protobuf:"bytes,2,opt,name=took_over_from,json=tookOverFrom,proto3" json:"took_over_from,omitempty"`
+	// Instances that ended their stream early while the round carried on. Empty on
+	// a clean round; a populated list is a partial success, not a failure.
+	Failures      []*InstanceFailure `protobuf:"bytes,3,rep,name=failures,proto3" json:"failures,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1073,6 +1076,65 @@ func (x *TriggerResponse) GetTookOverFrom() *LeaseState {
 	return nil
 }
 
+func (x *TriggerResponse) GetFailures() []*InstanceFailure {
+	if x != nil {
+		return x.Failures
+	}
+	return nil
+}
+
+type InstanceFailure struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceFailure) Reset() {
+	*x = InstanceFailure{}
+	mi := &file_lore_v1_lore_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceFailure) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceFailure) ProtoMessage() {}
+
+func (x *InstanceFailure) ProtoReflect() protoreflect.Message {
+	mi := &file_lore_v1_lore_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceFailure.ProtoReflect.Descriptor instead.
+func (*InstanceFailure) Descriptor() ([]byte, []int) {
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *InstanceFailure) GetInstance() string {
+	if x != nil {
+		return x.Instance
+	}
+	return ""
+}
+
+func (x *InstanceFailure) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type StatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1081,7 +1143,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_lore_v1_lore_proto_msgTypes[12]
+	mi := &file_lore_v1_lore_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1093,7 +1155,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[12]
+	mi := &file_lore_v1_lore_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1106,7 +1168,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{12}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{13}
 }
 
 type StatusResponse struct {
@@ -1122,7 +1184,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_lore_v1_lore_proto_msgTypes[13]
+	mi := &file_lore_v1_lore_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1134,7 +1196,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[13]
+	mi := &file_lore_v1_lore_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1147,7 +1209,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{13}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StatusResponse) GetDocuments() int64 {
@@ -1193,7 +1255,7 @@ type WatchRequest struct {
 
 func (x *WatchRequest) Reset() {
 	*x = WatchRequest{}
-	mi := &file_lore_v1_lore_proto_msgTypes[14]
+	mi := &file_lore_v1_lore_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1205,7 +1267,7 @@ func (x *WatchRequest) String() string {
 func (*WatchRequest) ProtoMessage() {}
 
 func (x *WatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[14]
+	mi := &file_lore_v1_lore_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1218,7 +1280,7 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{14}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{15}
 }
 
 type SyncEvent struct {
@@ -1236,7 +1298,7 @@ type SyncEvent struct {
 
 func (x *SyncEvent) Reset() {
 	*x = SyncEvent{}
-	mi := &file_lore_v1_lore_proto_msgTypes[15]
+	mi := &file_lore_v1_lore_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1248,7 +1310,7 @@ func (x *SyncEvent) String() string {
 func (*SyncEvent) ProtoMessage() {}
 
 func (x *SyncEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[15]
+	mi := &file_lore_v1_lore_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1261,7 +1323,7 @@ func (x *SyncEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncEvent.ProtoReflect.Descriptor instead.
 func (*SyncEvent) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{15}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SyncEvent) GetSource() string {
@@ -1316,7 +1378,7 @@ type CursorAge struct {
 
 func (x *CursorAge) Reset() {
 	*x = CursorAge{}
-	mi := &file_lore_v1_lore_proto_msgTypes[16]
+	mi := &file_lore_v1_lore_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1328,7 +1390,7 @@ func (x *CursorAge) String() string {
 func (*CursorAge) ProtoMessage() {}
 
 func (x *CursorAge) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[16]
+	mi := &file_lore_v1_lore_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1341,7 +1403,7 @@ func (x *CursorAge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CursorAge.ProtoReflect.Descriptor instead.
 func (*CursorAge) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{16}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CursorAge) GetSource() string {
@@ -1369,7 +1431,7 @@ type LeaseState struct {
 
 func (x *LeaseState) Reset() {
 	*x = LeaseState{}
-	mi := &file_lore_v1_lore_proto_msgTypes[17]
+	mi := &file_lore_v1_lore_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1381,7 +1443,7 @@ func (x *LeaseState) String() string {
 func (*LeaseState) ProtoMessage() {}
 
 func (x *LeaseState) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[17]
+	mi := &file_lore_v1_lore_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1394,7 +1456,7 @@ func (x *LeaseState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseState.ProtoReflect.Descriptor instead.
 func (*LeaseState) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{17}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *LeaseState) GetHolder() string {
@@ -1431,7 +1493,7 @@ type EvidenceBundle struct {
 
 func (x *EvidenceBundle) Reset() {
 	*x = EvidenceBundle{}
-	mi := &file_lore_v1_lore_proto_msgTypes[18]
+	mi := &file_lore_v1_lore_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1443,7 +1505,7 @@ func (x *EvidenceBundle) String() string {
 func (*EvidenceBundle) ProtoMessage() {}
 
 func (x *EvidenceBundle) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[18]
+	mi := &file_lore_v1_lore_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1456,7 +1518,7 @@ func (x *EvidenceBundle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvidenceBundle.ProtoReflect.Descriptor instead.
 func (*EvidenceBundle) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{18}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *EvidenceBundle) GetQuestion() string {
@@ -1503,7 +1565,7 @@ type Chain struct {
 
 func (x *Chain) Reset() {
 	*x = Chain{}
-	mi := &file_lore_v1_lore_proto_msgTypes[19]
+	mi := &file_lore_v1_lore_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1515,7 +1577,7 @@ func (x *Chain) String() string {
 func (*Chain) ProtoMessage() {}
 
 func (x *Chain) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[19]
+	mi := &file_lore_v1_lore_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1528,7 +1590,7 @@ func (x *Chain) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chain.ProtoReflect.Descriptor instead.
 func (*Chain) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{19}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Chain) GetDocIds() []string {
@@ -1551,7 +1613,7 @@ type Anchor struct {
 
 func (x *Anchor) Reset() {
 	*x = Anchor{}
-	mi := &file_lore_v1_lore_proto_msgTypes[20]
+	mi := &file_lore_v1_lore_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1563,7 +1625,7 @@ func (x *Anchor) String() string {
 func (*Anchor) ProtoMessage() {}
 
 func (x *Anchor) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[20]
+	mi := &file_lore_v1_lore_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1576,7 +1638,7 @@ func (x *Anchor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Anchor.ProtoReflect.Descriptor instead.
 func (*Anchor) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{20}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Anchor) GetKinds() []AnchorKind {
@@ -1628,7 +1690,7 @@ type CodeAnchor struct {
 
 func (x *CodeAnchor) Reset() {
 	*x = CodeAnchor{}
-	mi := &file_lore_v1_lore_proto_msgTypes[21]
+	mi := &file_lore_v1_lore_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1640,7 +1702,7 @@ func (x *CodeAnchor) String() string {
 func (*CodeAnchor) ProtoMessage() {}
 
 func (x *CodeAnchor) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[21]
+	mi := &file_lore_v1_lore_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1653,7 +1715,7 @@ func (x *CodeAnchor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodeAnchor.ProtoReflect.Descriptor instead.
 func (*CodeAnchor) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{21}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CodeAnchor) GetRepo() string {
@@ -1703,7 +1765,7 @@ type DocRef struct {
 
 func (x *DocRef) Reset() {
 	*x = DocRef{}
-	mi := &file_lore_v1_lore_proto_msgTypes[22]
+	mi := &file_lore_v1_lore_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1715,7 +1777,7 @@ func (x *DocRef) String() string {
 func (*DocRef) ProtoMessage() {}
 
 func (x *DocRef) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[22]
+	mi := &file_lore_v1_lore_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1728,7 +1790,7 @@ func (x *DocRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocRef.ProtoReflect.Descriptor instead.
 func (*DocRef) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{22}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DocRef) GetId() string {
@@ -1771,7 +1833,7 @@ type TimeWindow struct {
 
 func (x *TimeWindow) Reset() {
 	*x = TimeWindow{}
-	mi := &file_lore_v1_lore_proto_msgTypes[23]
+	mi := &file_lore_v1_lore_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1783,7 +1845,7 @@ func (x *TimeWindow) String() string {
 func (*TimeWindow) ProtoMessage() {}
 
 func (x *TimeWindow) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[23]
+	mi := &file_lore_v1_lore_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1796,7 +1858,7 @@ func (x *TimeWindow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeWindow.ProtoReflect.Descriptor instead.
 func (*TimeWindow) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{23}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TimeWindow) GetFrom() *timestamppb.Timestamp {
@@ -1840,7 +1902,7 @@ type EvidenceNode struct {
 
 func (x *EvidenceNode) Reset() {
 	*x = EvidenceNode{}
-	mi := &file_lore_v1_lore_proto_msgTypes[24]
+	mi := &file_lore_v1_lore_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1852,7 +1914,7 @@ func (x *EvidenceNode) String() string {
 func (*EvidenceNode) ProtoMessage() {}
 
 func (x *EvidenceNode) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[24]
+	mi := &file_lore_v1_lore_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1865,7 +1927,7 @@ func (x *EvidenceNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvidenceNode.ProtoReflect.Descriptor instead.
 func (*EvidenceNode) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{24}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *EvidenceNode) GetDoc() *DocumentMeta {
@@ -1919,7 +1981,7 @@ type DocumentMeta struct {
 
 func (x *DocumentMeta) Reset() {
 	*x = DocumentMeta{}
-	mi := &file_lore_v1_lore_proto_msgTypes[25]
+	mi := &file_lore_v1_lore_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1931,7 +1993,7 @@ func (x *DocumentMeta) String() string {
 func (*DocumentMeta) ProtoMessage() {}
 
 func (x *DocumentMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[25]
+	mi := &file_lore_v1_lore_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1944,7 +2006,7 @@ func (x *DocumentMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocumentMeta.ProtoReflect.Descriptor instead.
 func (*DocumentMeta) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{25}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DocumentMeta) GetId() string {
@@ -2015,7 +2077,7 @@ type Edge struct {
 
 func (x *Edge) Reset() {
 	*x = Edge{}
-	mi := &file_lore_v1_lore_proto_msgTypes[26]
+	mi := &file_lore_v1_lore_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2027,7 +2089,7 @@ func (x *Edge) String() string {
 func (*Edge) ProtoMessage() {}
 
 func (x *Edge) ProtoReflect() protoreflect.Message {
-	mi := &file_lore_v1_lore_proto_msgTypes[26]
+	mi := &file_lore_v1_lore_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2040,7 +2102,7 @@ func (x *Edge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Edge.ProtoReflect.Descriptor instead.
 func (*Edge) Descriptor() ([]byte, []int) {
-	return file_lore_v1_lore_proto_rawDescGZIP(), []int{26}
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Edge) GetSrc() string {
@@ -2142,10 +2204,14 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\tsynthesis\x18\x02 \x01(\tR\tsynthesis\"B\n" +
 	"\x0eTriggerRequest\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x18\n" +
-	"\areembed\x18\x02 \x01(\bR\areembed\"d\n" +
+	"\areembed\x18\x02 \x01(\bR\areembed\"\x9a\x01\n" +
 	"\x0fTriggerResponse\x12\x16\n" +
 	"\x06synced\x18\x01 \x01(\tR\x06synced\x129\n" +
-	"\x0etook_over_from\x18\x02 \x01(\v2\x13.lore.v1.LeaseStateR\ftookOverFrom\"\x0f\n" +
+	"\x0etook_over_from\x18\x02 \x01(\v2\x13.lore.v1.LeaseStateR\ftookOverFrom\x124\n" +
+	"\bfailures\x18\x03 \x03(\v2\x18.lore.v1.InstanceFailureR\bfailures\"C\n" +
+	"\x0fInstanceFailure\x12\x1a\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\x0f\n" +
 	"\rStatusRequest\"\xb5\x01\n" +
 	"\x0eStatusResponse\x12\x1c\n" +
 	"\tdocuments\x18\x01 \x01(\x03R\tdocuments\x12\x16\n" +
@@ -2296,7 +2362,7 @@ func file_lore_v1_lore_proto_rawDescGZIP() []byte {
 }
 
 var file_lore_v1_lore_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_lore_v1_lore_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_lore_v1_lore_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_lore_v1_lore_proto_goTypes = []any{
 	(AnchorKind)(0),               // 0: lore.v1.AnchorKind
 	(NodeRole)(0),                 // 1: lore.v1.NodeRole
@@ -2315,77 +2381,79 @@ var file_lore_v1_lore_proto_goTypes = []any{
 	(*HistoryOfResponse)(nil),     // 14: lore.v1.HistoryOfResponse
 	(*TriggerRequest)(nil),        // 15: lore.v1.TriggerRequest
 	(*TriggerResponse)(nil),       // 16: lore.v1.TriggerResponse
-	(*StatusRequest)(nil),         // 17: lore.v1.StatusRequest
-	(*StatusResponse)(nil),        // 18: lore.v1.StatusResponse
-	(*WatchRequest)(nil),          // 19: lore.v1.WatchRequest
-	(*SyncEvent)(nil),             // 20: lore.v1.SyncEvent
-	(*CursorAge)(nil),             // 21: lore.v1.CursorAge
-	(*LeaseState)(nil),            // 22: lore.v1.LeaseState
-	(*EvidenceBundle)(nil),        // 23: lore.v1.EvidenceBundle
-	(*Chain)(nil),                 // 24: lore.v1.Chain
-	(*Anchor)(nil),                // 25: lore.v1.Anchor
-	(*CodeAnchor)(nil),            // 26: lore.v1.CodeAnchor
-	(*DocRef)(nil),                // 27: lore.v1.DocRef
-	(*TimeWindow)(nil),            // 28: lore.v1.TimeWindow
-	(*EvidenceNode)(nil),          // 29: lore.v1.EvidenceNode
-	(*DocumentMeta)(nil),          // 30: lore.v1.DocumentMeta
-	(*Edge)(nil),                  // 31: lore.v1.Edge
-	(*timestamppb.Timestamp)(nil), // 32: google.protobuf.Timestamp
+	(*InstanceFailure)(nil),       // 17: lore.v1.InstanceFailure
+	(*StatusRequest)(nil),         // 18: lore.v1.StatusRequest
+	(*StatusResponse)(nil),        // 19: lore.v1.StatusResponse
+	(*WatchRequest)(nil),          // 20: lore.v1.WatchRequest
+	(*SyncEvent)(nil),             // 21: lore.v1.SyncEvent
+	(*CursorAge)(nil),             // 22: lore.v1.CursorAge
+	(*LeaseState)(nil),            // 23: lore.v1.LeaseState
+	(*EvidenceBundle)(nil),        // 24: lore.v1.EvidenceBundle
+	(*Chain)(nil),                 // 25: lore.v1.Chain
+	(*Anchor)(nil),                // 26: lore.v1.Anchor
+	(*CodeAnchor)(nil),            // 27: lore.v1.CodeAnchor
+	(*DocRef)(nil),                // 28: lore.v1.DocRef
+	(*TimeWindow)(nil),            // 29: lore.v1.TimeWindow
+	(*EvidenceNode)(nil),          // 30: lore.v1.EvidenceNode
+	(*DocumentMeta)(nil),          // 31: lore.v1.DocumentMeta
+	(*Edge)(nil),                  // 32: lore.v1.Edge
+	(*timestamppb.Timestamp)(nil), // 33: google.protobuf.Timestamp
 }
 var file_lore_v1_lore_proto_depIdxs = []int32{
-	32, // 0: lore.v1.FindDecisionRequest.since:type_name -> google.protobuf.Timestamp
-	32, // 1: lore.v1.FindDecisionRequest.until:type_name -> google.protobuf.Timestamp
-	23, // 2: lore.v1.FindDecisionResponse.bundle:type_name -> lore.v1.EvidenceBundle
-	23, // 3: lore.v1.WhyResponse.bundle:type_name -> lore.v1.EvidenceBundle
+	33, // 0: lore.v1.FindDecisionRequest.since:type_name -> google.protobuf.Timestamp
+	33, // 1: lore.v1.FindDecisionRequest.until:type_name -> google.protobuf.Timestamp
+	24, // 2: lore.v1.FindDecisionResponse.bundle:type_name -> lore.v1.EvidenceBundle
+	24, // 3: lore.v1.WhyResponse.bundle:type_name -> lore.v1.EvidenceBundle
 	3,  // 4: lore.v1.TraceRequest.direction:type_name -> lore.v1.Direction
-	23, // 5: lore.v1.TraceResponse.bundle:type_name -> lore.v1.EvidenceBundle
-	23, // 6: lore.v1.ImpactOfResponse.bundle:type_name -> lore.v1.EvidenceBundle
-	23, // 7: lore.v1.HistoryOfResponse.bundle:type_name -> lore.v1.EvidenceBundle
-	22, // 8: lore.v1.TriggerResponse.took_over_from:type_name -> lore.v1.LeaseState
-	21, // 9: lore.v1.StatusResponse.cursors:type_name -> lore.v1.CursorAge
-	22, // 10: lore.v1.StatusResponse.lease:type_name -> lore.v1.LeaseState
-	4,  // 11: lore.v1.SyncEvent.phase:type_name -> lore.v1.SyncPhase
-	32, // 12: lore.v1.SyncEvent.at:type_name -> google.protobuf.Timestamp
-	32, // 13: lore.v1.CursorAge.updated_at:type_name -> google.protobuf.Timestamp
-	32, // 14: lore.v1.LeaseState.acquired_at:type_name -> google.protobuf.Timestamp
-	32, // 15: lore.v1.LeaseState.heartbeat_at:type_name -> google.protobuf.Timestamp
-	25, // 16: lore.v1.EvidenceBundle.anchor:type_name -> lore.v1.Anchor
-	29, // 17: lore.v1.EvidenceBundle.nodes:type_name -> lore.v1.EvidenceNode
-	24, // 18: lore.v1.EvidenceBundle.chains:type_name -> lore.v1.Chain
-	0,  // 19: lore.v1.Anchor.kinds:type_name -> lore.v1.AnchorKind
-	26, // 20: lore.v1.Anchor.code:type_name -> lore.v1.CodeAnchor
-	27, // 21: lore.v1.Anchor.doc:type_name -> lore.v1.DocRef
-	28, // 22: lore.v1.Anchor.window:type_name -> lore.v1.TimeWindow
-	32, // 23: lore.v1.DocRef.created_at:type_name -> google.protobuf.Timestamp
-	32, // 24: lore.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
-	32, // 25: lore.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
-	30, // 26: lore.v1.EvidenceNode.doc:type_name -> lore.v1.DocumentMeta
-	1,  // 27: lore.v1.EvidenceNode.role:type_name -> lore.v1.NodeRole
-	31, // 28: lore.v1.EvidenceNode.via:type_name -> lore.v1.Edge
-	32, // 29: lore.v1.DocumentMeta.created_at:type_name -> google.protobuf.Timestamp
-	32, // 30: lore.v1.DocumentMeta.updated_at:type_name -> google.protobuf.Timestamp
-	2,  // 31: lore.v1.Edge.kind:type_name -> lore.v1.EdgeKind
-	5,  // 32: lore.v1.QueryService.FindDecision:input_type -> lore.v1.FindDecisionRequest
-	7,  // 33: lore.v1.QueryService.Why:input_type -> lore.v1.WhyRequest
-	9,  // 34: lore.v1.QueryService.Trace:input_type -> lore.v1.TraceRequest
-	11, // 35: lore.v1.QueryService.ImpactOf:input_type -> lore.v1.ImpactOfRequest
-	13, // 36: lore.v1.QueryService.HistoryOf:input_type -> lore.v1.HistoryOfRequest
-	15, // 37: lore.v1.SyncService.Trigger:input_type -> lore.v1.TriggerRequest
-	17, // 38: lore.v1.SyncService.Status:input_type -> lore.v1.StatusRequest
-	19, // 39: lore.v1.SyncService.Watch:input_type -> lore.v1.WatchRequest
-	6,  // 40: lore.v1.QueryService.FindDecision:output_type -> lore.v1.FindDecisionResponse
-	8,  // 41: lore.v1.QueryService.Why:output_type -> lore.v1.WhyResponse
-	10, // 42: lore.v1.QueryService.Trace:output_type -> lore.v1.TraceResponse
-	12, // 43: lore.v1.QueryService.ImpactOf:output_type -> lore.v1.ImpactOfResponse
-	14, // 44: lore.v1.QueryService.HistoryOf:output_type -> lore.v1.HistoryOfResponse
-	16, // 45: lore.v1.SyncService.Trigger:output_type -> lore.v1.TriggerResponse
-	18, // 46: lore.v1.SyncService.Status:output_type -> lore.v1.StatusResponse
-	20, // 47: lore.v1.SyncService.Watch:output_type -> lore.v1.SyncEvent
-	40, // [40:48] is the sub-list for method output_type
-	32, // [32:40] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	24, // 5: lore.v1.TraceResponse.bundle:type_name -> lore.v1.EvidenceBundle
+	24, // 6: lore.v1.ImpactOfResponse.bundle:type_name -> lore.v1.EvidenceBundle
+	24, // 7: lore.v1.HistoryOfResponse.bundle:type_name -> lore.v1.EvidenceBundle
+	23, // 8: lore.v1.TriggerResponse.took_over_from:type_name -> lore.v1.LeaseState
+	17, // 9: lore.v1.TriggerResponse.failures:type_name -> lore.v1.InstanceFailure
+	22, // 10: lore.v1.StatusResponse.cursors:type_name -> lore.v1.CursorAge
+	23, // 11: lore.v1.StatusResponse.lease:type_name -> lore.v1.LeaseState
+	4,  // 12: lore.v1.SyncEvent.phase:type_name -> lore.v1.SyncPhase
+	33, // 13: lore.v1.SyncEvent.at:type_name -> google.protobuf.Timestamp
+	33, // 14: lore.v1.CursorAge.updated_at:type_name -> google.protobuf.Timestamp
+	33, // 15: lore.v1.LeaseState.acquired_at:type_name -> google.protobuf.Timestamp
+	33, // 16: lore.v1.LeaseState.heartbeat_at:type_name -> google.protobuf.Timestamp
+	26, // 17: lore.v1.EvidenceBundle.anchor:type_name -> lore.v1.Anchor
+	30, // 18: lore.v1.EvidenceBundle.nodes:type_name -> lore.v1.EvidenceNode
+	25, // 19: lore.v1.EvidenceBundle.chains:type_name -> lore.v1.Chain
+	0,  // 20: lore.v1.Anchor.kinds:type_name -> lore.v1.AnchorKind
+	27, // 21: lore.v1.Anchor.code:type_name -> lore.v1.CodeAnchor
+	28, // 22: lore.v1.Anchor.doc:type_name -> lore.v1.DocRef
+	29, // 23: lore.v1.Anchor.window:type_name -> lore.v1.TimeWindow
+	33, // 24: lore.v1.DocRef.created_at:type_name -> google.protobuf.Timestamp
+	33, // 25: lore.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
+	33, // 26: lore.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
+	31, // 27: lore.v1.EvidenceNode.doc:type_name -> lore.v1.DocumentMeta
+	1,  // 28: lore.v1.EvidenceNode.role:type_name -> lore.v1.NodeRole
+	32, // 29: lore.v1.EvidenceNode.via:type_name -> lore.v1.Edge
+	33, // 30: lore.v1.DocumentMeta.created_at:type_name -> google.protobuf.Timestamp
+	33, // 31: lore.v1.DocumentMeta.updated_at:type_name -> google.protobuf.Timestamp
+	2,  // 32: lore.v1.Edge.kind:type_name -> lore.v1.EdgeKind
+	5,  // 33: lore.v1.QueryService.FindDecision:input_type -> lore.v1.FindDecisionRequest
+	7,  // 34: lore.v1.QueryService.Why:input_type -> lore.v1.WhyRequest
+	9,  // 35: lore.v1.QueryService.Trace:input_type -> lore.v1.TraceRequest
+	11, // 36: lore.v1.QueryService.ImpactOf:input_type -> lore.v1.ImpactOfRequest
+	13, // 37: lore.v1.QueryService.HistoryOf:input_type -> lore.v1.HistoryOfRequest
+	15, // 38: lore.v1.SyncService.Trigger:input_type -> lore.v1.TriggerRequest
+	18, // 39: lore.v1.SyncService.Status:input_type -> lore.v1.StatusRequest
+	20, // 40: lore.v1.SyncService.Watch:input_type -> lore.v1.WatchRequest
+	6,  // 41: lore.v1.QueryService.FindDecision:output_type -> lore.v1.FindDecisionResponse
+	8,  // 42: lore.v1.QueryService.Why:output_type -> lore.v1.WhyResponse
+	10, // 43: lore.v1.QueryService.Trace:output_type -> lore.v1.TraceResponse
+	12, // 44: lore.v1.QueryService.ImpactOf:output_type -> lore.v1.ImpactOfResponse
+	14, // 45: lore.v1.QueryService.HistoryOf:output_type -> lore.v1.HistoryOfResponse
+	16, // 46: lore.v1.SyncService.Trigger:output_type -> lore.v1.TriggerResponse
+	19, // 47: lore.v1.SyncService.Status:output_type -> lore.v1.StatusResponse
+	21, // 48: lore.v1.SyncService.Watch:output_type -> lore.v1.SyncEvent
+	41, // [41:49] is the sub-list for method output_type
+	33, // [33:41] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_lore_v1_lore_proto_init() }
@@ -2404,7 +2472,7 @@ func file_lore_v1_lore_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lore_v1_lore_proto_rawDesc), len(file_lore_v1_lore_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

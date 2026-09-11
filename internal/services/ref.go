@@ -7,11 +7,12 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type refSource interface {
 	ResolveRef(ctx context.Context, ref string) ([]entities.DocumentMeta, error)
-	DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error)
+	DocumentsWithBody(ctx context.Context, ids []lore.DocID) ([]lore.Document, error)
 }
 
 // A ref matching nothing reports (zero, false, nil) so a caller may fall back to
@@ -50,8 +51,8 @@ func ambiguousRef(ref string, candidates []entities.DocumentMeta) error {
 		ref, len(candidates), strings.Join(listed, "; ")), nil)
 }
 
-func documentBody(ctx context.Context, s refSource, id entities.DocID) (string, error) {
-	docs, err := s.DocumentsWithBody(ctx, []entities.DocID{id})
+func documentBody(ctx context.Context, s refSource, id lore.DocID) (string, error) {
+	docs, err := s.DocumentsWithBody(ctx, []lore.DocID{id})
 	if err != nil {
 		return "", internalerror.NewInternalError("loading the document body failed", err)
 	}

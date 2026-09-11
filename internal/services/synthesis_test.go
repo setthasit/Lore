@@ -11,8 +11,9 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_llm "github.com/setthasit/Lore/internal/mocks/llm"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const synthesisQuestion = "why did we choose option B instead of A?"
@@ -20,14 +21,14 @@ const synthesisQuestion = "why did we choose option B instead of A?"
 var errSynthesisProvider = errors.New("provider refused the request: 503 service unavailable")
 
 type synthesisFixture struct {
-	model *mock_llm.MockLLM
+	model *mock_lore.MockCompleter
 	svc   services.SynthesisService
 }
 
 func newSynthesisFixture(t *testing.T) synthesisFixture {
 	t.Helper()
 
-	model := mock_llm.NewMockLLM(gomock.NewController(t))
+	model := mock_lore.NewMockCompleter(gomock.NewController(t))
 
 	return synthesisFixture{model: model, svc: services.NewSynthesisService(model)}
 }
@@ -68,7 +69,7 @@ func synthesisBundle() *entities.EvidenceBundle {
 				Doc: entities.DocumentMeta{
 					ID:        "notion:page:decision-b",
 					Source:    "notion",
-					Type:      entities.DocTypePage,
+					Type:      lore.DocTypePage,
 					Title:     "Decision: option B for the ingest path",
 					Author:    "alice",
 					URL:       "https://notion.example.test/decision-b",
@@ -81,7 +82,7 @@ func synthesisBundle() *entities.EvidenceBundle {
 				Doc: entities.DocumentMeta{
 					ID:        "github:pull_request:acme/lore#41",
 					Source:    "github",
-					Type:      entities.DocTypePR,
+					Type:      lore.DocTypePR,
 					Title:     "Implement the option B ingest path",
 					Author:    "bob",
 					URL:       "https://github.example.test/acme/lore/pull/41",
@@ -94,7 +95,7 @@ func synthesisBundle() *entities.EvidenceBundle {
 				Doc: entities.DocumentMeta{
 					ID:        "jira:issue:PROJ-4521",
 					Source:    "jira",
-					Type:      entities.DocTypeTicket,
+					Type:      lore.DocTypeTicket,
 					Title:     "Ingest path is dropping events under load",
 					Author:    "carol",
 					URL:       "https://jira.example.test/PROJ-4521",
@@ -104,7 +105,7 @@ func synthesisBundle() *entities.EvidenceBundle {
 				Role:    entities.RoleFollowUp,
 			},
 		},
-		Chains: [][]entities.DocID{
+		Chains: [][]lore.DocID{
 			{"jira:issue:INC-201", "notion:page:decision-b", "github:pull_request:acme/lore#41"},
 		},
 		Gaps: []string{"trail ends at PROJ-4521; no linked follow-up"},

@@ -9,12 +9,15 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
 
 type Runtime struct {
-	Config    *config.Config
+	Config *config.Config
+
+	Warnings  registry.Warnings
 	Query     services.QueryService
 	Why       services.WhyService
 	Trace     services.TraceService
@@ -25,18 +28,28 @@ type Runtime struct {
 	Synthesis services.SynthesisService
 }
 
-// modules are fx options beyond the workspace: only `lore serve` adds the scheduler.
 type Resolver func(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error)
 
-func resolveWithFX(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error) {
+func fxResolver(reg *registry.Registry) Resolver {
+	return func(ctx context.Context, configPath string, modules ...fx.Option) (*Runtime, func() error, error) {
+		return resolveWithFX(ctx, reg, configPath, modules...)
+	}
+}
+
+func resolveWithFX(
+	ctx context.Context,
+	reg *registry.Registry,
+	configPath string,
+	modules ...fx.Option,
+) (*Runtime, func() error, error) {
 	rt := new(Runtime)
 
 	app := fx.New(
 		append([]fx.Option{
 			fx.NopLogger,
-			di.Workspace(configPath),
-			fx.Populate(&rt.Config, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History, &rt.Sync, &rt.Status,
-				&rt.Synthesis),
+			di.Workspace(configPath, reg),
+			fx.Populate(&rt.Config, &rt.Warnings, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History,
+				&rt.Sync, &rt.Status, &rt.Synthesis),
 		}, modules...)...,
 	)
 	if err := app.Err(); err != nil {
@@ -73,7 +86,7 @@ func withRuntime(
 	if err != nil {
 		return err
 	}
-	for _, warning := range rt.Config.StartupWarnings() {
+	for _, warning := range rt.Warnings {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+warning)
 	}
 

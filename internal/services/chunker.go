@@ -5,11 +5,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type Chunker interface {
 	// Chunk returns doc's chunks in body order, Ordinal 0-based; a blank body yields none.
-	Chunk(doc entities.Document) []entities.Chunk
+	Chunk(doc lore.Document) []entities.Chunk
 }
 
 // Chunk sizes are estimated tokens at len(text)/4 bytes per token, the BPE rule of thumb.
@@ -39,16 +40,16 @@ var _ Chunker = chunker{}
 
 func NewChunker() Chunker { return chunker{} }
 
-func (chunker) Chunk(doc entities.Document) []entities.Chunk {
+func (chunker) Chunk(doc lore.Document) []entities.Chunk {
 	body := strings.TrimSpace(doc.Body)
 	if body == "" {
 		return nil
 	}
 
 	switch doc.Type {
-	case entities.DocTypeCommit:
+	case lore.DocTypeCommit:
 		return []entities.Chunk{chunkOf(doc, 0, body, "")}
-	case entities.DocTypeReviewComment, entities.DocTypeIssueComment, entities.DocTypeTicketComment:
+	case lore.DocTypeReviewComment, lore.DocTypeIssueComment, lore.DocTypeTicketComment:
 		return []entities.Chunk{chunkOf(doc, 0, body, threadID(doc.ID))}
 	default:
 		return splitBody(doc, body)
@@ -56,7 +57,7 @@ func (chunker) Chunk(doc entities.Document) []entities.Chunk {
 }
 
 // A comment DocID is "<thread>#<comment>"; no fragment means the comment is its own thread.
-func threadID(id entities.DocID) string {
+func threadID(id lore.DocID) string {
 	s := string(id)
 	if i := strings.LastIndex(s, threadSeparator); i > 0 {
 		return s[:i]
@@ -65,7 +66,7 @@ func threadID(id entities.DocID) string {
 }
 
 // A heading only closes a chunk that has already reached minChunkTokens.
-func splitBody(doc entities.Document, body string) []entities.Chunk {
+func splitBody(doc lore.Document, body string) []entities.Chunk {
 	chunks := make([]entities.Chunk, 0, len(body)/maxChunkBytes+1)
 	emit := func(text string) {
 		if len(chunks) > 0 {
@@ -199,7 +200,7 @@ func overlapOf(prev string) string {
 	return strings.TrimSpace(prev[start:])
 }
 
-func chunkOf(doc entities.Document, ordinal int, text, thread string) entities.Chunk {
+func chunkOf(doc lore.Document, ordinal int, text, thread string) entities.Chunk {
 	return entities.Chunk{
 		DocID:     doc.ID,
 		Ordinal:   ordinal,

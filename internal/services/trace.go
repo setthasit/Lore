@@ -9,6 +9,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type TraceService interface {
@@ -56,7 +57,7 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 		return nil, err
 	}
 
-	walked, err := walkGraph(ctx, t.store, []entities.DocID{anchor.ID},
+	walked, err := walkGraph(ctx, t.store, []lore.DocID{anchor.ID},
 		walkOptions{Depth: traceDepth(req.Depth), Direction: direction})
 	if err != nil {
 		return nil, internalerror.NewInternalError("walking the provenance graph failed", err)

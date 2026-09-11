@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/llm"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type SynthesisService interface {
@@ -20,13 +20,13 @@ type SynthesisService interface {
 }
 
 type synthesisService struct {
-	model llm.LLM
+	model lore.Completer
 }
 
 var _ SynthesisService = (*synthesisService)(nil)
 
 // A nil model is a workspace with no llm: block: every non-synthesizing verb stays usable.
-func NewSynthesisService(model llm.LLM) SynthesisService {
+func NewSynthesisService(model lore.Completer) SynthesisService {
 	return &synthesisService{model: model}
 }
 
@@ -109,7 +109,7 @@ func synthesisPrompt(question string, bundle *entities.EvidenceBundle) string {
 	if len(bundle.Nodes) == 0 {
 		out.WriteString("\n(no documents were found; there is nothing to cite)\n")
 	}
-	numbers := make(map[entities.DocID]int, len(bundle.Nodes))
+	numbers := make(map[lore.DocID]int, len(bundle.Nodes))
 	for i, node := range bundle.Nodes {
 		numbers[node.Doc.ID] = i + 1
 		writeNode(&out, i+1, node)
@@ -142,7 +142,7 @@ func writeLines(out *strings.Builder, lines []string) {
 	}
 }
 
-func chainLines(chains [][]entities.DocID, numbers map[entities.DocID]int) []string {
+func chainLines(chains [][]lore.DocID, numbers map[lore.DocID]int) []string {
 	lines := make([]string, 0, len(chains))
 	for _, chain := range chains {
 		hops := make([]string, 0, len(chain))

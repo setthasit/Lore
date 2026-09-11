@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type QueryService interface {
@@ -39,14 +39,14 @@ type QueryConfig struct {
 
 type queryService struct {
 	store repositories.IndexStore
-	emb   embedder.Embedder
+	emb   lore.Embedder
 	cfg   QueryConfig
 	now   func() time.Time
 }
 
 var _ QueryService = (*queryService)(nil)
 
-func NewQueryService(store repositories.IndexStore, emb embedder.Embedder, cfg QueryConfig) QueryService {
+func NewQueryService(store repositories.IndexStore, emb lore.Embedder, cfg QueryConfig) QueryService {
 	if cfg.TopK <= 0 {
 		cfg.TopK = defaultTopK
 	}
@@ -104,7 +104,7 @@ func filtersOf(req FindDecisionRequest, window *entities.TimeWindow) entities.Fi
 	return entities.Filters{
 		Source:      req.Source,
 		RepoRef:     req.Repo,
-		DocType:     entities.DocType(req.DocType),
+		DocType:     lore.DocType(req.DocType),
 		CreatedFrom: from,
 		CreatedTo:   to,
 	}
@@ -127,8 +127,8 @@ func intersected(since, until time.Time, window *entities.TimeWindow) (from, to 
 	return from, to
 }
 
-func seedIDs(seeds []seedHit) []entities.DocID {
-	ids := make([]entities.DocID, len(seeds))
+func seedIDs(seeds []seedHit) []lore.DocID {
+	ids := make([]lore.DocID, len(seeds))
 	for i, seed := range seeds {
 		ids[i] = seed.Meta.ID
 	}

@@ -1,13 +1,16 @@
 package entities
 
-import "time"
+import (
+	"time"
 
-// EvidenceBundle is the one result shape every query tool returns.
+	"github.com/setthasit/Lore/sdk"
+)
+
 type EvidenceBundle struct {
 	Question string         // normalized restatement of the query
 	Anchor   Anchor         // how the question was grounded
 	Nodes    []EvidenceNode // ordered by relevance (impact_of: chronological)
-	Chains   [][]DocID      // provenance paths, e.g. [ticket, page, pr, commit]
+	Chains   [][]lore.DocID // provenance paths, e.g. [ticket, page, pr, commit]
 	Gaps     []string       // "trail ends at PROJ-4521; no linked follow-up"
 }
 
@@ -44,7 +47,7 @@ type CodeAnchor struct {
 // DocRef is the anchor document of a trace or impact_of query. CreatedAt is the
 // anchor time impact_of filters consequences against.
 type DocRef struct {
-	ID        DocID
+	ID        lore.DocID
 	Title     string
 	URL       string
 	CreatedAt time.Time
@@ -56,7 +59,7 @@ type TimeWindow struct {
 	From       time.Time
 	To         time.Time
 	Derivation string // "date 2025-03-12 ± 30d", "event 'incident X' via INC-201"
-	AnchoredBy DocID
+	AnchoredBy lore.DocID
 }
 
 // Node roles as reported in EvidenceNode.Role.
@@ -81,11 +84,10 @@ type EvidenceNode struct {
 	Via     []Edge // how this node was reached; empty for pure retrieval hits
 }
 
-// DocumentMeta is a Document without its body.
 type DocumentMeta struct {
-	ID        DocID
+	ID        lore.DocID
 	Source    string
-	Type      DocType
+	Type      lore.DocType
 	Title     string
 	Author    string
 	URL       string

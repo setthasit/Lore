@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // A URL match and a ticket-key match produce the same edge at different confidences,
@@ -17,9 +18,9 @@ ON CONFLICT(src, dst, kind) DO UPDATE SET confidence = max(confidence, excluded.
 const selectEdgesSQL = `SELECT src, dst, kind, confidence FROM edges WHERE `
 
 const (
-	upsertPendingRefSQL  = `INSERT OR IGNORE INTO pending_refs (src_doc, kind, value) VALUES (?, ?, ?)`
-	deletePendingRefSQL  = `DELETE FROM pending_refs WHERE src_doc = ? AND kind = ? AND value = ?`
-	selectPendingRefsSQL = `SELECT src_doc, kind, value FROM pending_refs ORDER BY src_doc, kind, value`
+	upsertPendingRefSQL  = `INSERT OR IGNORE INTO pending_refs (src_doc, kind, value, instance) VALUES (?, ?, ?, ?)`
+	deletePendingRefSQL  = `DELETE FROM pending_refs WHERE src_doc = ? AND kind = ? AND value = ? AND instance = ?`
+	selectPendingRefsSQL = `SELECT src_doc, kind, value, instance FROM pending_refs ORDER BY src_doc, kind, value, instance`
 )
 
 func (s *Store) UpsertEdges(ctx context.Context, edges []entities.Edge) error {
@@ -54,7 +55,7 @@ func (s *Store) UpsertEdges(ctx context.Context, edges []entities.Edge) error {
 
 func (s *Store) Neighbors(
 	ctx context.Context,
-	ids []entities.DocID,
+	ids []lore.DocID,
 	kinds []entities.EdgeKind,
 	dir entities.Direction,
 ) ([]entities.Edge, error) {
@@ -113,8 +114,8 @@ func scanEdges(rows *sql.Rows) ([]entities.Edge, error) {
 			return nil, fmt.Errorf("sqlite: scan edge: %w", err)
 		}
 		edges = append(edges, entities.Edge{
-			Src:        entities.DocID(src),
-			Dst:        entities.DocID(dst),
+			Src:        lore.DocID(src),
+			Dst:        lore.DocID(dst),
 			Kind:       entities.EdgeKind(kind),
 			Confidence: float32(confidence),
 		})
@@ -134,13 +135,13 @@ func (s *Store) PendingRefs(ctx context.Context) ([]entities.PendingRef, error) 
 
 	var refs []entities.PendingRef
 	for rows.Next() {
-		var srcDoc, kind, value string
-		if err := rows.Scan(&srcDoc, &kind, &value); err != nil {
+		var srcDoc, kind, value, instance string
+		if err := rows.Scan(&srcDoc, &kind, &value, &instance); err != nil {
 			return nil, fmt.Errorf("sqlite: scan pending ref: %w", err)
 		}
 		refs = append(refs, entities.PendingRef{
-			SourceDoc: entities.DocID(srcDoc),
-			Ref:       entities.RawRef{Kind: entities.RefKind(kind), Value: value},
+			SourceDoc: lore.DocID(srcDoc),
+			Ref:       lore.RawRef{Kind: lore.RefKind(kind), Value: value, Instance: instance},
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -175,7 +176,7 @@ func (s *Store) writePendingRefs(ctx context.Context, verb, query string, refs [
 	defer func() { _ = stmt.Close() }()
 
 	for _, r := range refs {
-		_, err := stmt.ExecContext(ctx, string(r.SourceDoc), string(r.Ref.Kind), r.Ref.Value)
+		_, err := stmt.ExecContext(ctx, string(r.SourceDoc), string(r.Ref.Kind), r.Ref.Value, r.Ref.Instance)
 		if err != nil {
 			return fmt.Errorf("sqlite: %s pending ref %q of %q: %w", verb, r.Ref.Value, r.SourceDoc, err)
 		}

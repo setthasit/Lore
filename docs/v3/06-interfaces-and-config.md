@@ -37,8 +37,14 @@ Transports:
 
 ```
 lore init                          # create workspace + lore.yaml scaffold
-lore source add gitlab|notion|jira # append source config interactively
-lore sync [--source=jira] [--reembed]
+lore source add <plugin>           # append source config interactively (prompts from the manifest)
+lore plugin list                   # every plugin this build can use, with kind and origin
+lore plugin install <name|coord>   # fetch, verify and install an external plugin
+lore plugin update|remove <name>   # re-resolve a coordinate / delete an install
+lore plugin verify <name>          # run the conformance suite against an installed plugin
+lore plugin search <query>         # query the plugin index
+lore build --with <coordinate>     # build a custom lore binary with a plugin compiled in
+lore sync [--source=jira-acme] [--reembed]
 lore status                        # sync state, doc/edge counts, lock state
 lore ask "<question>" [--around="incident X"] [--since --until] [--source --repo --type]   # → find_decision
 lore impact <ref | "query"> [--question="…"]
@@ -101,56 +107,80 @@ gRPC surface.
 
 ## Configuration — `lore.yaml`
 
-Two independent axes, deliberately separated
-([00 — Δ9](00-design-deltas.md)): **sources** say what to *ingest*;
-**repos** register *local clones* for code anchoring. Either may be empty
-(but not both).
+Three independent axes: **plugins** declare what code may run, **sources**
+declare instances to *ingest*, and **repos** register *local clones* for code
+anchoring. Sources and repos may each be empty (but not both). Every `use:`
+names a plugin — official, third-party-compiled, or external
+([08](08-extensibility.md)).
 
 ```yaml
 workspace: myproject
 index_path: ~/.lore/myproject.db           # default: ~/.lore/<workspace>.db
 
-sources:                                    # ALL optional — configure what exists
-  github:
-    token_env: LORE_GITHUB_TOKEN            # env var NAME; value never stored
-    repos:                                  # what to INGEST (no clone needed)
-      - acme/myproject
-      - acme/myproject-infra
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - "Engineering Wiki"                  # subtree scoping
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects: [PROJ, INFRA]
-  gitlab:
-    base_url: https://gitlab.com            # OPTIONAL — self-managed instances pass their root
-    token_env: LORE_GITLAB_TOKEN
-    projects: [acme/myproject]              # namespaced paths; merge requests map onto `pr`
+plugins:                                    # OPTIONAL — external plugins; see 10
+  - name: linear
+    from: github.com/jdoe/lore-linear@v0.3.1
+
+sources:                                    # ALL optional — instances, in sync order
+  - use: github                             # id defaults to the plugin name
+    with:
+      token_env: LORE_GITHUB_TOKEN          # env var NAME; value never stored
+      repos:                                # what to INGEST (no clone needed)
+        - acme/myproject
+        - acme/myproject-infra
+  - use: notion
+    with:
+      token_env: LORE_NOTION_TOKEN
+      root_pages: ["Engineering Wiki"]      # subtree scoping
+  - id: jira-acme                           # explicit id: two instances of one plugin
+    use: jira
+    with:
+      base_url: https://acme.atlassian.net
+      email_env: LORE_JIRA_EMAIL
+      token_env: LORE_JIRA_TOKEN
+      projects: [PROJ, INFRA]
+  - id: jira-legacy
+    use: jira
+    with:
+      base_url: https://legacy.atlassian.net
+      email_env: LORE_JIRA_EMAIL
+      token_env: LORE_JIRA_LEGACY_TOKEN
+      projects: [OLD]
+  - use: gitlab
+    with:
+      base_url: https://gitlab.com          # OPTIONAL — self-managed instances pass their root
+      token_env: LORE_GITLAB_TOKEN
+      projects: [acme/myproject]            # merge requests map onto `pr`
+  - id: linear
+    use: linear                             # external plugin, identical syntax
+    with: { team: PLATFORM, token_env: LORE_LINEAR_TOKEN }
 
 repos: []                                   # OPTIONAL — local clones, blame/log only.
 # repos:                                    # Zero repos = ask-only workspace;
 #   - path: ~/dev/myproject                 # `why`/`history_of` disabled, all
-#     remote: github:acme/myproject         # other tools fully functional.
+#     use: git                              # other tools fully functional.
+#     remote: github:acme/myproject         # `use` defaults to the git plugin.
 
 query:                                      # optional tuning (server-capped)
   event_window: 30d                         # ± window for event resolution
   walk_depth: 3
   top_k: 12
 
-embedder:
-  provider: openai                          # openai | ollama
+providers:                                  # OPTIONAL — a provider id that names a
+  - id: openrouter                          # registered plugin and needs no options
+    use: openai-compatible                  # may be referenced without declaring it
+    with:
+      base_url: https://openrouter.ai/api
+      api_key_env: LORE_OPENROUTER_KEY
+
+embedder:                                   # role binding: provider instance + model
+  provider: openai
   model: text-embedding-3-small
-  base_url: https://api.openai.com          # OPTIONAL — default: the provider's endpoint
 # dimensions: 768                           # REQUIRED for ollama; `ollama show <model>` reports it
 
 llm:                                        # OPTIONAL — synthesis for CLI/gRPC only
-  provider: anthropic                       # openai | anthropic | zai | ollama
-  model: claude-sonnet-4-5
-  api_key_env: LORE_LLM_KEY
-  base_url: https://api.anthropic.com       # OPTIONAL — default: the provider's endpoint
+  provider: openrouter
+  model: moonshotai/kimi-k2
 
 scheduler:
   interval: 30m
@@ -164,21 +194,35 @@ server:                                     # used by `lore serve`
     client_ca: ./certs/ca.pem
 ```
 
-Validation at load:
+Loading is two-stage: the skeleton above decodes strictly, then each `with:`
+block is validated against its plugin's manifest and decoded strictly by the
+plugin itself. Validation at load:
 
-- Unknown keys rejected.
+- Unknown keys rejected — at the top level by the schema, inside `with:` by the
+  plugin's own decoder.
+- Every `use:` resolves to a compiled plugin or a `plugins:` declaration; an
+  unresolved one names what this build has.
+- Duplicate instance ids rejected; an id is required when one plugin is used
+  twice.
+- Required manifest fields present; `*_env` variables exist when their instance
+  is configured.
 - At least one of `sources` / `repos` non-empty.
-- `token_env`/`email_env` variables must exist when their source is configured.
-- `repos[].remote` must name a configured source repo when enrichment mapping
-  is intended; a clone without a matching source still blames, but chains stop
-  at the commit layer (surfaced as a startup warning, not an error).
+- `embedder.provider` and `llm.provider` resolve to provider instances whose
+  plugins declare the matching capability.
+- `repos[].remote` must name a configured source instance when enrichment
+  mapping is intended; a clone without a matching source still blames, but
+  chains stop at the commit layer (a startup warning, not an error). The
+  warning applies to any source plugin declaring `RepoRemotes`.
 - Loopback/TLS rule enforced; embedder identity checked against the index
   `meta`.
+- Declared external plugins are installed and digest-matched; nothing is
+  fetched at load or sync time ([10](10-plugin-distribution.md)).
 
 At startup, when the embedder is constructed: `embedder.dimensions` is required
 for the `ollama` provider — the width is configured, never probed, so the
 identity is known without the daemon — and rejected for `openai`, where the
-model implies it.
+model implies it. Which of the two applies is the driver's rule, not the
+engine's.
 
 ## Security posture
 
@@ -186,6 +230,11 @@ model implies it.
   (GitHub fine-grained PAT read scopes, GitLab token with `read_api`, Notion
   integration scoped to subtree, Jira API token with read-only project access).
 - Secrets only via env vars; never written to `lore.yaml`, the index, or logs.
+  Config names variables; the host resolves and injects them, and a plugin sees
+  only the secrets its manifest declared — never the ambient environment.
 - Private data leaves the machine only toward the configured embedder/LLM —
   documented loudly; Ollama provider = fully local pipeline.
 - gRPC/HTTP off-loopback requires TLS; gRPC additionally supports mTLS.
+- An external plugin executes with the user's privileges: installation is
+  explicit, digests are pinned in `lore.lock`, and a mismatch refuses to launch
+  ([10](10-plugin-distribution.md#trust-model)).

@@ -2,43 +2,27 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
-var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+const sourcesKey = "sources"
 
-// gitlabDefaultBaseURL is offered as the prompt's default and written out, so a
-// self-managed instance is a visible edit rather than an invisible assumption.
-const gitlabDefaultBaseURL = "https://gitlab.com"
+const externalPromptNotice = "the questions below are the ones this plugin's own manifest declares;" +
+	" answer each one with configuration, and a secret with the NAME of an environment variable, never the value"
 
-type sourceSpec struct {
-	name       string
-	configured func(config.Sources) bool
-	prompt     func(*prompter) (block string, envNames []string, err error)
-}
-
-var sourceSpecs = []sourceSpec{
-	{name: "notion", configured: func(s config.Sources) bool { return s.Notion != nil }, prompt: promptNotion},
-	{name: "jira", configured: func(s config.Sources) bool { return s.Jira != nil }, prompt: promptJira},
-	{name: "gitlab", configured: func(s config.Sources) bool { return s.GitLab != nil }, prompt: promptGitLab},
-}
-
-func newSourceCommand(configPath *string) *cobra.Command {
+func newSourceCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	source := &cobra.Command{
 		Use:   "source",
 		Short: "Manage the sources lore.yaml ingests",
@@ -47,92 +31,271 @@ func newSourceCommand(configPath *string) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	source.AddCommand(newSourceAddCommand(configPath))
+	source.AddCommand(newSourceAddCommand(configPath, reg))
 	return source
 }
 
-func newSourceAddCommand(configPath *string) *cobra.Command {
+func newSourceAddCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <" + strings.Join(sourceNames(), "|") + ">",
-		Short: "Append a source block to lore.yaml, asking for its fields",
-		Long: "Asks for the fields the source needs and inserts them under sources: in\n" +
-			"lore.yaml, leaving every existing line untouched. It asks for the NAME of\n" +
-			"the environment variable holding each credential, never the credential.",
+		Use:   "add <" + strings.Join(sourceArgument(reg), "|") + ">",
+		Short: "Append a source instance to lore.yaml, asking for the fields its plugin declares",
+		Long: "Asks for exactly what the plugin's manifest declares and appends the answers\n" +
+			"as an item under sources: in lore.yaml, leaving every existing line\n" +
+			"untouched. It asks for the NAME of the environment variable holding each\n" +
+			"credential, never the credential.",
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSourceAdd(cmd, args, *configPath)
+			return runSourceAdd(cmd, args, *configPath, reg)
 		},
 	}
 }
 
-func runSourceAdd(cmd *cobra.Command, args []string, configPath string) error {
-	spec, err := sourceToAdd(args)
+func sourceArgument(reg *registry.Registry) []string {
+	if names := reg.Names(lore.KindSource); len(names) > 0 {
+		return names
+	}
+	return []string{"plugin"}
+}
+
+func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *registry.Registry) error {
+	manifest, compiledIn, err := sourceToAdd(args, configPath, reg)
 	if err != nil {
 		return err
 	}
 
-	original, err := os.ReadFile(configPath)
+	original, current, err := config.ReadFile(configPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return internalerror.NewNotFoundError("no configuration at "+configPath+" — run `lore init` to create one", err)
-		}
-		return internalerror.NewInternalError("cannot read "+configPath, err)
-	}
-	current, err := decodeConfig(bytes.NewReader(original))
-	if err != nil {
-		return internalerror.NewBadRequestError("cannot parse "+configPath, err)
-	}
-	if spec.configured(current.Sources) {
-		return internalerror.NewPreconditionError("sources."+spec.name+" is already configured in "+configPath+" — edit that block directly", nil)
-	}
-
-	block, envNames, err := spec.prompt(&prompter{
-		in:  bufio.NewReader(cmd.InOrStdin()),
-		out: cmd.OutOrStdout(),
-	})
-	if err != nil {
-		return err
-	}
-
-	updated, err := insertBlock(string(original), block)
-	if err != nil {
-		return err
-	}
-	if _, err := decodeConfig(strings.NewReader(updated)); err != nil {
-		return internalerror.NewInternalError("the sources."+spec.name+" block does not fit "+configPath+", which is unchanged", err)
-	}
-	if err := replaceFile(configPath, updated); err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	printfln(out, "added sources.%s to %s", spec.name, configPath)
-	printfln(out, "next: export %s, then run `lore sync`", strings.Join(envNames, " and "))
+	if !compiledIn {
+		printfln(out, "%s", externalPromptNotice)
+	}
+	draft, err := promptSource(&prompter{
+		in:  bufio.NewReader(cmd.InOrStdin()),
+		out: out,
+	}, manifest, compiledIn, current)
+	if err != nil {
+		return err
+	}
+
+	block, err := config.FindBlock(original, sourcesKey)
+	if err != nil {
+		return err
+	}
+	updated, err := block.AppendItem(draft.fields())
+	if err != nil {
+		return err
+	}
+	if err := config.WriteFile(configPath, updated, "the "+draft.ident()+" instance does not fit "+
+		configPath+", which is unchanged"); err != nil {
+		return err
+	}
+
+	printfln(out, "added sources[%s] to %s", draft.ident(), configPath)
+	if len(draft.variables) > 0 {
+		printfln(out, "next: export %s, then run `lore sync`", strings.Join(draft.variables, " and "))
+	} else {
+		printfln(out, "next: run `lore sync`")
+	}
 	return nil
 }
 
-func sourceToAdd(args []string) (*sourceSpec, error) {
-	accepted := strings.Join(sourceNames(), " or ")
-	if len(args) == 0 {
-		return nil, internalerror.NewBadRequestError("name the source to add: "+accepted, nil)
-	}
-	if args[0] == "github" {
-		return nil, internalerror.NewBadRequestError("`lore init` already scaffolds sources.github — edit that block in lore.yaml; source add takes "+accepted, nil)
-	}
-	for i := range sourceSpecs {
-		if sourceSpecs[i].name == args[0] {
-			return &sourceSpecs[i], nil
+func sourceToAdd(args []string, configPath string, reg *registry.Registry) (lore.Manifest, bool, error) {
+	if len(args) > 0 {
+		if manifest, known := reg.Manifest(args[0]); known && manifest.Kind == lore.KindSource {
+			return manifest, true, nil
 		}
 	}
-	return nil, internalerror.NewBadRequestError("unknown source "+args[0]+" — add "+accepted, nil)
+
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+	if err != nil {
+		return lore.Manifest{}, false, err
+	}
+	if len(args) > 0 {
+		manifest, err := installedSource(workspace, args[0])
+		if err != nil || manifest.Kind == lore.KindSource {
+			return manifest, false, err
+		}
+	}
+	return lore.Manifest{}, false, noSourceToAdd(args, addableSources(workspace, reg))
 }
 
-func sourceNames() []string {
-	names := make([]string, len(sourceSpecs))
-	for i := range sourceSpecs {
-		names[i] = sourceSpecs[i].name
+func installedSource(workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
+	decl, declared := workspace.Declaration(name)
+	if !declared {
+		return lore.Manifest{}, nil
 	}
-	return names
+	manifest, err := workspace.Manifest(decl)
+	if err != nil {
+		return lore.Manifest{}, err
+	}
+	if err := registry.CheckExternal(decl.Name, manifest); err != nil {
+		return lore.Manifest{}, err
+	}
+	return manifest, nil
+}
+
+func addableSources(workspace *plugindist.Workspace, reg *registry.Registry) string {
+	names := reg.Names(lore.KindSource)
+	for _, decl := range workspace.Plugins() {
+		if _, compiled := reg.Manifest(decl.Name); compiled {
+			continue
+		}
+		if manifest, err := installedSource(workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
+			names = append(names, decl.Name)
+		}
+	}
+
+	if len(names) == 0 {
+		return "no source plugin is registered or installed at all"
+	}
+	return "the source plugins you can add are " + strings.Join(names, ", ")
+}
+
+func noSourceToAdd(args []string, addable string) error {
+	if len(args) == 0 {
+		return internalerror.NewBadRequestError("name the source plugin to add: "+addable, nil)
+	}
+	return internalerror.NewBadRequestError("unknown source plugin "+args[0]+
+		" — "+addable+"; run `lore plugin list` to see them all", nil)
+}
+
+type sourceDraft struct {
+	id        string
+	use       string
+	entries   []config.Field
+	variables []string
+}
+
+func (d sourceDraft) ident() string {
+	if d.id != "" {
+		return d.id
+	}
+	return d.use
+}
+
+func promptSource(p *prompter, m lore.Manifest, compiledIn bool, current *config.Config) (sourceDraft, error) {
+	draft := sourceDraft{use: m.Name}
+
+	id, err := promptInstanceID(p, m.Name, current.Sources)
+	if err != nil {
+		return draft, err
+	}
+	draft.id = id
+
+	field := "sources[" + draft.ident() + "].with."
+	for _, secret := range m.Secrets {
+		name, err := p.envName(field+secret.ConfigField, secretHolds(m, secret), defaultEnv(secret, compiledIn))
+		if err != nil {
+			return draft, err
+		}
+		draft.entries = append(draft.entries, config.Field{Key: secret.ConfigField, Value: name})
+		draft.variables = append(draft.variables, name)
+	}
+	for _, declared := range m.Fields {
+		value, set, err := promptField(p, field+declared.Name, declared)
+		if err != nil {
+			return draft, err
+		}
+		if set {
+			draft.entries = append(draft.entries, config.Field{Key: declared.Name, Value: value})
+		}
+	}
+	return draft, nil
+}
+
+// A sync round ignores an external plugin's own default, so offering it here would write a variable nothing reads.
+func defaultEnv(secret lore.Secret, compiledIn bool) string {
+	if !compiledIn {
+		return ""
+	}
+	return secret.DefaultEnv
+}
+
+func promptInstanceID(p *prompter, plugin string, existing []config.Instance) (string, error) {
+	taken := func(ident string) bool {
+		for _, instance := range existing {
+			if instance.Ident() == ident {
+				return true
+			}
+		}
+		return false
+	}
+	if !taken(plugin) {
+		return "", nil
+	}
+
+	id, err := p.required("sources[].id", "sources already has an instance called "+plugin+
+		", so this one needs its own id, for example "+plugin+"-2")
+	if err != nil {
+		return "", err
+	}
+	if taken(id) {
+		return "", internalerror.NewBadRequestError("sources already has an instance called "+id+
+			"; every id in sources must be unique", nil)
+	}
+	return id, nil
+}
+
+func secretHolds(m lore.Manifest, secret lore.Secret) string {
+	return m.Name + " " + strings.ReplaceAll(secret.Key, "_", " ")
+}
+
+func promptField(p *prompter, field string, declared lore.Field) (any, bool, error) {
+	question := declared.Prompt
+	if question == "" {
+		question = declared.Name
+	}
+
+	if declared.Type == lore.FieldStringList {
+		if declared.Required {
+			items, err := p.requiredList(field, question)
+			return items, err == nil, err
+		}
+		items, err := p.list(question)
+		return items, err == nil && len(items) > 0, err
+	}
+
+	answer, err := p.answer(field, question, declared)
+	if err != nil || answer == "" {
+		return nil, false, err
+	}
+	value, err := parseField(field, declared, answer)
+	return value, err == nil, err
+}
+
+func parseField(field string, declared lore.Field, answer string) (any, error) {
+	switch declared.Type {
+	case lore.FieldURL:
+		if err := registry.CheckURL(field, answer, declared.Default); err != nil {
+			return nil, err
+		}
+		return answer, nil
+	case lore.FieldInt:
+		number, err := strconv.Atoi(answer)
+		if err != nil {
+			return nil, internalerror.NewBadRequestError(field+" must be a whole number", nil)
+		}
+		return number, nil
+	case lore.FieldBool:
+		switch strings.ToLower(answer) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		}
+		return nil, internalerror.NewBadRequestError(field+" must be true or false", nil)
+	case lore.FieldDuration:
+		if _, err := lore.ParseDuration(answer); err != nil {
+			return nil, internalerror.NewBadRequestError(field+" must be a duration like 30m or 30d", nil)
+		}
+		// Written back as text: the whole-day "30d" form survives no time.Duration round trip.
+		return answer, nil
+	default:
+		return answer, nil
+	}
 }
 
 type prompter struct {
@@ -162,9 +325,13 @@ func (p *prompter) envName(field, holds, fallback string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !envNamePattern.MatchString(answer) {
+	if !registry.ValidEnvName(answer) {
 		// The answer is never echoed: a user who pastes a token here must not see it logged back.
-		return "", internalerror.NewBadRequestError(field+" must be an environment variable name like "+fallback, nil)
+		refusal := field + " must be an environment variable name"
+		if fallback != "" {
+			refusal += " like " + fallback
+		}
+		return "", internalerror.NewBadRequestError(refusal+": "+registry.EnvNameRule, nil)
 	}
 	return answer, nil
 }
@@ -178,6 +345,13 @@ func (p *prompter) required(field, question string) (string, error) {
 		return "", internalerror.NewBadRequestError(field+" must be set", nil)
 	}
 	return answer, nil
+}
+
+func (p *prompter) answer(field, question string, declared lore.Field) (string, error) {
+	if declared.Required && declared.Default == "" {
+		return p.required(field, question)
+	}
+	return p.ask(question, declared.Default)
 }
 
 func (p *prompter) list(question string) ([]string, error) {
@@ -195,8 +369,6 @@ func (p *prompter) list(question string) ([]string, error) {
 	return items, nil
 }
 
-// requiredList refuses an empty answer: a source that names no project would
-// pass `source add` and then fail every later `lore` invocation at config load.
 func (p *prompter) requiredList(field, question string) ([]string, error) {
 	items, err := p.list(question)
 	if err != nil {
@@ -208,203 +380,14 @@ func (p *prompter) requiredList(field, question string) ([]string, error) {
 	return items, nil
 }
 
-type notionBlock struct {
-	TokenEnv  string   `yaml:"token_env"`
-	RootPages []string `yaml:"root_pages,omitempty"`
-}
-
-type jiraBlock struct {
-	BaseURL  string   `yaml:"base_url"`
-	EmailEnv string   `yaml:"email_env"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects,omitempty"`
-}
-
-type gitlabBlock struct {
-	BaseURL  string   `yaml:"base_url"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects"`
-}
-
-func promptNotion(p *prompter) (string, []string, error) {
-	tokenEnv, err := p.envName("sources.notion.token_env", "Notion integration token", "LORE_NOTION_TOKEN")
-	if err != nil {
-		return "", nil, err
+func (d sourceDraft) fields() []config.Field {
+	fields := make([]config.Field, 0, 3)
+	if d.id != "" {
+		fields = append(fields, config.Field{Key: "id", Value: d.id})
 	}
-	rootPages, err := p.list("Notion root pages to scope the sync to, comma-separated (empty syncs every page shared with the integration)")
-	if err != nil {
-		return "", nil, err
+	fields = append(fields, config.Field{Key: "use", Value: d.use})
+	if len(d.entries) == 0 {
+		return fields
 	}
-
-	block, err := encodeBlock("notion", notionBlock{TokenEnv: tokenEnv, RootPages: rootPages})
-	if err != nil {
-		return "", nil, err
-	}
-	return block, []string{tokenEnv}, nil
-}
-
-func promptJira(p *prompter) (string, []string, error) {
-	baseURL, err := p.required("sources.jira.base_url", "Jira base URL, e.g. https://acme.atlassian.net")
-	if err != nil {
-		return "", nil, err
-	}
-	if err := validateBaseURL("sources.jira.base_url", baseURL, "https://acme.atlassian.net"); err != nil {
-		return "", nil, err
-	}
-	emailEnv, err := p.envName("sources.jira.email_env", "Jira account email", "LORE_JIRA_EMAIL")
-	if err != nil {
-		return "", nil, err
-	}
-	tokenEnv, err := p.envName("sources.jira.token_env", "Jira API token", "LORE_JIRA_TOKEN")
-	if err != nil {
-		return "", nil, err
-	}
-	projects, err := p.list("Jira project keys to sync, comma-separated (empty syncs every project the account can see)")
-	if err != nil {
-		return "", nil, err
-	}
-
-	block, err := encodeBlock("jira", jiraBlock{
-		BaseURL:  baseURL,
-		EmailEnv: emailEnv,
-		TokenEnv: tokenEnv,
-		Projects: projects,
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	return block, []string{emailEnv, tokenEnv}, nil
-}
-
-func promptGitLab(p *prompter) (string, []string, error) {
-	// Unlike Jira there is a canonical instance, so the default answer is a real one.
-	baseURL, err := p.ask("GitLab base URL", gitlabDefaultBaseURL)
-	if err != nil {
-		return "", nil, err
-	}
-	if err := validateBaseURL("sources.gitlab.base_url", baseURL, gitlabDefaultBaseURL); err != nil {
-		return "", nil, err
-	}
-	tokenEnv, err := p.envName("sources.gitlab.token_env", "GitLab access token", "LORE_GITLAB_TOKEN")
-	if err != nil {
-		return "", nil, err
-	}
-	projects, err := p.requiredList("sources.gitlab.projects",
-		"GitLab projects to sync, comma-separated, e.g. acme/myproject or acme/platform/myproject")
-	if err != nil {
-		return "", nil, err
-	}
-
-	block, err := encodeBlock("gitlab", gitlabBlock{
-		BaseURL:  baseURL,
-		TokenEnv: tokenEnv,
-		Projects: projects,
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	return block, []string{tokenEnv}, nil
-}
-
-func validateBaseURL(field, raw, example string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return internalerror.NewBadRequestError(field+" is not a URL: "+raw, err)
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return internalerror.NewBadRequestError(field+" must be an absolute http(s) URL like "+example+", got "+raw, nil)
-	}
-	return nil
-}
-
-func encodeBlock(name string, fields any) (string, error) {
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(map[string]any{name: fields}); err != nil {
-		return "", internalerror.NewInternalError("cannot encode the "+name+" block", err)
-	}
-	if err := encoder.Close(); err != nil {
-		return "", internalerror.NewInternalError("cannot encode the "+name+" block", err)
-	}
-
-	var block strings.Builder
-	for _, line := range strings.SplitAfter(strings.TrimSuffix(buf.String(), "\n"), "\n") {
-		block.WriteString("  " + line)
-	}
-	block.WriteString("\n")
-	return block.String(), nil
-}
-
-// lore.yaml is hand-written: a YAML round trip would reflow it and drop its comments.
-func insertBlock(content, block string) (string, error) {
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-	at, spliceable, found := sourcesLineEnd(content)
-	switch {
-	case found && !spliceable:
-		return "", internalerror.NewPreconditionError("sources: in the configuration carries an inline value, so a nested source cannot be added to it — rewrite it as a block mapping or add the source by hand", nil)
-	case found:
-		return content[:at] + block + content[at:], nil
-	}
-	return content + "sources:\n" + block, nil
-}
-
-// A trailing comment is harmless above a block child; any other inline value is not.
-func sourcesLineEnd(content string) (end int, spliceable, found bool) {
-	offset := 0
-	for _, line := range strings.SplitAfter(content, "\n") {
-		offset += len(line)
-		rest, isKey := strings.CutPrefix(strings.TrimRight(line, " \t\r\n"), "sources:")
-		if !isKey {
-			continue
-		}
-		rest = strings.TrimSpace(rest)
-		return offset, rest == "" || strings.HasPrefix(rest, "#"), true
-	}
-	return 0, false, false
-}
-
-func replaceFile(path, content string) error {
-	mode := fs.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-
-	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
-	if err != nil {
-		return internalerror.NewInternalError("cannot write "+path, err)
-	}
-	written := func() error {
-		if _, err := temp.WriteString(content); err != nil {
-			return err
-		}
-		if err := temp.Chmod(mode); err != nil {
-			return err
-		}
-		return temp.Close()
-	}()
-	if written != nil {
-		_ = temp.Close()
-		_ = os.Remove(temp.Name())
-		return internalerror.NewInternalError("cannot write "+path, written)
-	}
-
-	if err := os.Rename(temp.Name(), path); err != nil {
-		_ = os.Remove(temp.Name())
-		return internalerror.NewInternalError("cannot write "+path, err)
-	}
-	return nil
-}
-
-func decodeConfig(raw io.Reader) (*config.Config, error) {
-	decoder := yaml.NewDecoder(raw)
-	decoder.KnownFields(true)
-
-	var cfg config.Config
-	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-	return &cfg, nil
+	return append(fields, config.Field{Key: "with", Value: d.entries})
 }

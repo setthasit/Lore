@@ -3,9 +3,10 @@ package main
 import (
 	"os"
 
-	"github.com/setthasit/Lore/internal/transport/cli"
+	"github.com/setthasit/Lore/app"
+	"github.com/setthasit/Lore/plugins"
 )
 
 func main() {
-	os.Exit(cli.Main())
+	os.Exit(app.Run(plugins.Official()...))
 }

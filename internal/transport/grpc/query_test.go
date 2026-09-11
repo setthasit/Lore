@@ -26,6 +26,7 @@ import (
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -196,7 +197,7 @@ func rpcBundle() *entities.EvidenceBundle {
 				Doc: entities.DocumentMeta{
 					ID:        "github:pr:42",
 					Source:    "github",
-					Type:      entities.DocTypePR,
+					Type:      lore.DocTypePR,
 					Title:     "Switch the store to postgres",
 					Author:    "ada",
 					URL:       "https://github.com/acme/lore/pull/42",
@@ -217,7 +218,7 @@ func rpcBundle() *entities.EvidenceBundle {
 				Doc: entities.DocumentMeta{
 					ID:        "jira:ticket:PROJ-1",
 					Source:    "jira",
-					Type:      entities.DocTypeTicket,
+					Type:      lore.DocTypeTicket,
 					Title:     "Pick the primary store",
 					Author:    "grace",
 					URL:       "https://jira.test/browse/PROJ-1",
@@ -228,7 +229,7 @@ func rpcBundle() *entities.EvidenceBundle {
 				Score:   0.25,
 			},
 		},
-		Chains: [][]entities.DocID{{"jira:ticket:PROJ-1", "github:pr:42"}},
+		Chains: [][]lore.DocID{{"jira:ticket:PROJ-1", "github:pr:42"}},
 		Gaps:   []string{"trail ends at PROJ-1; no linked follow-up"},
 	}
 }
@@ -269,7 +270,7 @@ func rpcBundleProto() *lorev1.EvidenceBundle {
 				Doc: &lorev1.DocumentMeta{
 					Id:        "github:pr:42",
 					Source:    "github",
-					Type:      string(entities.DocTypePR),
+					Type:      string(lore.DocTypePR),
 					Title:     "Switch the store to postgres",
 					Author:    "ada",
 					Url:       "https://github.com/acme/lore/pull/42",
@@ -290,7 +291,7 @@ func rpcBundleProto() *lorev1.EvidenceBundle {
 				Doc: &lorev1.DocumentMeta{
 					Id:        "jira:ticket:PROJ-1",
 					Source:    "jira",
-					Type:      string(entities.DocTypeTicket),
+					Type:      string(lore.DocTypeTicket),
 					Title:     "Pick the primary store",
 					Author:    "grace",
 					Url:       "https://jira.test/browse/PROJ-1",

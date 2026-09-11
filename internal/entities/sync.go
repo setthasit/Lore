@@ -1,31 +1,6 @@
 package entities
 
-import (
-	"context"
-	"iter"
-	"time"
-)
-
-// Cursor is an opaque per-connector sync position; only the connector that
-// produced it interprets its keys.
-type Cursor map[string]string
-
-// Batch is the checkpoint unit of a sync round: Cursor becomes durable once Docs
-// are durably committed.
-type Batch struct {
-	Docs   []Document
-	Cursor Cursor
-}
-
-// Connector is the contract every source package implements. Connectors fetch,
-// paginate, retry and normalize; reference resolution is the LinkResolver's job.
-type Connector interface {
-	Name() string // "github", "notion", "jira", …
-
-	// Changes streams batches of documents modified since cursor, oldest-first.
-	// Must be resumable and idempotent.
-	Changes(ctx context.Context, cursor Cursor) iter.Seq2[Batch, error]
-}
+import "time"
 
 type IndexStats struct {
 	Documents int64
@@ -51,9 +26,8 @@ type LeaseState struct {
 	HeartbeatAt time.Time
 }
 
-// EmbedderIdentity pairs the vector space the workspace is configured for with
-// the one its index was built with. They diverge only when the configuration
-// changed after the last sync — the condition a re-embed repairs.
+// Divergence of the two sides blocks every sync round until a re-embed rebuilds
+// the chunk layer.
 type EmbedderIdentity struct {
 	Configured string
 	Indexed    string // empty until a sync records one

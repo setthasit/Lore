@@ -10,6 +10,7 @@ import (
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const chunkHitColumns = `c.doc_id, c.ordinal, c.text, c.source, c.repo_ref, c.doc_type,
@@ -182,8 +183,8 @@ func scanChunkHits(rows *sql.Rows, k int) ([]entities.ChunkHit, error) {
 			return nil, fmt.Errorf("scan chunk hit: %w", err)
 		}
 
-		h.DocID = entities.DocID(docID)
-		h.DocType = entities.DocType(docType)
+		h.DocID = lore.DocID(docID)
+		h.DocType = lore.DocType(docType)
 		h.Score = float32(score)
 		if h.CreatedAt, err = parseTime(createdAt); err != nil {
 			return nil, fmt.Errorf("chunk %d of %q: %w", h.Ordinal, h.DocID, err)

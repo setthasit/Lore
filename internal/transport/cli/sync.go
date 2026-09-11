@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"errors"
+	"io"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
 )
 
@@ -31,6 +34,9 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 					printfln(out, "took over a dead sync lease from %s, last heartbeat %s",
 						res.TookOverFrom.Holder, humanizeAge(time.Since(res.TookOverFrom.HeartbeatAt)))
 				}
+				if len(res.Failures) > 0 {
+					return partialSync(out, res.Failures)
+				}
 				printfln(out, "sync complete — `lore status` for counts and cursor ages")
 				return nil
 			})
@@ -39,6 +45,25 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&reembed, "reembed", false,
 		"rebuild every chunk and vector against the configured embedder; needed after an embedder change")
 	cmd.Flags().StringVar(&source, "source", "",
-		"sync only this source, such as github or jira; omit it to sync every configured source")
+		"sync only this source instance, by the id it has in lore.yaml; omit it to sync every configured source")
 	return cmd
+}
+
+// A partial round exits non-zero so a script can tell.
+func partialSync(out io.Writer, failures []services.InstanceFailure) error {
+	for _, failure := range failures {
+		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, internalerror.MessageOf(failure.Err))
+	}
+	printfln(out, "the remaining sources are committed; `lore status` for counts and cursor ages")
+
+	return internalerror.NewInternalError(plural(len(failures), "source", "sources")+
+		" did not finish this round", errors.Join(failureErrors(failures)...))
+}
+
+func failureErrors(failures []services.InstanceFailure) []error {
+	out := make([]error, len(failures))
+	for i, failure := range failures {
+		out[i] = failure.Err
+	}
+	return out
 }

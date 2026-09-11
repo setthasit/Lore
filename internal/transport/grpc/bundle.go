@@ -7,6 +7,7 @@ import (
 
 	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func newEvidenceBundle(bundle *entities.EvidenceBundle) *lorev1.EvidenceBundle {
@@ -133,7 +134,7 @@ func newEdges(edges []entities.Edge) []*lorev1.Edge {
 	return out
 }
 
-func newChains(chains [][]entities.DocID) []*lorev1.Chain {
+func newChains(chains [][]lore.DocID) []*lorev1.Chain {
 	if len(chains) == 0 {
 		return nil
 	}

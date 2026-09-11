@@ -18,7 +18,7 @@ Use this when the question points at code you can name by file and line; use fin
 Returns an evidence bundle, not an answer: the documents behind those lines with an excerpt and the URL each came from, and a gap for every trail that dead-ends. Nothing is synthesized here — you write the explanation from these citations, and every claim you make should point at one of their URLs. This tool needs the file's repository registered as a local clone; a workspace that registers none cannot anchor on code at all, and find_decision answers the same question from the index instead.`
 
 type whyInput struct {
-	Repo      string `json:"repo,omitempty" jsonschema:"the repository the file belongs to, named as it is registered: a remote such as github:owner/repo or the clone's path; omit it when only one repository is registered"`
+	Repo      string `json:"repo,omitempty" jsonschema:"the repository the file belongs to, named as it is registered: a remote such as <forge>:owner/repo or the clone's path; omit it when only one repository is registered"`
 	File      string `json:"file" jsonschema:"path of the file to blame, relative to the repository root"`
 	LineStart int    `json:"line_start" jsonschema:"first line of the span to blame, counting from 1"`
 	LineEnd   int    `json:"line_end,omitempty" jsonschema:"last line of the span to blame; omit it to blame line_start alone"`

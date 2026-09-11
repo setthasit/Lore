@@ -6,254 +6,194 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/registry"
 )
 
-func TestSourceAddNotionWithDefaults(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
+const seeded = `workspace: myproject
 
-	res := runWithInput(t, nil, "\n\n", "source", "add", "notion", "--config", path)
+# Sources say what to INGEST: one item per instance, in sync order.
+sources:
+  - use: forge                             # the starter instance
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos: []
+
+# Local clones, for blame and file history only.
+repos: []
+
+embedder:
+  provider: vectors
+  model: embed-small
+`
+
+const forgeAnswers = "\nacme/app\n\n\n\n\n"
+
+const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
+
+const linearManifest = `{"name":"linear","kind":"source","api_version":1,` +
+	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
+	`"fields":[{"name":"team","type":"string","required":true,"prompt":"Linear team key"},` +
+	`{"name":"include_backlog","type":"bool","prompt":"Include the backlog"}],` +
+	`"secrets":[{"key":"api_key","config_field":"api_key_env","default_env":"LINEAR_API_KEY"}]}`
+
+func TestSourceAddAppendsASequenceItem(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
+	const want = `workspace: myproject
+
+# Sources say what to INGEST: one item per instance, in sync order.
+sources:
+  - use: forge                             # the starter instance
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos: []
+  - use: tracker
+    with:
+      token_env: LORE_TRACKER_TOKEN
+      base_url: https://tracker.example
+      projects:
+        - PROJ
+        - INFRA
+
+# Local clones, for blame and file history only.
+repos: []
+
+embedder:
+  provider: vectors
+  model: embed-small
+`
 	after := readConfigFile(t, path)
-	assertInserted(t, before, after, "  notion:\n    token_env: LORE_NOTION_TOKEN\n")
-	if strings.Contains(after, "root_pages") {
-		t.Errorf("file = %q, want no root_pages key when no page was named", after)
+	if after != want {
+		t.Errorf("file =\n%s\nwant\n%s", after, want)
+	}
+	assertOriginalLinesKept(t, seeded, after)
+
+	cfg := decodeConfigFile(t, after)
+	if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "tracker" {
+		t.Fatalf("sources = %+v, want the new instance appended after the existing one", cfg.Sources)
+	}
+	values, err := cfg.Sources[1].WithValues()
+	if err != nil {
+		t.Fatalf("with: does not decode: %v", err)
+	}
+	if values["base_url"] != "https://tracker.example" {
+		t.Errorf("with.base_url = %v, want the answer given", values["base_url"])
+	}
+	if projects, ok := values["projects"].([]any); !ok || len(projects) != 2 || projects[1] != "INFRA" {
+		t.Errorf("with.projects = %v, want both keys", values["projects"])
+	}
+
+	const transcript = "name of the environment variable holding the tracker api token" +
+		" — the name, never the value [LORE_TRACKER_TOKEN]: " +
+		"Tracker base URL: " +
+		"Project keys to sync, comma-separated: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want it to open with the prompt sequence\n%q", res.stdout, transcript)
+	}
+	if !strings.Contains(res.stdout, path) || !strings.Contains(res.stdout, "export LORE_TRACKER_TOKEN") {
+		t.Errorf("stdout = %q, want the path written and the variable to export", res.stdout)
+	}
+	if strings.Contains(res.stdout, "needs its own id") {
+		t.Errorf("stdout = %q, want no id prompt for the first instance of a plugin", res.stdout)
+	}
+	assertPromptsAskForNamesOnly(t, res.stdout)
+}
+
+func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+
+	res := runOn(t, sourceRegistry(t), nil, "forge-infra\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	const transcript = "sources already has an instance called forge," +
+		" so this one needs its own id, for example forge-2: " +
+		"name of the environment variable holding the forge token" +
+		" — the name, never the value [LORE_FORGE_TOKEN]: " +
+		"Repositories to ingest, each \"owner/name\": " +
+		"Forge base URL [https://forge.example]: " +
+		"How far back to ingest: " +
+		"Items per request: " +
+		"Include archived repositories: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want it to open with the prompt sequence\n%q", res.stdout, transcript)
+	}
+
+	after := readConfigFile(t, path)
+	assertOriginalLinesKept(t, seeded, after)
+	const item = `  - id: forge-infra
+    use: forge
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos:
+        - acme/app
+      base_url: https://forge.example
+`
+	if !strings.Contains(after, item) {
+		t.Errorf("file =\n%s\nwant it to hold\n%s", after, item)
+	}
+	if strings.Contains(after, "since") || strings.Contains(after, "batch") || strings.Contains(after, "archived") {
+		t.Errorf("file =\n%s\nwant the unanswered optional fields left out", after)
 	}
 
 	cfg := decodeConfigFile(t, after)
-	if cfg.Sources.Notion == nil || cfg.Sources.Notion.TokenEnv != "LORE_NOTION_TOKEN" {
-		t.Fatalf("sources.notion = %+v, want the default variable name", cfg.Sources.Notion)
+	if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "forge-infra" {
+		t.Errorf("sources = %+v, want a second instance under its own id", cfg.Sources)
 	}
-	if len(cfg.Sources.Notion.RootPages) != 0 {
-		t.Errorf("root_pages = %v, want none", cfg.Sources.Notion.RootPages)
-	}
-	if cfg.Sources.GitHub == nil {
-		t.Error("the scaffolded github source went missing")
-	}
-	if !strings.Contains(res.stdout, path) || !strings.Contains(res.stdout, "export LORE_NOTION_TOKEN") {
-		t.Errorf("stdout = %q, want the path written and the variable to export", res.stdout)
-	}
-	assertPromptsAskForNamesOnly(t, res.stdout)
-}
-
-func TestSourceAddNotionWithExplicitAnswers(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
-
-	res := runWithInput(t, nil, "NOTION_PAT\nEngineering Wiki, Design Docs\n", "source", "add", "notion", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	after := readConfigFile(t, path)
-	assertInserted(t, before, after, "  notion:\n"+
-		"    token_env: NOTION_PAT\n"+
-		"    root_pages:\n"+
-		"      - Engineering Wiki\n"+
-		"      - Design Docs\n")
-
-	notion := decodeConfigFile(t, after).Sources.Notion
-	if notion == nil || notion.TokenEnv != "NOTION_PAT" {
-		t.Fatalf("sources.notion = %+v", notion)
-	}
-	if len(notion.RootPages) != 2 || notion.RootPages[1] != "Design Docs" {
-		t.Errorf("root_pages = %v, want both pages", notion.RootPages)
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("the file no longer validates: %v", err)
 	}
 }
 
-func TestSourceAddJira(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
+func TestSourceAddRefusesAnIDAlreadyInUse(t *testing.T) {
+	path := writeConfigFile(t, seeded)
 
-	res := runWithInput(t, nil, "https://acme.atlassian.net\n\n\nPROJ, INFRA\n", "source", "add", "jira", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	res := runOn(t, sourceRegistry(t), nil, "forge\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
-
-	after := readConfigFile(t, path)
-	assertInserted(t, before, after, "  jira:\n"+
-		"    base_url: https://acme.atlassian.net\n"+
-		"    email_env: LORE_JIRA_EMAIL\n"+
-		"    token_env: LORE_JIRA_TOKEN\n"+
-		"    projects:\n"+
-		"      - PROJ\n"+
-		"      - INFRA\n")
-
-	jira := decodeConfigFile(t, after).Sources.Jira
-	if jira == nil || jira.BaseURL != "https://acme.atlassian.net" {
-		t.Fatalf("sources.jira = %+v", jira)
+	if !strings.Contains(res.stderr, "already has an instance called forge") {
+		t.Errorf("stderr = %q, want it to name the identity that is taken", res.stderr)
 	}
-	if jira.EmailEnv != "LORE_JIRA_EMAIL" || jira.TokenEnv != "LORE_JIRA_TOKEN" {
-		t.Errorf("jira env names = %q/%q, want the defaults", jira.EmailEnv, jira.TokenEnv)
-	}
-	if len(jira.Projects) != 2 || jira.Projects[1] != "INFRA" {
-		t.Errorf("projects = %v, want both keys", jira.Projects)
-	}
-	if !strings.Contains(res.stdout, "export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN") {
-		t.Errorf("stdout = %q, want both variables to export", res.stdout)
-	}
-	assertPromptsAskForNamesOnly(t, res.stdout)
-}
-
-func TestSourceAddGitLabTakesTheGitLabComDefault(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
-
-	res := runWithInput(t, nil, "\n\nacme/myproject, acme/platform/infra\n", "source", "add", "gitlab", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	after := readConfigFile(t, path)
-	// base_url is written even when defaulted: a later move to a self-managed
-	// instance is then an edit rather than a new key nobody knows about.
-	assertInserted(t, before, after, "  gitlab:\n"+
-		"    base_url: https://gitlab.com\n"+
-		"    token_env: LORE_GITLAB_TOKEN\n"+
-		"    projects:\n"+
-		"      - acme/myproject\n"+
-		"      - acme/platform/infra\n")
-
-	gitlab := decodeConfigFile(t, after).Sources.GitLab
-	if gitlab == nil || gitlab.BaseURL != "https://gitlab.com" {
-		t.Fatalf("sources.gitlab = %+v", gitlab)
-	}
-	if gitlab.TokenEnv != "LORE_GITLAB_TOKEN" {
-		t.Errorf("gitlab token_env = %q, want the default", gitlab.TokenEnv)
-	}
-	if len(gitlab.Projects) != 2 || gitlab.Projects[1] != "acme/platform/infra" {
-		t.Errorf("projects = %v, want both namespaced paths", gitlab.Projects)
-	}
-	if !strings.Contains(res.stdout, "export LORE_GITLAB_TOKEN") {
-		t.Errorf("stdout = %q, want the variable to export", res.stdout)
-	}
-	assertPromptsAskForNamesOnly(t, res.stdout)
-}
-
-func TestSourceAddGitLabAcceptsASelfManagedRoot(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
-
-	res := runWithInput(t, nil, "https://gitlab.acme.dev/\nACME_GITLAB_PAT\nacme/widgets\n",
-		"source", "add", "gitlab", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	after := readConfigFile(t, path)
-	assertInserted(t, before, after, "  gitlab:\n"+
-		"    base_url: https://gitlab.acme.dev/\n"+
-		"    token_env: ACME_GITLAB_PAT\n"+
-		"    projects:\n"+
-		"      - acme/widgets\n")
-
-	t.Setenv("LORE_GITHUB_TOKEN", "github-fake-value")
-	t.Setenv("ACME_GITLAB_PAT", "gitlab-fake-value")
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("the file no longer loads: %v", err)
-	}
-	if cfg.Sources.GitLab == nil || cfg.Sources.GitLab.TokenEnv != "ACME_GITLAB_PAT" {
-		t.Errorf("sources.gitlab = %+v", cfg.Sources.GitLab)
-	}
-}
-
-func TestSourceAddBothSourcesStillLoads(t *testing.T) {
-	path := scaffolded(t)
-	before := readConfigFile(t, path)
-
-	if res := runWithInput(t, nil, "\n\n", "source", "add", "notion", "--config", path); res.exitCode != exitOK {
-		t.Fatalf("adding notion: exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-	if res := runWithInput(t, nil, "https://acme.atlassian.net\n\n\nPROJ\n", "source", "add", "jira", "--config", path); res.exitCode != exitOK {
-		t.Fatalf("adding jira: exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-
-	assertOriginalLinesKept(t, before, readConfigFile(t, path))
-
-	t.Setenv("LORE_GITHUB_TOKEN", "github-fake-value")
-	t.Setenv("LORE_NOTION_TOKEN", "notion-fake-value")
-	t.Setenv("LORE_JIRA_EMAIL", "someone@example.test")
-	t.Setenv("LORE_JIRA_TOKEN", "jira-fake-value")
-
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("the file no longer loads: %v", err)
-	}
-	if cfg.Sources.Notion == nil || cfg.Sources.Jira == nil || cfg.Sources.GitHub == nil {
-		t.Errorf("sources = %+v, want all three", cfg.Sources)
-	}
-}
-
-func TestSourceAddRefusesADuplicate(t *testing.T) {
-	path := scaffolded(t)
-	if res := runWithInput(t, nil, "\n\n", "source", "add", "notion", "--config", path); res.exitCode != exitOK {
-		t.Fatalf("adding notion: exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
-	before := readConfigFile(t, path)
-
-	res := runWithInput(t, nil, "OTHER_PAT\n\n", "source", "add", "notion", "--config", path)
-	if res.exitCode != exitPrecondition {
-		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitPrecondition, res.stderr)
-	}
-	if !strings.Contains(res.stderr, "sources.notion") || !strings.Contains(res.stderr, path) {
-		t.Errorf("stderr = %q, want it to name the source and the file to edit", res.stderr)
-	}
-	if after := readConfigFile(t, path); after != before {
+	if after := readConfigFile(t, path); after != seeded {
 		t.Errorf("file = %q, want it untouched after the refusal", after)
 	}
 }
 
-func TestSourceAddCreatesTheSourcesSection(t *testing.T) {
-	const trimmed = `workspace: askonly
+func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
+	path := writeConfigFile(t, seeded)
 
-# sources:
-#   github:
-#     token_env: LORE_GITHUB_TOKEN
-repos: []
-
-embedder:
-  provider: openai
-  model: text-embedding-3-small
-`
-	path := writeConfigFile(t, trimmed)
-
-	res := runWithInput(t, nil, "https://acme.atlassian.net\n\n\n\n", "source", "add", "jira", "--config", path)
-	if res.exitCode != exitOK {
-		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
-
-	after := readConfigFile(t, path)
-	assertInserted(t, trimmed, after, "sources:\n"+
-		"  jira:\n"+
-		"    base_url: https://acme.atlassian.net\n"+
-		"    email_env: LORE_JIRA_EMAIL\n"+
-		"    token_env: LORE_JIRA_TOKEN\n")
-	if !strings.HasSuffix(after, "    token_env: LORE_JIRA_TOKEN\n") {
-		t.Errorf("file = %q, want the new section appended at the end", after)
+	for _, want := range []string{"nosuchforge", "forge", "tracker", "lore plugin list"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", res.stderr, want)
+		}
 	}
-	if strings.Contains(after, "projects") {
-		t.Errorf("file = %q, want no projects key when no project was named", after)
+	if strings.Contains(res.stderr, "vectors") {
+		t.Errorf("stderr = %q, want only the source plugins listed", res.stderr)
 	}
-	if jira := decodeConfigFile(t, after).Sources.Jira; jira == nil || len(jira.Projects) != 0 {
-		t.Errorf("sources.jira = %+v, want a source scoped to every visible project", jira)
+	if after := readConfigFile(t, path); after != seeded {
+		t.Errorf("file = %q, want it untouched after the refusal", after)
 	}
 }
 
 func TestSourceAddRefusesAnInlineSourcesValue(t *testing.T) {
 	const inline = `workspace: askonly
-sources: {}
+sources: [{use: forge, with: {repos: [acme/app]}}]
 repos: []
 `
 	path := writeConfigFile(t, inline)
 
-	res := runWithInput(t, nil, "\n\n", "source", "add", "notion", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitPrecondition {
 		t.Fatalf("exit = %d, want %d, stderr = %q", res.exitCode, exitPrecondition, res.stderr)
 	}
@@ -265,122 +205,313 @@ repos: []
 	}
 }
 
-// A user who pastes a credential where a variable name was asked for must not see it echoed.
-func TestSourceAddNeverEchoesARejectedAnswer(t *testing.T) {
-	const pasted = "secret_pasted!credential"
-	path := scaffolded(t)
+func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
+	const pasted = "glpat-Pasted!Credential"
+	path := writeConfigFile(t, seeded)
 
-	res := runWithInput(t, nil, pasted+"\n\n", "source", "add", "notion", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitBadRequest {
-		t.Fatalf("exit = %d, want %d", res.exitCode, exitBadRequest)
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
 	for name, stream := range map[string]string{"stderr": res.stderr, "stdout": res.stdout} {
 		if strings.Contains(stream, pasted) {
 			t.Errorf("%s = %q, want the rejected answer absent", name, stream)
 		}
 	}
+
+	after := readConfigFile(t, path)
+	if after != seeded {
+		t.Errorf("file = %q, want it untouched after the refusal", after)
+	}
+	if strings.Contains(after, pasted) {
+		t.Errorf("file = %q, want no pasted credential in it", after)
+	}
 }
 
-func TestSourceAddRejectsBadInput(t *testing.T) {
+func TestSourceAddWritesOnlyVariableNamesForSecrets(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+
+	res := runOn(t, sourceRegistry(t), nil, "TRACKER_PAT\nhttps://tracker.example\nPROJ\n",
+		"source", "add", "tracker", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	after := readConfigFile(t, path)
+	if !strings.Contains(after, "token_env: TRACKER_PAT") {
+		t.Errorf("file =\n%s\nwant the variable name the operator gave", after)
+	}
+	assertNoSecretValues(t, after)
+	assertPromptsAskForNamesOnly(t, res.stdout)
+}
+
+func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		answers  string
-		wantErr  string
-		wantExit int
+		name    string
+		plugin  string
+		answers string
+		wantErr string
 	}{
 		{
-			name:     "an env var name that is not an identifier",
-			args:     []string{"notion"},
-			answers:  "not a name!\n\n",
-			wantErr:  "sources.notion.token_env must be an environment variable name",
-			wantExit: exitBadRequest,
+			name:    "a required field left empty",
+			plugin:  "tracker",
+			answers: "\n\n",
+			wantErr: "sources[tracker].with.base_url must be set",
 		},
 		{
-			name:     "a base url with no default and no answer",
-			args:     []string{"jira"},
-			answers:  "\n",
-			wantErr:  "sources.jira.base_url must be set",
-			wantExit: exitBadRequest,
+			name:    "a required list left empty",
+			plugin:  "tracker",
+			answers: "\nhttps://tracker.example\n\n",
+			wantErr: "sources[tracker].with.projects must list at least one entry",
 		},
 		{
-			name:     "a base url that is not http",
-			args:     []string{"jira"},
-			answers:  "ftp://acme.atlassian.net\n",
-			wantErr:  "sources.jira.base_url must be an absolute http(s) URL",
-			wantExit: exitBadRequest,
+			name:    "a url that is not absolute http",
+			plugin:  "tracker",
+			answers: "\ntracker.example\n",
+			wantErr: "sources[tracker].with.base_url must be an absolute http(s) URL",
 		},
 		{
-			name:     "a base url with no host",
-			args:     []string{"jira"},
-			answers:  "acme.atlassian.net\n",
-			wantErr:  "sources.jira.base_url must be an absolute http(s) URL",
-			wantExit: exitBadRequest,
+			// A plugin that already has an instance is asked for an id first,
+			// so these answers open with one.
+			name:    "a url whose default is offered as the example",
+			plugin:  "forge",
+			answers: "forge-2\n\nacme/app\nftp://forge.acme.dev\n",
+			wantErr: "sources[forge-2].with.base_url must be an absolute http(s) URL like https://forge.example",
 		},
 		{
-			name:     "a gitlab base url that is not http",
-			args:     []string{"gitlab"},
-			answers:  "ftp://gitlab.acme.dev\n",
-			wantErr:  "sources.gitlab.base_url must be an absolute http(s) URL like https://gitlab.com",
-			wantExit: exitBadRequest,
+			name:    "a non-numeric int",
+			plugin:  "forge",
+			answers: "forge-2\n\nacme/app\n\n\nseven\n",
+			wantErr: "sources[forge-2].with.batch must be a whole number",
 		},
 		{
-			name:     "a gitlab source that names no project",
-			args:     []string{"gitlab"},
-			answers:  "\n\n\n",
-			wantErr:  "sources.gitlab.projects must list at least one entry",
-			wantExit: exitBadRequest,
+			name:    "a bool that is neither",
+			plugin:  "forge",
+			answers: "forge-2\n\nacme/app\n\n\n50\nperhaps\n",
+			wantErr: "sources[forge-2].with.archived must be true or false",
 		},
 		{
-			name:     "an unknown source",
-			args:     []string{"bitbucket"},
-			wantErr:  "unknown source bitbucket",
-			wantExit: exitBadRequest,
+			name:    "a duration that does not parse",
+			plugin:  "forge",
+			answers: "forge-2\n\nacme/app\n\nlast tuesday\n",
+			wantErr: "sources[forge-2].with.since must be a duration like 30m or 30d",
 		},
 		{
-			name:     "github, which lore init scaffolds",
-			args:     []string{"github"},
-			wantErr:  "lore init",
-			wantExit: exitBadRequest,
+			name:    "an env var name that is not a variable name",
+			plugin:  "tracker",
+			answers: "not a name!\n\n",
+			wantErr: "sources[tracker].with.token_env must be an environment variable name like LORE_TRACKER_TOKEN",
 		},
 		{
-			name:     "no source at all",
-			wantErr:  "name the source to add",
-			wantExit: exitBadRequest,
-		},
-		{
-			name:     "more than one source",
-			args:     []string{"notion", "jira"},
-			wantErr:  "accepts at most 1 arg",
-			wantExit: exitBadRequest,
+			name:    "no plugin at all",
+			answers: "",
+			wantErr: "name the source plugin to add",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			path := scaffolded(t)
-			before := readConfigFile(t, path)
+			path := writeConfigFile(t, seeded)
 
-			args := append([]string{"source", "add"}, test.args...)
-			res := runWithInput(t, nil, test.answers, append(args, "--config", path)...)
+			args := []string{"source", "add"}
+			if test.plugin != "" {
+				args = append(args, test.plugin)
+			}
+			res := runOn(t, sourceRegistry(t), nil, test.answers, append(args, "--config", path)...)
 
-			if res.exitCode != test.wantExit {
-				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, test.wantExit, res.stderr)
+			if res.exitCode != exitBadRequest {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 			}
 			if !strings.Contains(res.stderr, test.wantErr) {
 				t.Errorf("stderr = %q, want it to contain %q", res.stderr, test.wantErr)
 			}
-			if after := readConfigFile(t, path); after != before {
+			if after := readConfigFile(t, path); after != seeded {
 				t.Errorf("file = %q, want it untouched after the refusal", after)
 			}
 		})
 	}
 }
 
+func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
+	path := installLinearSource(t)
+	before := readConfigFile(t, path)
+
+	res := runOn(t, sourceRegistry(t), nil, "LINEAR_TOKEN\nSRE\ntrue\n",
+		"source", "add", "linear", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	const transcript = "the questions below are the ones this plugin's own manifest declares;" +
+		" answer each one with configuration, and a secret with the NAME of an environment variable," +
+		" never the value\n" +
+		"name of the environment variable holding the linear api key — the name, never the value: " +
+		"Linear team key: " +
+		"Include the backlog: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want it to open with the notice and the manifest's own questions\n%q",
+			res.stdout, transcript)
+	}
+	if !strings.Contains(res.stdout, "added sources[linear] to "+path) ||
+		!strings.Contains(res.stdout, "next: export LINEAR_TOKEN") {
+		t.Errorf("stdout = %q, want the path written and the variable to export", res.stdout)
+	}
+
+	after := readConfigFile(t, path)
+	const item = `  - use: linear
+    with:
+      api_key_env: LINEAR_TOKEN
+      team: SRE
+      include_backlog: true
+`
+	if !strings.Contains(after, item) {
+		t.Errorf("file =\n%s\nwant it to hold\n%s", after, item)
+	}
+	assertOriginalLinesKept(t, before, after)
+
+	cfg := decodeConfigFile(t, after)
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("the file no longer validates: %v", err)
+	}
+	if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "linear" {
+		t.Fatalf("sources = %+v, want the installed plugin's instance appended", cfg.Sources)
+	}
+	values, err := cfg.Sources[1].WithValues()
+	if err != nil {
+		t.Fatalf("with: does not decode: %v", err)
+	}
+	for key, want := range map[string]any{"api_key_env": "LINEAR_TOKEN", "team": "SRE", "include_backlog": true} {
+		if values[key] != want {
+			t.Errorf("with.%s = %v, want %v", key, values[key], want)
+		}
+	}
+}
+
+func TestSourceAddRefusesACaptureTheRuntimeRejects(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		wantExit int
+		wantErr  string
+	}{
+		{
+			name:     "a manifest that renames the plugin",
+			manifest: strings.Replace(linearManifest, `"name":"linear"`, `"name":"linear-cloud"`, 1),
+			wantExit: exitBadRequest,
+			wantErr:  `plugins[linear] is a binary whose manifest calls itself "linear-cloud"`,
+		},
+		{
+			name:     "a field name that is not snake_case",
+			manifest: strings.Replace(linearManifest, `"name":"team"`, `"name":"TeamKey"`, 1),
+			wantExit: exitInternal,
+			wantErr:  `plugin "linear" declares field "TeamKey"; a field name must be snake_case`,
+		},
+		{
+			name:     "a secret whose config field would hold the credential",
+			manifest: strings.Replace(linearManifest, `"config_field":"api_key_env"`, `"config_field":"api_key"`, 1),
+			wantExit: exitInternal,
+			wantErr:  `plugin "linear" declares secret "api_key" with config field "api_key"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := installLinearSource(t)
+			rewriteCapturedManifest(t, test.manifest)
+			before := readConfigFile(t, path)
+
+			res := runOn(t, sourceRegistry(t), nil, "LINEAR_TOKEN\nSRE\ntrue\n",
+				"source", "add", "linear", "--config", path)
+			if res.exitCode != test.wantExit {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, test.wantExit, res.stderr)
+			}
+			if !strings.Contains(res.stderr, test.wantErr) {
+				t.Errorf("stderr = %q, want it to contain %q", res.stderr, test.wantErr)
+			}
+			if res.stdout != "" {
+				t.Errorf("stdout = %q, want nothing asked before the refusal", res.stdout)
+			}
+			if after := readConfigFile(t, path); after != before {
+				t.Errorf("file =\n%s\nwant it untouched after the refusal:\n%s", after, before)
+			}
+		})
+	}
+}
+
+func TestSourceAddOnAnUnknownPluginListsInstalledAndCompiledInSources(t *testing.T) {
+	path := installLinearSource(t)
+
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+	for _, want := range []string{"nosuchforge", "linear", "forge", "tracker", "lore plugin list"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", res.stderr, want)
+		}
+	}
+}
+
+func TestSourceAddNeverOffersAnInstalledPluginThatIsNoSource(t *testing.T) {
+	path := installLinearSource(t)
+	rewriteCapturedManifest(t, strings.NewReplacer(
+		`"kind":"source"`, `"kind":"provider"`,
+		`"embed":false`, `"embed":true`,
+	).Replace(linearManifest))
+	before := readConfigFile(t, path)
+
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "nosuchforge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+	if strings.Contains(res.stderr, "linear") {
+		t.Errorf("stderr = %q, want an installed provider left out of the source plugins to add", res.stderr)
+	}
+	if !strings.Contains(res.stderr, "forge") {
+		t.Errorf("stderr = %q, want the compiled-in sources still listed", res.stderr)
+	}
+
+	named := runOn(t, sourceRegistry(t), nil, "", "source", "add", "linear", "--config", path)
+	if named.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", named.exitCode, exitBadRequest, named.stderr)
+	}
+	if !strings.Contains(named.stderr, "unknown source plugin linear") {
+		t.Errorf("stderr = %q, want the named provider refused as no source", named.stderr)
+	}
+	if named.stdout != "" {
+		t.Errorf("stdout = %q, want nothing asked before the refusal", named.stdout)
+	}
+	if after := readConfigFile(t, path); after != before {
+		t.Errorf("file =\n%s\nwant it untouched after the refusal:\n%s", after, before)
+	}
+}
+
+func installLinearSource(t *testing.T) string {
+	t.Helper()
+
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(linearManifest))
+
+	path := writeConfigFile(t, seeded+"\nplugins:\n  - name: linear\n    from: github.com/jdoe/lore-linear@v0.3.1\n")
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	return path
+}
+
+func rewriteCapturedManifest(t *testing.T, manifest string) {
+	t.Helper()
+
+	path := capturedManifestPath(t, installedPluginDir("v0.3.1"))
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("rewrite the captured manifest: %v", err)
+	}
+}
+
 func TestSourceAddWithoutAConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lore.yaml")
 
-	res := runWithInput(t, nil, "\n\n", "source", "add", "notion", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitNotFound {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitNotFound, res.stderr)
 	}
@@ -392,10 +523,20 @@ func TestSourceAddWithoutAConfigFile(t *testing.T) {
 	}
 }
 
-func scaffolded(t *testing.T) string {
+func TestSourceAddUsageListsTheRegisteredSourcePlugins(t *testing.T) {
+	res := runOn(t, sourceRegistry(t), nil, "", "source", "add", "--help")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "add <forge|tracker>") {
+		t.Errorf("help = %q, want the usage line built from the registry", res.stdout)
+	}
+}
+
+func sourceRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 
-	return writeConfigFile(t, scaffold("myproject"))
+	return stubRegistry(t, forgePlugin(), trackerPlugin(), vectorsPlugin())
 }
 
 func writeConfigFile(t *testing.T, body string) string {
@@ -421,14 +562,11 @@ func readConfigFile(t *testing.T, path string) string {
 func decodeConfigFile(t *testing.T, content string) *config.Config {
 	t.Helper()
 
-	decoder := yaml.NewDecoder(strings.NewReader(content))
-	decoder.KnownFields(true)
-
-	var cfg config.Config
-	if err := decoder.Decode(&cfg); err != nil {
+	cfg, err := config.Decode(strings.NewReader(content))
+	if err != nil {
 		t.Fatalf("the file does not decode: %v\n--- file ---\n%s", err, content)
 	}
-	return &cfg
+	return cfg
 }
 
 func assertOriginalLinesKept(t *testing.T, before, after string) {
@@ -446,28 +584,13 @@ func assertOriginalLinesKept(t *testing.T, before, after string) {
 	}
 }
 
-func assertInserted(t *testing.T, before, after, block string) {
-	t.Helper()
-
-	assertOriginalLinesKept(t, before, after)
-
-	anchored := "\nsources:\n" + strings.TrimPrefix(block, "sources:\n")
-	if !strings.Contains(after, anchored) {
-		t.Errorf("file does not hold, as the first child of a top-level sources:\n%s--- file ---\n%s", block, after)
-	}
-	if want := strings.Count(before, "\n") + strings.Count(block, "\n"); strings.Count(after, "\n") != want {
-		t.Errorf("file holds %d lines, want %d — the block is not the only addition\n--- file ---\n%s",
-			strings.Count(after, "\n"), want, after)
-	}
-}
-
 func assertPromptsAskForNamesOnly(t *testing.T, prompts string) {
 	t.Helper()
 
 	if !strings.Contains(prompts, "name of the environment variable") || !strings.Contains(prompts, "never the value") {
 		t.Errorf("prompts = %q, want every credential prompt to ask for an environment variable name", prompts)
 	}
-	for _, asking := range []string{"password", "paste", "secret", "api key", "credential:"} {
+	for _, asking := range []string{"password", "paste", "value of", "credential:"} {
 		if strings.Contains(strings.ToLower(prompts), asking) {
 			t.Errorf("prompts = %q, want no prompt for %q", prompts, asking)
 		}

@@ -1,0 +1,39 @@
+{
+  "isLast": true,
+  "nextPageToken": "",
+  "issues": [
+    {
+      "key": "ACME-1",
+      "fields": {
+        "summary": "Move the billing writer behind a single owner",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The current billing site lets three services write invoices concurrently, and the reconciliation job cannot tell which write won."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "We are moving the billing writer behind a single owning service so that every invoice mutation has one author and one ordering."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2025-01-14T09:00:00.000+0000",
+        "updated": "2025-01-16T11:30:00.000+0000",
+        "reporter": { "displayName": "Ada Lovelace", "accountId": "557058:0011" }
+      }
+    }
+  ]
+}

@@ -2,10 +2,14 @@ package di
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -15,13 +19,198 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/setthasit/Lore/internal/config"
-	"github.com/setthasit/Lore/internal/connectors/embedder"
-	"github.com/setthasit/Lore/internal/connectors/llm"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugindist"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
+
+const (
+	sourcePlugin = "pigeon"     // a source that claims the remotes it is told to
+	dualPlugin   = "abacus"     // a provider that both embeds and completes
+	widthPlugin  = "slide-rule" // a provider that embeds at the width it is given
+	codePlugin   = "chisel"     // a code plugin over a clone that tracks nothing
+
+	sourceTokenEnv = "LORE_TEST_PIGEON_TOKEN"
+	embedderModel  = "beads-v2"
+	completerModel = "chalk-v1"
+
+	dualWidth = 24
+
+	dualReply = "an answer from the stub completer"
+)
+
+type stubSourcePlugin struct{}
+
+var _ lore.SourcePlugin = stubSourcePlugin{}
+
+func (stubSourcePlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:         sourcePlugin,
+		Kind:         lore.KindSource,
+		APIVersion:   lore.APIVersion,
+		Summary:      "a source that exists only in this package's tests",
+		Capabilities: lore.Capabilities{RepoRemotes: true},
+		Fields: []lore.Field{{
+			Name:     "seams",
+			Type:     lore.FieldStringList,
+			Required: true,
+			Doc:      "the repo remotes this instance ingests",
+		}},
+		Secrets: []lore.Secret{{
+			Key:         "token",
+			ConfigField: "token_env",
+			DefaultEnv:  sourceTokenEnv,
+			Doc:         "token this instance authenticates with",
+		}},
+	}
+}
+
+func (stubSourcePlugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
+	var with struct {
+		Seams []string `json:"seams"`
+	}
+	if err := c.Decode(&with); err != nil {
+		return nil, err
+	}
+
+	return stubConnector{name: c.Instance, seams: with.Seams}, nil
+}
+
+type stubConnector struct {
+	name  string
+	seams []string
+}
+
+func (c stubConnector) Name() string { return c.name }
+
+func (stubConnector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(func(lore.Batch, error) bool) {}
+}
+
+func (c stubConnector) MatchesRemote(remote string) bool { return slices.Contains(c.seams, remote) }
+
+type stubDualPlugin struct{}
+
+var _ lore.ProviderPlugin = stubDualPlugin{}
+
+func (stubDualPlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:         dualPlugin,
+		Kind:         lore.KindProvider,
+		APIVersion:   lore.APIVersion,
+		Summary:      "a provider that exists only in this package's tests",
+		Capabilities: lore.Capabilities{Embed: true, Complete: true},
+		DefaultModels: map[lore.Capability]string{
+			lore.CapabilityEmbed:    embedderModel,
+			lore.CapabilityComplete: completerModel,
+		},
+	}
+}
+
+func (stubDualPlugin) NewProvider(lore.ProviderConfig) (lore.Provider, error) {
+	return stubModel{}, nil
+}
+
+type stubModel struct{}
+
+var (
+	_ lore.Embedder  = stubModel{}
+	_ lore.Completer = stubModel{}
+)
+
+func (stubModel) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(texts))
+	for range texts {
+		vectors = append(vectors, make([]float32, dualWidth))
+	}
+
+	return vectors, nil
+}
+
+func (stubModel) Dimensions() int { return dualWidth }
+
+func (stubModel) Complete(context.Context, string, string) (string, error) { return dualReply, nil }
+
+type stubWidthPlugin struct{}
+
+var _ lore.ProviderPlugin = stubWidthPlugin{}
+
+func (stubWidthPlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:          widthPlugin,
+		Kind:          lore.KindProvider,
+		APIVersion:    lore.APIVersion,
+		Summary:       "an embedding provider that exists only in this package's tests",
+		Capabilities:  lore.Capabilities{Embed: true},
+		DefaultModels: map[lore.Capability]string{lore.CapabilityEmbed: embedderModel},
+	}
+}
+
+func (stubWidthPlugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
+	return stubEmbedder{dims: c.Dimensions}, nil
+}
+
+type stubEmbedder struct{ dims int }
+
+var _ lore.Embedder = stubEmbedder{}
+
+func (e stubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(texts))
+	for range texts {
+		vectors = append(vectors, make([]float32, e.dims))
+	}
+
+	return vectors, nil
+}
+
+func (e stubEmbedder) Dimensions() int { return e.dims }
+
+type stubCodePlugin struct{}
+
+var _ lore.CodePlugin = stubCodePlugin{}
+
+func (stubCodePlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:       codePlugin,
+		Kind:       lore.KindCode,
+		APIVersion: lore.APIVersion,
+		Summary:    "a code plugin that exists only in this package's tests",
+	}
+}
+
+func (stubCodePlugin) NewCode(lore.CodeConfig) (lore.CodeRepo, error) { return stubClone{}, nil }
+
+type stubClone struct{}
+
+var _ lore.CodeRepo = stubClone{}
+
+func (stubClone) Blame(context.Context, string, int, int) ([]lore.BlameSpan, error) {
+	return nil, nil
+}
+
+func (stubClone) Log(context.Context, string) ([]lore.CommitRef, error) { return nil, nil }
+
+func (stubClone) HasFileAtHEAD(context.Context, string) (bool, error) { return false, nil }
+
+func stubRegistry(t *testing.T) *registry.Registry {
+	t.Helper()
+
+	reg := registry.New(lore.Host{})
+	if err := reg.Register(stubSourcePlugin{}, stubDualPlugin{}, stubWidthPlugin{}, stubCodePlugin{}); err != nil {
+		t.Fatalf("register the stub plugins: %v", err)
+	}
+
+	return reg
+}
+
+const embedderBlock = `embedder:
+  provider: ` + dualPlugin + `
+  model: ` + embedderModel + `
+`
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
@@ -46,270 +235,171 @@ func gitClone(t *testing.T) string {
 	return dir
 }
 
-func resolveWorkspace(t *testing.T, path string) ([]entities.Connector, error) {
+// The index is closed on cleanup rather than before returning, so a test can still question the store the graph opened.
+func startWorkspace(t *testing.T, path string, targets ...any) error {
 	t.Helper()
 
-	var (
-		query      services.QueryService
-		orch       services.SyncOrchestrator
-		connectors []entities.Connector
-	)
-	app := fx.New(
-		fx.NopLogger,
-		Workspace(path),
-		fx.Populate(&query, &orch, &connectors),
-	)
+	app := fx.New(fx.NopLogger, Workspace(path, stubRegistry(t)), fx.Populate(targets...))
 	if err := app.Err(); err != nil {
-		return nil, err
+		return err
 	}
 
-	ctx := context.Background()
-	if err := app.Start(ctx); err != nil {
-		return nil, err
+	if err := app.Start(context.Background()); err != nil {
+		return err
 	}
-	if query == nil || orch == nil {
-		t.Fatalf("graph resolved to query=%v orchestrator=%v; want both", query, orch)
-	}
-	// Stop runs the lifecycle hook that closes the index; a Close failure surfaces here.
-	if err := app.Stop(ctx); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	return connectors, nil
+	t.Cleanup(func() {
+		if err := app.Stop(context.Background()); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
+
+	return nil
 }
 
-func TestWorkspaceGraphWithGitHubSource(t *testing.T) {
-	t.Setenv("LORE_TEST_GH_TOKEN", "ghp_example")
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+func TestWorkspaceResolvesOneConnectorPerSourceInstance(t *testing.T) {
+	t.Setenv(sourceTokenEnv, "token-example")
 
 	path := writeConfig(t, `sources:
-  github:
-    token_env: LORE_TEST_GH_TOKEN
-    repos: [acme/lore]
-embedder:
-  provider: openai
-  model: text-embedding-3-small
-`)
+  - use: `+sourcePlugin+`
+    with:
+      seams: ["pigeon:acme/app"]
+  - id: pigeon-archive
+    use: `+sourcePlugin+`
+    with:
+      seams: ["pigeon:acme/archive"]
+`+embedderBlock)
 
-	connectors, err := resolveWorkspace(t, path)
-	if err != nil {
+	var connectors []lore.Connector
+	if err := startWorkspace(t, path, &connectors); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if len(connectors) != 1 {
-		t.Fatalf("connectors = %d, want 1", len(connectors))
+
+	names := make([]string, 0, len(connectors))
+	for _, connector := range connectors {
+		names = append(names, connector.Name())
 	}
-	if got := connectors[0].Name(); got != "github" {
-		t.Errorf("connector name = %q, want %q", got, "github")
+	if want := []string{sourcePlugin, "pigeon-archive"}; !slices.Equal(names, want) {
+		t.Errorf("connector names = %v, want %v", names, want)
 	}
 }
 
-func TestWorkspaceGraphWithoutSources(t *testing.T) {
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+func TestWorkspaceWithReposAndNoSourcesResolvesTheCodeAnchoredVerbs(t *testing.T) {
+	clone := gitClone(t)
 
 	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-`)
+  - path: `+clone+`
+    use: `+codePlugin+`
+`+embedderBlock)
 
-	connectors, err := resolveWorkspace(t, path)
-	if err != nil {
+	var (
+		connectors []lore.Connector
+		why        services.WhyService
+		history    services.HistoryService
+	)
+	if err := startWorkspace(t, path, &connectors, &why, &history); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
 	if len(connectors) != 0 {
-		t.Errorf("connectors = %v, want none", connectors)
-	}
-}
-
-func TestWorkspaceGraphRejectsUnknownEmbedderModel(t *testing.T) {
-	t.Setenv(EmbedderKeyEnv, "sk-example")
-
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-embedder:
-  model: text-embedding-4-imaginary
-`)
-
-	_, err := resolveWorkspace(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the model")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if !strings.Contains(err.Error(), "text-embedding-4-imaginary") {
-		t.Errorf("error %q does not name the configured model", err)
-	}
-	if !strings.Contains(err.Error(), defaultEmbedderModel) {
-		t.Errorf("error %q does not list the supported models", err)
-	}
-}
-
-func TestWorkspaceGraphRejectsMissingEmbedderKey(t *testing.T) {
-	t.Setenv(EmbedderKeyEnv, "")
-
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-`)
-
-	_, err := resolveWorkspace(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the key variable")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if !strings.Contains(err.Error(), EmbedderKeyEnv) {
-		t.Errorf("error %q does not name %s", err, EmbedderKeyEnv)
-	}
-}
-
-func resolveEmbedder(t *testing.T, path string) (embedder.Embedder, error) {
-	t.Helper()
-
-	var emb embedder.Embedder
-	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&emb))
-	if err := app.Err(); err != nil {
-		return nil, err
+		t.Errorf("connectors = %v, want none for a workspace with no sources", connectors)
 	}
 
 	ctx := context.Background()
-	if err := app.Start(ctx); err != nil {
-		return nil, err
+	_, whyErr := why.Why(ctx, services.WhyRequest{File: anchoredFile, LineStart: 10, LineEnd: 20})
+	_, historyErr := history.HistoryOf(ctx, services.HistoryRequest{File: anchoredFile})
+
+	for verb, err := range map[string]error{"why": whyErr, "history_of": historyErr} {
+		if got := internalerror.KindOf(err); got != internalerror.KindNotFound {
+			t.Fatalf("%s kind = %s, want %s (error %v)", verb, got, internalerror.KindNotFound, err)
+		}
+		if !strings.Contains(err.Error(), clone) {
+			t.Errorf("%s error = %q, want it to name the registered clone %s", verb, err, clone)
+		}
 	}
-	if err := app.Stop(ctx); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	return emb, nil
 }
 
-func TestWorkspaceGraphResolvesTheOllamaEmbedder(t *testing.T) {
-	// The local daemon is unauthenticated: no key variable is consulted.
-	t.Setenv(EmbedderKeyEnv, "")
+func widthConfig(t *testing.T, dimensions string) string {
+	t.Helper()
 
-	path := writeConfig(t, `repos:
+	return writeConfig(t, `repos:
   - path: `+gitClone(t)+`
+    use: `+codePlugin+`
 embedder:
-  provider: ollama
-  model: nomic-embed-text
-  base_url: http://127.0.0.1:11434
-  dimensions: 768
-`)
+  provider: `+widthPlugin+`
+  model: `+embedderModel+`
+`+dimensions)
+}
 
-	emb, err := resolveEmbedder(t, path)
-	if err != nil {
+func TestWorkspaceComposesTheVectorSpaceFromThePluginModelAndWidth(t *testing.T) {
+	path := widthConfig(t, "  dimensions: 8\n")
+
+	var (
+		embedder lore.Embedder
+		space    services.VectorSpace
+	)
+	if err := startWorkspace(t, path, &embedder, &space); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if want := "ollama/nomic-embed-text/768"; emb.Identity() != want {
-		t.Errorf("Identity = %q, want %q", emb.Identity(), want)
+	if got := embedder.Dimensions(); got != 8 {
+		t.Fatalf("Dimensions = %d, want 8", got)
+	}
+	if want := services.VectorSpace(widthPlugin + "/" + embedderModel + "/8"); space != want {
+		t.Errorf("vector space = %q, want %q", space, want)
 	}
 }
 
-func TestWorkspaceGraphRejectsOllamaWithoutDimensions(t *testing.T) {
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-embedder:
-  provider: ollama
-  model: nomic-embed-text
-`)
+func TestWorkspaceOpensTheIndexAtTheWidthTheEmbedderReports(t *testing.T) {
+	path := widthConfig(t, "  dimensions: 8\n")
 
-	_, err := resolveEmbedder(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming embedder.dimensions")
+	var store repositories.IndexStore
+	if err := startWorkspace(t, path, &store); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
 	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+
+	ctx := context.Background()
+	if _, err := store.SearchVector(ctx, make([]float32, 8), entities.Filters{}, 1); err != nil {
+		t.Errorf("SearchVector at the width the embedder reports: %v", err)
 	}
-	want := "embedder.dimensions must be set to the vector width of nomic-embed-text for the ollama provider; `ollama show nomic-embed-text` reports it"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q does not contain %q", err, want)
+	if _, err := store.SearchVector(ctx, make([]float32, 9), entities.Filters{}, 1); err == nil {
+		t.Error("the index accepted a 9-dimension query vector: it was opened at some other width")
 	}
 }
 
-func TestWorkspaceGraphRejectsUnknownEmbedderProvider(t *testing.T) {
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+func TestWorkspaceRefusesAnEmbedderThatReportsNoVectorWidth(t *testing.T) {
+	path := widthConfig(t, "")
 
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-embedder:
-  provider: cohere
-  model: embed-english-v3
-  dimensions: 1024
-`)
-
-	_, err := resolveEmbedder(t, path)
+	var store repositories.IndexStore
+	err := startWorkspace(t, path, &store)
 	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the provider")
+		t.Fatal("resolve workspace: want an error rather than an index with no vector column")
 	}
 	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 		t.Errorf("kind = %s, want %s", got, internalerror.KindPrecondition)
 	}
-	for _, want := range []string{"cohere", providerOpenAI, providerOllama} {
+	for _, want := range []string{widthPlugin, "vector width"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
 	}
 }
 
-func TestWorkspaceGraphRejectsDimensionsForOpenAI(t *testing.T) {
-	t.Setenv(EmbedderKeyEnv, "sk-example")
-
+func TestWorkspaceResolvesWithoutAnLLMBlock(t *testing.T) {
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
-embedder:
-  provider: openai
-  model: text-embedding-3-small
-  dimensions: 512
-`)
-
-	_, err := resolveEmbedder(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error rejecting a width openai derives itself")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if want := "embedder.dimensions must not be set"; !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q does not contain %q", err, want)
-	}
-}
-
-const llmKeyEnv = "LORE_TEST_LLM_KEY"
-
-func resolveSynthesis(t *testing.T, path string) (services.SynthesisService, llm.LLM, error) {
-	t.Helper()
+    use: `+codePlugin+`
+`+embedderBlock)
 
 	var (
-		svc   services.SynthesisService
-		model llm.LLM
+		synthesis services.SynthesisService
+		completer lore.Completer
 	)
-	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&svc, &model))
-	if err := app.Err(); err != nil {
-		return nil, nil, err
-	}
-
-	ctx := context.Background()
-	if err := app.Start(ctx); err != nil {
-		return nil, nil, err
-	}
-	if err := app.Stop(ctx); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	return svc, model, nil
-}
-
-// `lore mcp`, `lore sync` and `lore status` run on workspaces that never synthesize.
-func TestWorkspaceGraphResolvesWithoutAnLLMBlock(t *testing.T) {
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-`)
-
-	svc, model, err := resolveSynthesis(t, path)
-	if err != nil {
+	if err := startWorkspace(t, path, &synthesis, &completer); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if model != nil {
-		t.Errorf("llm = %v, want none for a workspace with no llm: block", model)
+	if completer != nil {
+		t.Errorf("llm = %v, want none for a workspace with no llm: block", completer)
 	}
 
-	_, err = svc.Synthesize(context.Background(), "why option B?", &entities.EvidenceBundle{})
+	_, err := synthesis.Synthesize(context.Background(), "why option B?", &entities.EvidenceBundle{})
 	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 		t.Fatalf("kind = %s, want %s (error %v)", got, internalerror.KindPrecondition, err)
 	}
@@ -318,205 +408,326 @@ func TestWorkspaceGraphResolvesWithoutAnLLMBlock(t *testing.T) {
 	}
 }
 
-func TestWorkspaceGraphResolvesTheConfiguredLLM(t *testing.T) {
-	t.Setenv(llmKeyEnv, "sk-example")
-
+func TestWorkspaceResolvesTheBoundCompleter(t *testing.T) {
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
+    use: `+codePlugin+`
 llm:
-  provider: anthropic
-  model: claude-sonnet-4-5
-  api_key_env: `+llmKeyEnv+`
-`)
+  provider: `+dualPlugin+`
+  model: `+completerModel+`
+`+embedderBlock)
 
-	svc, model, err := resolveSynthesis(t, path)
-	if err != nil {
+	var (
+		synthesis services.SynthesisService
+		completer lore.Completer
+	)
+	if err := startWorkspace(t, path, &synthesis, &completer); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if svc == nil || model == nil {
-		t.Fatalf("graph resolved to synthesis=%v llm=%v; want both", svc, model)
+	if synthesis == nil || completer == nil {
+		t.Fatalf("graph resolved to synthesis=%v llm=%v; want both", synthesis, completer)
+	}
+
+	got, err := completer.Complete(context.Background(), "system", "user")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != dualReply {
+		t.Errorf("Complete = %q, want the plugin the llm: block binds, which answers %q", got, dualReply)
 	}
 }
 
-func TestWorkspaceGraphResolvesTheOllamaLLMWithoutAKey(t *testing.T) {
+func TestWorkspaceBindsOneDeclaredProviderInstanceToBothRoles(t *testing.T) {
+	const instance = "house-abacus"
+
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+providers:
+  - id: `+instance+`
+    use: `+dualPlugin+`
+embedder:
+  provider: `+instance+`
+  model: `+embedderModel+`
 llm:
-  provider: ollama
-  model: qwen2.5
-  base_url: http://127.0.0.1:11434
+  provider: `+instance+`
+  model: `+completerModel+`
 `)
 
-	_, model, err := resolveSynthesis(t, path)
-	if err != nil {
+	var (
+		embedder  lore.Embedder
+		completer lore.Completer
+	)
+	if err := startWorkspace(t, path, &embedder, &completer); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	if model == nil {
-		t.Error("llm = none, want the local provider, which needs no key")
+	if got := embedder.Dimensions(); got != dualWidth {
+		t.Errorf("Dimensions = %d, want %d, the width the bound instance reports", got, dualWidth)
+	}
+
+	got, err := completer.Complete(context.Background(), "system", "user")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != dualReply {
+		t.Errorf("Complete = %q, want %q, the answer the bound instance gives", got, dualReply)
 	}
 }
 
-func TestWorkspaceGraphRejectsUnknownLLMProvider(t *testing.T) {
-	t.Setenv(llmKeyEnv, "sk-example")
+func TestWorkspaceRefusesADeclaredProviderInstanceNoRoleBinds(t *testing.T) {
+	const (
+		instance     = "spare-abacus"
+		unregistered = "quipu"
+	)
 
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
-llm:
-  provider: gemini
-  model: gemini-2.5-pro
-  api_key_env: `+llmKeyEnv+`
-`)
+    use: `+codePlugin+`
+providers:
+  - id: `+instance+`
+    use: `+unregistered+`
+`+embedderBlock)
 
-	_, _, err := resolveSynthesis(t, path)
+	var embedder lore.Embedder
+	err := startWorkspace(t, path, &embedder)
 	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the provider")
+		t.Fatal("resolve workspace: want an error rather than a workspace that leaves an unbound declaration unchecked")
 	}
-	if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindPrecondition)
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s (error %v)", got, internalerror.KindBadRequest, err)
 	}
-	for _, want := range []string{"gemini", providerOpenAI, providerAnthropic, providerZAI, providerOllama} {
+	for _, want := range []string{"providers[" + instance + "]", unregistered} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
 	}
 }
 
-// The unset variable is refused while lore.yaml loads, before any provider is built.
-func TestWorkspaceGraphRejectsAnUnsetLLMKeyVariableAtLoad(t *testing.T) {
-	t.Setenv(llmKeyEnv, "")
-
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-llm:
-  provider: openai
-  model: gpt-5
-  api_key_env: `+llmKeyEnv+`
-`)
-
-	_, _, err := resolveSynthesis(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the key variable")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if !strings.Contains(err.Error(), llmKeyEnv) {
-		t.Errorf("error %q does not name %s", err, llmKeyEnv)
-	}
-}
-
-func TestWorkspaceGraphRejectsAKeyedLLMWithoutAKeyVariable(t *testing.T) {
-	path := writeConfig(t, `repos:
-  - path: `+gitClone(t)+`
-llm:
-  provider: zai
-  model: glm-4.6
-`)
-
-	_, _, err := resolveSynthesis(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming llm.api_key_env")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if want := "llm.api_key_env must name the environment variable holding the zai API key"; !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q does not contain %q", err, want)
-	}
-}
-
-func TestWorkspaceGraphWithAskOnlySources(t *testing.T) {
-	t.Setenv("LORE_TEST_NOTION_TOKEN", "secret_example")
-	t.Setenv("LORE_TEST_JIRA_EMAIL", "bot@example.invalid")
-	t.Setenv("LORE_TEST_JIRA_TOKEN", "jira_example")
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+func TestWorkspaceResolvesWithNoProvidersReposOrLLM(t *testing.T) {
+	t.Setenv(sourceTokenEnv, "token-example")
 
 	path := writeConfig(t, `sources:
-  notion:
-    token_env: LORE_TEST_NOTION_TOKEN
-    root_pages: ["Engineering Wiki"]
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_TEST_JIRA_EMAIL
-    token_env: LORE_TEST_JIRA_TOKEN
-    projects: [PROJ]
-repos: []
-`)
+  - use: `+sourcePlugin+`
+    with:
+      seams: ["pigeon:acme/app"]
+`+embedderBlock)
 
-	connectors, err := resolveWorkspace(t, path)
-	if err != nil {
+	var (
+		repos     []services.CodeRepo
+		warnings  registry.Warnings
+		completer lore.Completer
+	)
+	if err := startWorkspace(t, path, &repos, &warnings, &completer); err != nil {
 		t.Fatalf("resolve workspace: %v", err)
 	}
-	var names []string
-	for _, c := range connectors {
-		names = append(names, c.Name())
-	}
-	if want := []string{"notion", "jira"}; !slices.Equal(names, want) {
-		t.Errorf("connector names = %v, want %v", names, want)
+	if len(repos) != 0 || len(warnings) != 0 || completer != nil {
+		t.Errorf("repos = %v, warnings = %v, llm = %v; want none of them", repos, warnings, completer)
 	}
 }
 
-func TestWorkspaceGraphRejectsMissingJiraEmail(t *testing.T) {
-	t.Setenv("LORE_TEST_JIRA_EMAIL", "")
-	t.Setenv("LORE_TEST_JIRA_TOKEN", "jira_example")
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+func TestWorkspaceWarnsOnlyAboutACloneNoSourceClaims(t *testing.T) {
+	const ingestedRemote = "pigeon:acme/app"
 
-	path := writeConfig(t, `sources:
-  jira:
-    base_url: https://acme.atlassian.net
-    email_env: LORE_TEST_JIRA_EMAIL
-    token_env: LORE_TEST_JIRA_TOKEN
-`)
+	tests := []struct {
+		name   string
+		remote string
+		want   int
+	}{
+		{name: "a source claims the remote", remote: ingestedRemote, want: 0},
+		{name: "no source claims the remote", remote: "pigeon:acme/elsewhere", want: 1},
+	}
 
-	_, err := resolveWorkspace(t, path)
-	if err == nil {
-		t.Fatal("resolve workspace: want an error naming the email variable")
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
-	}
-	if !strings.Contains(err.Error(), "LORE_TEST_JIRA_EMAIL") {
-		t.Errorf("error %q does not name the variable", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(sourceTokenEnv, "token-example")
+
+			path := writeConfig(t, `sources:
+  - use: `+sourcePlugin+`
+    with:
+      seams: ["`+ingestedRemote+`"]
+repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+    remote: "`+test.remote+`"
+`+embedderBlock)
+
+			var warnings registry.Warnings
+			if err := startWorkspace(t, path, &warnings); err != nil {
+				t.Fatalf("resolve workspace: %v", err)
+			}
+			if len(warnings) != test.want {
+				t.Fatalf("warnings = %v, want %d of them", warnings, test.want)
+			}
+			if test.want > 0 && !strings.Contains(warnings[0], test.remote) {
+				t.Errorf("warning = %q, want it to name the unmatched remote %s", warnings[0], test.remote)
+			}
+		})
 	}
 }
 
-func TestWorkspaceGraphResolvesTheCodeAnchoredVerbsForAnAskOnlyWorkspace(t *testing.T) {
-	t.Setenv("LORE_TEST_NOTION_TOKEN", "secret_example")
-	t.Setenv(EmbedderKeyEnv, "sk-example")
+const (
+	declaredPlugin = "almanac"
+	renamedPlugin  = "ledger"
+)
+
+var scriptedFixtureDir string
+
+var scriptedFixture = sync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "di-scripted-fixture")
+	if err != nil {
+		return "", err
+	}
+	scriptedFixtureDir = dir
+
+	binary := filepath.Join(dir, "scripted")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", binary, "../plugexec/testdata/scripted").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build the scripted plugin: %w\n%s", err, out)
+	}
+	return binary, nil
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = os.RemoveAll(scriptedFixtureDir)
+	os.Exit(code)
+}
+
+func scriptedPlugin(t *testing.T, manifestName string) string {
+	t.Helper()
+
+	built, err := scriptedFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	binary := filepath.Join(dir, filepath.Base(built))
+	if err := os.Link(built, binary); err != nil {
+		t.Fatalf("place the scripted plugin beside its script: %v", err)
+	}
+
+	script := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"` + manifestName +
+		`","kind":"source","api_version":1,"summary":"a scripted external source",` +
+		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}` +
+		"\n\n" + `shutdown emit {"v":1,"id":"$ID","ok":true}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(script), 0o600); err != nil {
+		t.Fatalf("write the plugin script: %v", err)
+	}
+	return binary
+}
+
+func externalConfig(t *testing.T, name, from string) string {
+	t.Helper()
+
+	return writeConfig(t, `plugins:
+  - name: `+name+`
+    from: "`+from+`"
+repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+`+embedderBlock)
+}
+
+func TestWorkspaceRefusesAnExternalPluginItCannotRunUnderTheDeclaredName(t *testing.T) {
+	tests := []struct {
+		name        string
+		from        func(*testing.T) string
+		wantKind    internalerror.Kind
+		wantMessage string
+	}{
+		{
+			name:        "nothing pins which version of a remote plugin runs",
+			from:        func(*testing.T) string { return "github.com/example/lore-" + declaredPlugin + "@v0.1.0" },
+			wantKind:    internalerror.KindPrecondition,
+			wantMessage: plugindist.LockFileName,
+		},
+		{
+			name: "the file the declaration points at answers no handshake",
+			from: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "lore-"+declaredPlugin)
+				if err := os.WriteFile(path, []byte("not a plugin\n"), 0o600); err != nil {
+					t.Fatalf("write the file the declaration points at: %v", err)
+				}
+				return path
+			},
+			wantKind:    internalerror.KindPrecondition,
+			wantMessage: "does not answer the plugin protocol",
+		},
+		{
+			name:        "the binary's manifest calls itself something else",
+			from:        func(t *testing.T) string { return scriptedPlugin(t, renamedPlugin) },
+			wantKind:    internalerror.KindBadRequest,
+			wantMessage: `calls itself "` + renamedPlugin + `"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(plugindist.RootEnv, t.TempDir())
+
+			var warnings registry.Warnings
+			err := startWorkspace(t, externalConfig(t, declaredPlugin, test.from(t)), &warnings)
+			if err == nil {
+				t.Fatal("resolve workspace: want a refusal rather than a `use:` bound to something else")
+			}
+			if got := internalerror.KindOf(err); got != test.wantKind {
+				t.Errorf("kind = %s, want %s (error %v)", got, test.wantKind, err)
+			}
+			for _, want := range []string{"plugins[" + declaredPlugin + "]", test.wantMessage} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceWarnsThatALocalPluginRunsUnpinned(t *testing.T) {
+	t.Setenv(plugindist.RootEnv, t.TempDir())
+	binary := scriptedPlugin(t, declaredPlugin)
+
+	var warnings registry.Warnings
+	if err := startWorkspace(t, externalConfig(t, declaredPlugin, binary), &warnings); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want the one an unpinned local plugin is worth", warnings)
+	}
+	for _, want := range []string{"plugins[" + declaredPlugin + "]", binary, "unpinned"} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("warning %q does not contain %q", warnings[0], want)
+		}
+	}
+}
+
+const anchoredFile = "internal/auth/auth.go"
+
+func TestWorkspaceResolvesTheCodeAnchoredVerbsForAnAskOnlyWorkspace(t *testing.T) {
+	t.Setenv(sourceTokenEnv, "token-example")
 
 	path := writeConfig(t, `sources:
-  notion:
-    token_env: LORE_TEST_NOTION_TOKEN
-    root_pages: ["Engineering Wiki"]
-repos: []
-`)
+  - use: `+sourcePlugin+`
+    with:
+      seams: ["pigeon:acme/app"]
+`+embedderBlock)
 
 	var (
 		why     services.WhyService
 		history services.HistoryService
 	)
-	app := fx.New(fx.NopLogger, Workspace(path), fx.Populate(&why, &history))
-	if err := app.Err(); err != nil {
-		t.Fatalf("build graph: %v", err)
+	if err := startWorkspace(t, path, &why, &history); err != nil {
+		t.Fatalf("resolve workspace: %v", err)
 	}
 
 	ctx := context.Background()
-	if err := app.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() {
-		if err := app.Stop(ctx); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	}()
-
-	const anchoredFile = "internal/auth/auth.go"
-
 	_, whyErr := why.Why(ctx, services.WhyRequest{File: anchoredFile, LineStart: 10, LineEnd: 20})
 	_, historyErr := history.HistoryOf(ctx, services.HistoryRequest{File: anchoredFile})
 
-	refusals := map[string]error{"why": whyErr, "history_of": historyErr}
-	for verb, err := range refusals {
+	for verb, err := range map[string]error{"why": whyErr, "history_of": historyErr} {
 		if got := internalerror.KindOf(err); got != internalerror.KindPrecondition {
 			t.Fatalf("%s kind = %s, want %s (error %v)", verb, got, internalerror.KindPrecondition, err)
 		}
@@ -536,7 +747,6 @@ const (
 	schedulerStopTimeout = 200 * time.Millisecond
 )
 
-// A round parks until the test releases it, so a graph can be stopped mid-round.
 type scheduledSync struct {
 	rounds   chan struct{}
 	released chan struct{}
@@ -603,18 +813,18 @@ type startedGraph struct {
 func startGraph(t *testing.T, orchestrator services.SyncOrchestrator, extra fx.Option) *startedGraph {
 	t.Helper()
 
-	t.Setenv(EmbedderKeyEnv, "sk-example")
 	path := writeConfig(t, `repos:
   - path: `+gitClone(t)+`
+    use: `+codePlugin+`
 scheduler:
   interval: `+schedulerTick+`
-`)
+`+embedderBlock)
 
 	graph := new(startedGraph)
 	rt := &graph.runtime
 	graph.app = fx.New(
 		fx.NopLogger,
-		Workspace(path),
+		Workspace(path, stubRegistry(t)),
 		extra,
 		fx.Decorate(func(services.SyncOrchestrator) services.SyncOrchestrator { return orchestrator }),
 		fx.Populate(&rt.config, &rt.query, &rt.why, &rt.trace, &rt.impact, &rt.history, &rt.sync, &rt.status, &rt.store),

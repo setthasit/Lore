@@ -23,7 +23,7 @@ This tool needs the file's repository registered as a local clone; a workspace t
 
 type historyInput struct {
 	Path   string `json:"path" jsonschema:"path of the file whose history to walk, relative to the repository root"`
-	Repo   string `json:"repo,omitempty" jsonschema:"the repository the file belongs to, named as it is registered: a remote such as github:owner/repo or the clone's path; omit it when only one repository is registered"`
+	Repo   string `json:"repo,omitempty" jsonschema:"the repository the file belongs to, named as it is registered: a remote such as <forge>:owner/repo or the clone's path; omit it when only one repository is registered"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"how many commits the page holds; omit it for the server default, and expect the server to cap whatever you ask for"`
 	Before string `json:"before,omitempty" jsonschema:"commit SHA, abbreviated or full, to page backwards from: the page holds the commits older than it. Pass the last entry of anchor.code.blamed_shas from the previous bundle, never a node id; an empty blamed_shas means the history is exhausted"`
 }

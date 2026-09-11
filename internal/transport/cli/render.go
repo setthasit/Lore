@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const dateLayout = "2006-01-02"
@@ -26,7 +28,6 @@ func printfln(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format+"\n", args...)
 }
 
-// A negative age reads as "just now".
 func humanizeAge(d time.Duration) string {
 	switch {
 	case d < 5*time.Second:
@@ -173,7 +174,7 @@ func metaLine(node entities.EvidenceNode) string {
 	return strings.Join(parts, " · ")
 }
 
-func renderChains(w io.Writer, chains [][]entities.DocID) {
+func renderChains(w io.Writer, chains [][]lore.DocID) {
 	if len(chains) == 0 {
 		return
 	}
@@ -197,6 +198,45 @@ func renderGaps(w io.Writer, gaps []string) {
 	for _, gap := range gaps {
 		printfln(w, "  %s", gap)
 	}
+}
+
+func renderTable(out io.Writer, header []string, rows [][]string) []int {
+	widths := columnWidths(header, rows)
+	printfln(out, "%s", tableLine(header, widths))
+	for _, row := range rows {
+		printfln(out, "%s", tableLine(row, widths))
+	}
+	return widths
+}
+
+func columnWidths(header []string, rows [][]string) []int {
+	widths := make([]int, len(header))
+	for i, cell := range header {
+		widths[i] = utf8.RuneCountInString(cell)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			widths[i] = max(widths[i], utf8.RuneCountInString(cell))
+		}
+	}
+	return widths
+}
+
+func tableLine(cells []string, widths []int) string {
+	var line strings.Builder
+	for i, cell := range cells {
+		if i > 0 {
+			line.WriteString("  ")
+		}
+		line.WriteString(cell)
+		if i == len(cells)-1 {
+			continue
+		}
+		for n := widths[i] - utf8.RuneCountInString(cell); n > 0; n-- {
+			line.WriteByte(' ')
+		}
+	}
+	return line.String()
 }
 
 func plural(n int, one, many string) string {

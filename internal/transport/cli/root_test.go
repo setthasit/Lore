@@ -16,7 +16,9 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/transport/mcp"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const proseAnswer = "SQLite won because it ships everywhere and needs no server [1]; " +
@@ -42,16 +44,19 @@ type result struct {
 func run(t *testing.T, rt *Runtime, args ...string) result {
 	t.Helper()
 
-	return runWithInput(t, rt, "", args...)
+	return runOn(t, registry.New(lore.Host{}), rt, "", args...)
 }
 
-func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) result {
+func runOn(t *testing.T, reg *registry.Registry, rt *Runtime, stdin string, args ...string) result {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
 	res := result{}
 
 	resolve := func(_ context.Context, _ string, modules ...fx.Option) (*Runtime, func() error, error) {
+		if rt == nil {
+			t.Fatalf("%v built a runtime, and this test provided none", args)
+		}
 		if rt.Config == nil {
 			rt.Config = new(config.Config)
 		}
@@ -59,7 +64,7 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 		return rt, func() error { res.released = true; return nil }, nil
 	}
 
-	root := newRootCommand(resolve)
+	root := newRootCommand(resolve, reg)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&errOut)
@@ -67,7 +72,7 @@ func runWithInput(t *testing.T, rt *Runtime, stdin string, args ...string) resul
 
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
-		res.exitCode = report(&errOut, err)
+		res.exitCode = Report(&errOut, err)
 	}
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
@@ -144,18 +149,18 @@ func wantBundleJSON(t *testing.T, res result, bundle *entities.EvidenceBundle) {
 
 var (
 	anchorDoc = entities.DocumentMeta{
-		ID:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
+		ID:        lore.NewDocID("notion", lore.DocTypePage, "design/storage"),
 		Source:    "notion",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     "Storage design",
 		Author:    "arch@example.test",
 		URL:       "https://notion.so/design/storage",
 		CreatedAt: time.Date(2025, time.March, 10, 9, 30, 0, 0, time.UTC),
 	}
 	followUpDoc = entities.DocumentMeta{
-		ID:        entities.NewDocID("github", entities.DocTypePR, "12"),
+		ID:        lore.NewDocID("github", lore.DocTypePR, "12"),
 		Source:    "github",
-		Type:      entities.DocTypePR,
+		Type:      lore.DocTypePR,
 		Title:     "Index on SQLite, not Postgres",
 		Author:    "dev@example.test",
 		URL:       "https://github.com/acme/lore/pull/12",
@@ -178,7 +183,7 @@ func timelineBundle(question string) *entities.EvidenceBundle {
 			Role:    entities.RoleFollowUp,
 			Score:   0.62,
 		}},
-		Chains: [][]entities.DocID{{anchorDoc.ID, followUpDoc.ID}},
+		Chains: [][]lore.DocID{{anchorDoc.ID, followUpDoc.ID}},
 		Gaps:   []string{"trail ends at PROJ-4521; no linked follow-up"},
 	}
 }
@@ -212,8 +217,8 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if got := report(&stderr, c.err); got != c.code {
-				t.Errorf("report = %d, want %d", got, c.code)
+			if got := Report(&stderr, c.err); got != c.code {
+				t.Errorf("Report = %d, want %d", got, c.code)
 			}
 			if c.err == nil {
 				if stderr.Len() != 0 {
@@ -229,12 +234,11 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 }
 
 func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
-	// The cause is what a caller-facing kind must not print: Message already says everything actionable.
 	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", errUnclassified))
 
 	var stderr bytes.Buffer
-	if got := report(&stderr, wrapped); got != exitPrecondition {
-		t.Errorf("report = %d, want %d", got, exitPrecondition)
+	if got := Report(&stderr, wrapped); got != exitPrecondition {
+		t.Errorf("Report = %d, want %d", got, exitPrecondition)
 	}
 	if got := stderr.String(); got != "lore: another process holds the sync lock\n" {
 		t.Errorf("stderr = %q, want the classified message alone", got)

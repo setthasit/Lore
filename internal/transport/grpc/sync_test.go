@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
@@ -128,6 +129,85 @@ func TestTriggerSurfacesAHeldLeaseWithItsHolder(t *testing.T) {
 	}
 	if st.Message() != held {
 		t.Errorf("message = %q, want %q", st.Message(), held)
+	}
+}
+
+func TestTriggerNamesEveryFailedInstanceAndLogsEachCause(t *testing.T) {
+	const (
+		expired = "the forge token expired at its last checkpoint; re-run lore auth"
+		stalled = "write tcp 10.1.2.3:5432: broken pipe"
+	)
+
+	f := newRPCFixture(t)
+	f.sync.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: internalerror.NewPreconditionError(expired, errors.New(rpcCause))},
+			{Instance: "tracker", Err: internalerror.NewInternalError("committing the tracker batch failed", errors.New(stalled))},
+		},
+	}, nil)
+
+	res, err := f.trigger(t, &lorev1.TriggerRequest{})
+	if err != nil {
+		t.Fatalf("Trigger() = %v, want an acknowledgment of a partial round", err)
+	}
+
+	failures := res.GetFailures()
+	if len(failures) != 2 {
+		t.Fatalf("failures = %v, want the two instances that did not finish", failures)
+	}
+	assertSameProto(t, failures[0], &lorev1.InstanceFailure{Instance: "forge", Error: expired})
+	assertSameProto(t, failures[1], &lorev1.InstanceFailure{
+		Instance: "tracker",
+		Error:    transport.InternalErrorMessage,
+	})
+
+	logged := f.logs.String()
+	for _, want := range []string{
+		"level=ERROR", "Trigger instance failed", "instance=forge", rpcCause, "instance=tracker", stalled,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log %q does not record %q", logged, want)
+		}
+	}
+}
+
+func TestTriggerHidesAnInternalInstanceCauseButLogsIt(t *testing.T) {
+	f := newRPCFixture(t)
+	f.sync.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: internalerror.NewInternalError("committing the forge batch failed", errors.New(rpcCause))},
+		},
+	}, nil)
+
+	res, err := f.trigger(t, &lorev1.TriggerRequest{})
+	if err != nil {
+		t.Fatalf("Trigger() = %v, want an acknowledgment of a partial round", err)
+	}
+
+	failures := res.GetFailures()
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want the one instance that did not finish", failures)
+	}
+	assertSameProto(t, failures[0], &lorev1.InstanceFailure{
+		Instance: "forge",
+		Error:    transport.InternalErrorMessage,
+	})
+
+	wire, err := proto.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal the response: %v", err)
+	}
+	if strings.Contains(string(wire), rpcCause) {
+		t.Errorf("response %q leaks the cause", wire)
+	}
+	logged := f.logs.String()
+	if !strings.Contains(logged, rpcCause) {
+		t.Errorf("log %q does not record the cause", logged)
+	}
+	for _, want := range []string{"level=ERROR", "Trigger instance failed", "instance=forge"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log %q does not attribute the failure: no %q", logged, want)
+		}
 	}
 }
 

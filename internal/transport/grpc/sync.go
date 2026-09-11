@@ -33,7 +33,23 @@ func (s *syncServer) Trigger(ctx context.Context, in *lorev1.TriggerRequest) (*l
 	return &lorev1.TriggerResponse{
 		Synced:       in.GetSource(),
 		TookOverFrom: newLeaseState(result.TookOverFrom),
+		Failures:     newInstanceFailures(s.log, "Trigger", result.Failures),
 	}, nil
+}
+
+func newInstanceFailures(log *slog.Logger, operation string, failures []services.InstanceFailure) []*lorev1.InstanceFailure {
+	if len(failures) == 0 {
+		return nil
+	}
+
+	out := make([]*lorev1.InstanceFailure, len(failures))
+	for i, failure := range failures {
+		out[i] = &lorev1.InstanceFailure{
+			Instance: failure.Instance,
+			Error:    transport.ClassifyInstanceFailure(log, operation, failure.Instance, failure.Err),
+		}
+	}
+	return out
 }
 
 func (s *syncServer) Status(ctx context.Context, _ *lorev1.StatusRequest) (*lorev1.StatusResponse, error) {

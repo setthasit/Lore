@@ -74,19 +74,20 @@ is fine — git fetches the blobs blame needs on demand.
 
 ## `lore.yaml`
 
-Two blocks matter, and they are independent. `sources.github` says what to **ingest** — it
-needs no clone. `repos[]` registers the **clone** for blame and file history, and its
-`remote` is what ties the two together: the blamed SHA is looked up as a `github:cli/cli`
-document.
+Two blocks matter, and they are independent. The `github` source instance says what to
+**ingest** — it needs no clone. `repos[]` registers the **clone** for blame and file
+history, and its `remote` is what ties the two together: the blamed SHA is looked up as a
+`github:cli/cli` document.
 
 ```yaml
 workspace: cli-demo
 
 sources:
-  github:
-    token_env: LORE_GITHUB_TOKEN
-    repos:
-      - cli/cli
+  - use: github
+    with:
+      token_env: LORE_GITHUB_TOKEN
+      repos:
+        - cli/cli
 
 repos:
   - path: ~/dev/cli
@@ -96,19 +97,19 @@ embedder:
   provider: openai
   model: text-embedding-3-small
 
-# Only needed for --explain.
+# Only needed for --explain. It names no providers[] instance, so `anthropic` runs on
+# the plugin's own defaults and reads its key from ANTHROPIC_API_KEY.
 # llm:
 #   provider: anthropic
 #   model: claude-sonnet-4-5
-#   api_key_env: LORE_LLM_KEY
 ```
 
 `lore init` scaffolds this file with the `llm:`, `query:` and `scheduler:` blocks commented
 out; the values above are the edits. Every command takes `--config`, defaulting to
 `./lore.yaml`.
 
-Two things the loader enforces before anything runs: `sources.github.token_env` must name a
-variable that is actually **set** in the environment (`sources.github.token_env names
+Two things the loader enforces before anything runs: the instance's `token_env` must name a
+variable that is actually **set** in the environment (`sources[github].with.token_env names
 LORE_GITHUB_TOKEN, but that environment variable is not set`), and every `repos[].path`
 must exist and contain a `.git` entry (`repos path /home/dev/cli is not a git repository —
 no .git entry found`). A leading `~` in `repos[].path` and `index_path` is expanded before
@@ -141,7 +142,7 @@ What actually helps:
 
 | Lever | Effect |
 |---|---|
-| List exactly one repository under `sources.github.repos` | The connector walks repositories in order; each extra one is another full history |
+| List exactly one repository under the instance's `with.repos` | The connector walks repositories in order; each extra one is another full history |
 | Local embedder (`embedder.provider: ollama`) | The backfill still takes hours of API paging, but costs nothing per chunk. See [`fully-local.md`](fully-local.md) |
 | Just let it run once | Sync checkpoints per batch, so `Ctrl-C` and re-running resumes at the watermark; nothing already indexed is refetched. Later syncs are incremental — commits and issues are filtered server-side by the watermark, and the pull-request walk stops at the first PR older than it |
 | Run the walkthrough on a small repository of your own | The commands are identical; only the anchor changes |
@@ -330,7 +331,7 @@ gaps:
 
 That is the expected output of an interrupted backfill, of a span whose commits live on a
 branch that never reached `trunk`, and of a repository you registered as a clone but never
-listed under `sources.github.repos`.
+listed under a source instance's `with.repos`.
 
 **A repository with no PR discipline.** Direct pushes, no pull request, no issue: the
 commit is indexed but references nothing. The commit appears as `blamed_commit`, there is
@@ -366,7 +367,8 @@ lore: warning: repos path /home/dev/cli has remote github:cli/cli, which names n
 ```
 
 Usual causes: a typo, `remote:` missing its `github:` prefix, or a `repos[]` entry whose
-repository is not in `sources.github.repos`. Owner and name are matched case-insensitively.
+repository no source instance ingests. Each instance is asked whether the remote is one of
+its own, so owner and name are matched by the plugin — case-insensitively, for GitHub.
 
 **A malformed span** is rejected before the workspace is even opened (exit code 2):
 

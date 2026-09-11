@@ -3,7 +3,7 @@
 Six fictional artifacts — three Jira issues and three Notion pages — that make one
 decision trail resolvable across two sources with **no repository and no commits**.
 They mirror the corpus the automated end-to-end suite already exercises
-(`internal/e2e/testdata/askonly/`), so a walkthrough on this data shows the same
+(`test/e2e/testdata/askonly/`), so a walkthrough on this data shows the same
 chains the suite asserts.
 
 Read the walkthrough first: [`docs/demo-ask-only.md`](../../demo-ask-only.md).

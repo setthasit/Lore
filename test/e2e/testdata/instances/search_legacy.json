@@ -1,0 +1,39 @@
+{
+  "isLast": true,
+  "nextPageToken": "",
+  "issues": [
+    {
+      "key": "OLD-7",
+      "fields": {
+        "summary": "Retire the nightly warehouse export",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The nightly warehouse export on the retired site still runs, and nothing downstream has read its output for two quarters."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Retiring the export frees the batch window that the archival snapshot needs, so this ticket ends the nightly job."
+                }
+              ]
+            }
+          ]
+        },
+        "created": "2023-08-02T08:10:00.000+0000",
+        "updated": "2023-08-05T15:45:00.000+0000",
+        "reporter": { "displayName": "Grace Hopper", "accountId": "557058:0022" }
+      }
+    }
+  ]
+}

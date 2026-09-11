@@ -14,6 +14,7 @@ import (
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -40,18 +41,18 @@ func (f traceFixture) expectResolve(candidates ...entities.DocumentMeta) *gomock
 	return f.store.EXPECT().ResolveRef(gomock.Any(), traceRef).Return(candidates, nil)
 }
 
-func (f traceFixture) expectBody(id entities.DocID, body string) *gomock.Call {
-	return f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{id}).
-		Return([]entities.Document{{ID: id, Body: body}}, nil)
+func (f traceFixture) expectBody(id lore.DocID, body string) *gomock.Call {
+	return f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{id}).
+		Return([]lore.Document{{ID: id, Body: body}}, nil)
 }
 
-func (f traceFixture) expectMetas(ids []entities.DocID, metas ...entities.DocumentMeta) *gomock.Call {
+func (f traceFixture) expectMetas(ids []lore.DocID, metas ...entities.DocumentMeta) *gomock.Call {
 	return f.store.EXPECT().DocumentsByID(gomock.Any(), ids).Return(metas, nil)
 }
 
 func (f traceFixture) expectNeighbors(
 	dir entities.Direction,
-	ids []entities.DocID,
+	ids []lore.DocID,
 	edges ...entities.Edge,
 ) *gomock.Call {
 	return f.store.EXPECT().Neighbors(gomock.Any(), ids, nil, dir).Return(edges, nil)
@@ -60,14 +61,14 @@ func (f traceFixture) expectNeighbors(
 func (f traceFixture) expectAnchor(anchor entities.DocumentMeta) {
 	f.expectResolve(anchor)
 	f.expectBody(anchor.ID, traceBody)
-	f.expectMetas([]entities.DocID{anchor.ID}, anchor)
+	f.expectMetas([]lore.DocID{anchor.ID}, anchor)
 }
 
-func traceMeta(doc entities.DocID, createdAt time.Time) entities.DocumentMeta {
+func traceMeta(doc lore.DocID, createdAt time.Time) entities.DocumentMeta {
 	return entities.DocumentMeta{
 		ID:        doc,
 		Source:    "github",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     "decision: " + string(doc),
 		Author:    "dev@example.test",
 		URL:       "https://example.test/" + string(doc),
@@ -80,7 +81,7 @@ func traceDate(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 9, 0, 0, 0, time.UTC)
 }
 
-func traceEdge(src, dst entities.DocID) entities.Edge {
+func traceEdge(src, dst lore.DocID) entities.Edge {
 	return entities.Edge{Src: src, Dst: dst, Kind: entities.EdgeKindReferencesDoc, Confidence: 1}
 }
 
@@ -91,24 +92,24 @@ func TestTraceOrdersTheNeighbourhoodChronologically(t *testing.T) {
 	anchor := traceMeta("docA", traceDate(2021, time.June, 1))
 	design := traceMeta("docB", traceDate(2020, time.January, 15))
 	change := traceMeta("docC", traceDate(2022, time.March, 9))
-	change.Type = entities.DocTypePR
+	change.Type = lore.DocTypePR
 
 	debated := traceEdge(anchor.ID, design.ID)
 	implemented := traceEdge(design.ID, change.ID)
 
 	f := newTraceFixture(t)
 	f.expectAnchor(anchor)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{anchor.ID}, debated)
-	f.expectMetas([]entities.DocID{design.ID}, design)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{design.ID}, implemented)
-	f.expectMetas([]entities.DocID{change.ID}, change)
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID}, debated)
+	f.expectMetas([]lore.DocID{design.ID}, design)
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{design.ID}, implemented)
+	f.expectMetas([]lore.DocID{change.ID}, change)
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if err != nil {
 		t.Fatalf("Trace: %v", err)
 	}
 
-	want := []entities.DocID{design.ID, anchor.ID, change.ID}
+	want := []lore.DocID{design.ID, anchor.ID, change.ID}
 	if !slices.Equal(nodeIDs(bundle.Nodes), want) {
 		t.Fatalf("Nodes = %v, want chronological order %v", nodeIDs(bundle.Nodes), want)
 	}
@@ -154,7 +155,7 @@ func TestTraceOrdersTheNeighbourhoodChronologically(t *testing.T) {
 	if bundle.Question != "provenance of "+anchor.Title {
 		t.Errorf("Question = %q, want it to name %q", bundle.Question, anchor.Title)
 	}
-	assertChain(t, bundle.Chains, []entities.DocID{anchor.ID, design.ID, change.ID})
+	assertChain(t, bundle.Chains, []lore.DocID{anchor.ID, design.ID, change.ID})
 	assertGaps(t, bundle.Gaps, nil)
 }
 
@@ -168,16 +169,16 @@ func TestTraceBreaksChronologyTiesByID(t *testing.T) {
 
 	f := newTraceFixture(t)
 	f.expectAnchor(anchor)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{anchor.ID},
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID},
 		traceEdge(anchor.ID, later.ID), traceEdge(anchor.ID, earlier.ID))
-	f.expectMetas([]entities.DocID{later.ID, earlier.ID}, later, earlier)
+	f.expectMetas([]lore.DocID{later.ID, earlier.ID}, later, earlier)
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef, Depth: 1})
 	if err != nil {
 		t.Fatalf("Trace: %v", err)
 	}
 
-	want := []entities.DocID{earlier.ID, later.ID, anchor.ID}
+	want := []lore.DocID{earlier.ID, later.ID, anchor.ID}
 	if !slices.Equal(nodeIDs(bundle.Nodes), want) {
 		t.Errorf("Nodes = %v, want equal timestamps ordered by id: %v", nodeIDs(bundle.Nodes), want)
 	}
@@ -205,7 +206,7 @@ func TestTraceWalksTheRequestedDirection(t *testing.T) {
 
 			f := newTraceFixture(t)
 			f.expectAnchor(anchor)
-			f.expectNeighbors(tc.want, []entities.DocID{anchor.ID})
+			f.expectNeighbors(tc.want, []lore.DocID{anchor.ID})
 
 			_, err := f.svc.Trace(context.Background(),
 				services.TraceRequest{Ref: traceRef, Direction: tc.direction})
@@ -248,7 +249,7 @@ func TestTraceCapsWalkDepth(t *testing.T) {
 		{"above the cap", 5, 2},
 	}
 
-	layers := []entities.DocID{"docA", "docB", "docC"}
+	layers := []lore.DocID{"docA", "docB", "docC"}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -261,8 +262,8 @@ func TestTraceCapsWalkDepth(t *testing.T) {
 			// A Neighbors call beyond tc.hops is unexpected and fails the test.
 			for hop := range tc.hops {
 				from, to := layers[hop], layers[hop+1]
-				f.expectNeighbors(entities.DirBoth, []entities.DocID{from}, traceEdge(from, to))
-				f.expectMetas([]entities.DocID{to}, traceMeta(to, traceDate(2021, time.July, hop+1)))
+				f.expectNeighbors(entities.DirBoth, []lore.DocID{from}, traceEdge(from, to))
+				f.expectMetas([]lore.DocID{to}, traceMeta(to, traceDate(2021, time.July, hop+1)))
 			}
 
 			bundle, err := f.svc.Trace(context.Background(),
@@ -349,7 +350,7 @@ func TestTraceReportsAnchorMissingFromTheIndex(t *testing.T) {
 
 	f := newTraceFixture(t)
 	f.expectResolve(anchor)
-	f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{anchor.ID}).Return(nil, nil)
+	f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{anchor.ID}).Return(nil, nil)
 
 	_, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if !internalerror.IsNotFound(err) {
@@ -389,16 +390,16 @@ func TestTraceDropsNeighbourWithoutURL(t *testing.T) {
 
 	f := newTraceFixture(t)
 	f.expectAnchor(anchor)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{anchor.ID}, traceEdge(anchor.ID, uncitable.ID))
-	f.expectMetas([]entities.DocID{uncitable.ID}, uncitable)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{uncitable.ID})
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID}, traceEdge(anchor.ID, uncitable.ID))
+	f.expectMetas([]lore.DocID{uncitable.ID}, uncitable)
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{uncitable.ID})
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if err != nil {
 		t.Fatalf("Trace: %v", err)
 	}
 
-	if !slices.Equal(nodeIDs(bundle.Nodes), []entities.DocID{anchor.ID}) {
+	if !slices.Equal(nodeIDs(bundle.Nodes), []lore.DocID{anchor.ID}) {
 		t.Errorf("Nodes = %v, want the anchor alone: %s carries no URL", nodeIDs(bundle.Nodes), uncitable.ID)
 	}
 }
@@ -410,7 +411,7 @@ func TestTraceReportsAStandaloneAnchor(t *testing.T) {
 
 	f := newTraceFixture(t)
 	f.expectAnchor(anchor)
-	f.expectNeighbors(entities.DirBoth, []entities.DocID{anchor.ID})
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID})
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if err != nil {
@@ -441,7 +442,7 @@ func TestTraceClassifiesStoreFailures(t *testing.T) {
 		"body load": {
 			expect: func(f traceFixture) {
 				f.expectResolve(anchor)
-				f.store.EXPECT().DocumentsWithBody(gomock.Any(), []entities.DocID{anchor.ID}).
+				f.store.EXPECT().DocumentsWithBody(gomock.Any(), []lore.DocID{anchor.ID}).
 					Return(nil, errTraceStore)
 			},
 			named: "body",
@@ -449,7 +450,7 @@ func TestTraceClassifiesStoreFailures(t *testing.T) {
 		"graph walk": {
 			expect: func(f traceFixture) {
 				f.expectAnchor(anchor)
-				f.store.EXPECT().Neighbors(gomock.Any(), []entities.DocID{anchor.ID}, nil, entities.DirBoth).
+				f.store.EXPECT().Neighbors(gomock.Any(), []lore.DocID{anchor.ID}, nil, entities.DirBoth).
 					Return(nil, errTraceStore)
 			},
 			named: "graph",
