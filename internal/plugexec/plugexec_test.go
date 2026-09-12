@@ -21,10 +21,14 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 	"github.com/setthasit/Lore/sdk/wire"
 )
 
-var scriptedBinary string
+var (
+	scriptedBinary string
+	servedBinary   string
+)
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "plugexec-fixture")
@@ -33,12 +37,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	scriptedBinary = filepath.Join(dir, "scripted"+exeSuffix)
-	build := exec.Command("go", "build", "-o", scriptedBinary, "./testdata/scripted")
-	if out, buildErr := build.CombinedOutput(); buildErr != nil {
-		fmt.Fprintf(os.Stderr, "cannot build the scripted plugin: %v\n%s", buildErr, out)
-		os.Exit(1)
-	}
+	scriptedBinary = buildFixture(dir, "scripted")
+	servedBinary = buildFixture(dir, "served")
 
 	// GODEBUG=execwait=2 makes the Go runtime crash on a started exec.Cmd that is never Waited.
 	if err := os.Setenv("GODEBUG", "execwait=2"); err != nil {
@@ -49,6 +49,17 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+func buildFixture(dir, name string) string {
+	binary := filepath.Join(dir, name+exeSuffix)
+	build := exec.Command("go", "build", "-o", binary, "./testdata/"+name)
+	if out, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot build the %s plugin: %v\n%s", name, err, out)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	return binary
 }
 
 var exeSuffix = func() string {
@@ -937,4 +948,55 @@ func TestReadLineReturnsWholeFramesAcrossTheBufferBoundary(t *testing.T) {
 	if _, err := s.readLine(); !errors.Is(err, io.EOF) {
 		t.Errorf("third readLine error = %v, want EOF", err)
 	}
+}
+
+func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
+	certification, err := Certify("served", servedBinary, testHost(nil))
+	if err != nil {
+		t.Fatalf("Certify: %v", err)
+	}
+	if certification.Kind != lore.KindSource {
+		t.Errorf("Kind = %q, want %q", certification.Kind, lore.KindSource)
+	}
+	if len(certification.Findings) != 0 {
+		t.Errorf("the served plugin drew %d findings, want none: %+v",
+			len(certification.Findings), certification.Findings)
+	}
+}
+
+func TestCertifyReportsAStreamWhoseBatchOmitsACursor(t *testing.T) {
+	cursorless := batchLine(ticket("scripted", "1"), `null`)
+	binary := scripted(t, script(sourceManifest, cursorless+"\n"+doneLine, shutdownOK))
+
+	certification, err := Certify("scripted", binary, testHost(nil))
+	if err != nil {
+		t.Fatalf("Certify: %v", err)
+	}
+	if len(certification.Findings) == 0 {
+		t.Fatal("a cursor-less batch certified clean")
+	}
+	if got := certification.Findings[0].Check; got != conform.CheckStream {
+		t.Errorf("first finding is %q, want %q", got, conform.CheckStream)
+	}
+}
+
+func servedSource(t *testing.T) lore.Connector {
+	t.Helper()
+	plugin, err := open(servedBinary, testHost(nil), testTuning())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	source, ok := plugin.(lore.SourcePlugin)
+	if !ok {
+		t.Fatalf("the fixture opened as %T, want a lore.SourcePlugin", plugin)
+	}
+	conn, err := source.NewSource(lore.SourceConfig{Instance: "served", Host: testHost(nil)})
+	if err != nil {
+		t.Fatalf("NewSource: %v", err)
+	}
+	return conn
+}
+
+func TestTheServedFixturePassesTheConformanceSuite(t *testing.T) {
+	conform.Run(t, func() lore.Connector { return servedSource(t) }, conform.Fixture{Docs: 3})
 }
