@@ -1,7 +1,8 @@
 // Package stdio runs a plugin's side of the NDJSON protocol: NDJSON requests
 // in, one answer per line out, diagnostics on a separate error stream. A
 // request line over the protocol's cap ends the loop, because no id can be
-// recovered from it.
+// recovered from it. A connector's string or error diagnostics lose the
+// round's secrets; a scalar prints as itself and any other value is named.
 package stdio
 
 import (
@@ -18,6 +19,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/wire"
@@ -32,12 +34,7 @@ func Serve(plugin lore.Plugin) error {
 // ServeStreams is Serve over streams the caller chooses; out carries answers and
 // errOut diagnostics and logs. Its read of in outlives the return until in closes.
 func ServeStreams(plugin lore.Plugin, in io.Reader, out, errOut io.Writer) error {
-	s := server{
-		plugin: plugin,
-		out:    out,
-		errOut: errOut,
-		host:   lore.Host{Log: slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelDebug}))},
-	}
+	s := server{plugin: plugin, out: out, errOut: &lockedWriter{w: errOut}}
 	return s.run(in)
 }
 
@@ -45,7 +42,19 @@ type server struct {
 	plugin lore.Plugin
 	out    io.Writer
 	errOut io.Writer
-	host   lore.Host
+}
+
+// Each source gets a handler of its own and the panic and unusable reports
+// write errOut raw, so one lock orders every diagnostic.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 const (
@@ -53,8 +62,10 @@ const (
 
 	messageLimit = 256
 	redaction    = "[redacted]"
+	tooDeep      = "[too deeply nested]"
 
 	maxCauseDepth = 100
+	maxAttrDepth  = 100
 )
 
 func (s server) run(in io.Reader) error {
@@ -125,16 +136,33 @@ func (s server) reportUnusable(id string, cause error) error {
 		message = fmt.Sprintf("unreadable request: %v", cause)
 	}
 	if id == "" {
-		_, _ = fmt.Fprintln(s.errOut, message)
+		_, _ = fmt.Fprintln(s.errOut, bounded(message))
 		return nil
 	}
 	return s.answer(errorFrame(id, wire.KindInternal, message))
 }
 
+// The host makes one record per line, so the reason cannot carry a newline;
+// the stack is left whole, its arguments printed as words of hex.
+func (s server) reportPanic(op string, reason any, secrets []string) {
+	text := strings.ReplaceAll(authorText(reason, secrets), "\n", " ")
+	_, _ = fmt.Fprintf(s.errOut, "panic answering %q: %s\n%s", op, text, debug.Stack())
+}
+
+func requestSecrets(line []byte) []string {
+	var req struct {
+		Secrets map[string]string `json:"secrets"`
+	}
+	if json.Unmarshal(line, &req) != nil {
+		return nil
+	}
+	return secretValues(req.Secrets)
+}
+
 func (s server) respond(ctx context.Context, env wire.Envelope, line []byte) (err error) {
 	defer func() {
 		if panicked := recover(); panicked != nil {
-			_, _ = fmt.Fprintf(s.errOut, "panic answering %q: %v\n%s", env.Op, panicked, debug.Stack())
+			s.reportPanic(env.Op, panicked, requestSecrets(line))
 			err = s.answer(errorFrame(env.ID, wire.KindInternal,
 				fmt.Sprintf("the plugin panicked answering %q; the stack is on stderr", env.Op)))
 		}
@@ -170,11 +198,12 @@ func (s server) streamChanges(ctx context.Context, env wire.Envelope, line []byt
 		cursor = nil
 	}
 
+	secrets := secretValues(req.Secrets)
 	connector, refusal := s.openSource(env, lore.SourceConfig{
 		Instance: req.Instance,
 		Config:   req.Config,
 		Secrets:  req.Secrets,
-	})
+	}, secrets)
 	if refusal != nil {
 		return s.answer(*refusal)
 	}
@@ -187,7 +216,7 @@ func (s server) streamChanges(ctx context.Context, env wire.Envelope, line []byt
 		case !answered:
 			panic(panicked)
 		default:
-			_, _ = fmt.Fprintf(s.errOut, "panic answering %q: %v\n%s", env.Op, panicked, debug.Stack())
+			s.reportPanic(env.Op, panicked, secrets)
 		}
 	}()
 
@@ -200,7 +229,7 @@ func (s server) streamChanges(ctx context.Context, env wire.Envelope, line []byt
 	for batch, err := range connector.Changes(ctx, cursor) {
 		switch {
 		case err != nil:
-			return terminate(failureFrame(env.ID, err, wire.KindInternal, req.Secrets))
+			return terminate(failureFrame(env.ID, err, wire.KindInternal, secrets))
 		case len(batch.Cursor) == 0:
 			return terminate(errorFrame(env.ID, wire.KindInternal, fmt.Sprintf(
 				"connector %q yielded %d documents without a cursor, so committing them would checkpoint nothing",
@@ -217,7 +246,7 @@ func (s server) streamChanges(ctx context.Context, env wire.Envelope, line []byt
 		}
 	}
 	if cause := ctx.Err(); cause != nil {
-		return terminate(failureFrame(env.ID, cause, wire.KindInternal, req.Secrets))
+		return terminate(failureFrame(env.ID, cause, wire.KindInternal, secrets))
 	}
 	return terminate(wire.Frame{V: lore.APIVersion, ID: env.ID, Done: true})
 }
@@ -232,7 +261,7 @@ func (s server) remoteFrame(env wire.Envelope, line []byte) wire.Frame {
 		Instance: req.Instance,
 		Config:   req.Config,
 		Secrets:  req.Secrets,
-	})
+	}, secretValues(req.Secrets))
 	if refusal != nil {
 		return *refusal
 	}
@@ -244,7 +273,7 @@ func (s server) remoteFrame(env wire.Envelope, line []byte) wire.Frame {
 	return wire.Frame{V: lore.APIVersion, ID: env.ID, OK: true, Matches: matcher.MatchesRemote(req.Remote)}
 }
 
-func (s server) openSource(env wire.Envelope, config lore.SourceConfig) (lore.Connector, *wire.Frame) {
+func (s server) openSource(env wire.Envelope, config lore.SourceConfig, secrets []string) (lore.Connector, *wire.Frame) {
 	source, ok := s.plugin.(lore.SourcePlugin)
 	if !ok {
 		refusal := errorFrame(env.ID, wire.KindInternal, fmt.Sprintf(
@@ -252,10 +281,14 @@ func (s server) openSource(env wire.Envelope, config lore.SourceConfig) (lore.Co
 		return nil, &refusal
 	}
 
-	config.Host = s.host
+	config.Host = lore.Host{Log: slog.New(redacting{
+		Handler: slog.NewTextHandler(s.errOut, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		secrets: secrets,
+	})}
+
 	connector, err := source.NewSource(config)
 	if err != nil {
-		refusal := failureFrame(env.ID, err, wire.KindInvalidConfig, config.Secrets)
+		refusal := failureFrame(env.ID, err, wire.KindInvalidConfig, secrets)
 		return nil, &refusal
 	}
 	return connector, nil
@@ -306,7 +339,7 @@ func batchFrame(id string, batch lore.Batch) wire.Frame {
 	return wire.Frame{V: lore.APIVersion, ID: id, Batch: &wire.Batch{Docs: batch.Docs, Cursor: &batch.Cursor}}
 }
 
-func failureFrame(id string, cause error, fallback string, secrets map[string]string) wire.Frame {
+func failureFrame(id string, cause error, fallback string, secrets []string) wire.Frame {
 	kind := fallback
 	if reported := reportedKind(cause, maxCauseDepth); reported != "" {
 		kind = reported
@@ -348,12 +381,96 @@ func reportedKind(cause error, depth int) string {
 
 // Longest first, so a secret value holding another as a prefix cannot leave
 // the rest of itself behind.
-func redacted(message string, secrets map[string]string) string {
+func secretValues(secrets map[string]string) []string {
 	values := slices.SortedFunc(maps.Values(secrets), func(a, b string) int { return len(b) - len(a) })
-	for _, secret := range values {
-		if secret != "" {
-			message = strings.ReplaceAll(message, secret, redaction)
+	return slices.DeleteFunc(values, func(secret string) bool { return secret == "" })
+}
+
+func redacted(text string, secrets []string) string {
+	for _, secret := range secrets {
+		text = strings.ReplaceAll(text, secret, redaction)
+	}
+	return text
+}
+
+func readable(text string, secrets []string) string {
+	return bounded(redacted(text, secrets))
+}
+
+type redacting struct {
+	slog.Handler
+	secrets []string
+}
+
+func (h redacting) Handle(ctx context.Context, record slog.Record) error {
+	clean := slog.NewRecord(record.Time, record.Level, readable(record.Message, h.secrets), record.PC)
+	record.Attrs(func(attr slog.Attr) bool {
+		clean.AddAttrs(h.attr(attr, maxAttrDepth))
+		return true
+	})
+	return h.Handler.Handle(ctx, clean)
+}
+
+func (h redacting) WithAttrs(attrs []slog.Attr) slog.Handler {
+	clean := make([]slog.Attr, len(attrs))
+	for i, attr := range attrs {
+		clean[i] = h.attr(attr, maxAttrDepth)
+	}
+	return redacting{Handler: h.Handler.WithAttrs(clean), secrets: h.secrets}
+}
+
+func (h redacting) WithGroup(name string) slog.Handler {
+	return redacting{Handler: h.Handler.WithGroup(name), secrets: h.secrets}
+}
+
+func (h redacting) attr(attr slog.Attr, depth int) slog.Attr {
+	if attr.Equal(slog.Attr{}) {
+		return attr
+	}
+
+	attr.Value = h.value(attr.Value, depth)
+	return attr
+}
+
+// A group's leaves are author text too, so the walk goes through them; the
+// depth bound holds because a LogValuer can synthesise groups without end.
+func (h redacting) value(value slog.Value, depth int) slog.Value {
+	if depth == 0 {
+		return slog.StringValue(tooDeep)
+	}
+
+	switch value = value.Resolve(); value.Kind() {
+	case slog.KindString:
+		return slog.StringValue(readable(value.String(), h.secrets))
+	case slog.KindGroup:
+		group := slices.Clone(value.Group())
+		for i, attr := range group {
+			group[i] = h.attr(attr, depth-1)
+		}
+		return slog.GroupValue(group...)
+	case slog.KindAny:
+		return slog.StringValue(authorText(value.Any(), h.secrets))
+	}
+	return value
+}
+
+func authorText(value any, secrets []string) string {
+	switch typed := value.(type) {
+	case string:
+		return readable(typed, secrets)
+	case error:
+		if message, ok := errorMessage(typed); ok {
+			return readable(message, secrets)
 		}
 	}
-	return message
+	return omitted(value)
+}
+
+func errorMessage(cause error) (message string, ok bool) {
+	defer func() { ok = recover() == nil }()
+	return cause.Error(), true
+}
+
+func omitted(value any) string {
+	return bounded(fmt.Sprintf("[value of type %T omitted]", value))
 }
