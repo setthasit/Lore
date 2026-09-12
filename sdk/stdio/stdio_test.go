@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ import (
 const (
 	pluginName    = "in-memory-notes"
 	instance      = "fixture"
+	secret        = "hunter2-7f3a1c"
 	answerTimeout = 5 * time.Second
 )
 
@@ -40,6 +42,16 @@ func (plugin) Manifest() lore.Manifest {
 
 func (p plugin) NewSource(config lore.SourceConfig) (lore.Connector, error) {
 	return connector{name: config.Instance, changes: p.changes}, nil
+}
+
+type loggingPlugin struct {
+	plugin
+	log func(*slog.Logger)
+}
+
+func (p loggingPlugin) NewSource(config lore.SourceConfig) (lore.Connector, error) {
+	p.log(config.Host.Log)
+	return p.plugin.NewSource(config)
 }
 
 type connector struct {
@@ -95,6 +107,12 @@ func serve(t *testing.T, p lore.Plugin) *session {
 	return s
 }
 
+func serveLogging(t *testing.T, log func(*slog.Logger)) *session {
+	t.Helper()
+
+	return serve(t, loggingPlugin{plugin: plugin{changes: never}, log: log})
+}
+
 func answerScanner(answers io.Reader) *bufio.Scanner {
 	lines := bufio.NewScanner(answers)
 	lines.Buffer(nil, wire.MaxLineBytes)
@@ -129,8 +147,14 @@ func (s *session) ask(op string) string {
 func (s *session) askChanges() string {
 	s.t.Helper()
 
+	return s.askChangesWithSecrets(nil)
+}
+
+func (s *session) askChangesWithSecrets(secrets map[string]string) string {
+	s.t.Helper()
+
 	env := s.envelope(wire.OpChanges)
-	s.send(wire.ChangesRequest{Envelope: env, Instance: instance, Cursor: lore.Cursor{}})
+	s.send(wire.ChangesRequest{Envelope: env, Instance: instance, Secrets: secrets, Cursor: lore.Cursor{}})
 	return env.ID
 }
 
@@ -404,5 +428,151 @@ func TestAPanicAfterTheTerminalFrameIsReportedWithoutASecondFrame(t *testing.T) 
 	}
 	if !strings.Contains(s.errOut.String(), reason) {
 		t.Errorf("the error stream does not report the panic:\n%s", s.errOut)
+	}
+}
+
+var roundSecrets = map[string]string{"api_token": secret}
+
+func TestALoggedStringLosesTheSecretAndAScalarPrintsAsItself(t *testing.T) {
+	s := serveLogging(t, func(log *slog.Logger) {
+		log.Info("opening the notes",
+			slog.String("endpoint", "https://notes.example/sync?token="+secret),
+			slog.Int("attempts", 3))
+	})
+
+	if frame := s.next(s.askChangesWithSecrets(roundSecrets)); !frame.Done {
+		t.Errorf("changes frame = %+v, want done", frame)
+	}
+
+	diagnostics := s.errOut.String()
+	if strings.Contains(diagnostics, secret) {
+		t.Errorf("the error stream carries the round's secret:\n%s", diagnostics)
+	}
+	if !strings.Contains(diagnostics, "https://notes.example/sync?token=[redacted]") {
+		t.Errorf("the attribute lost more than the secret:\n%s", diagnostics)
+	}
+	if !strings.Contains(diagnostics, "attempts=3") {
+		t.Errorf("the scalar attribute does not print as itself:\n%s", diagnostics)
+	}
+}
+
+func TestADeeplyNestedLoggedValueIsCappedRatherThanWalkedWithoutEnd(t *testing.T) {
+	s := serveLogging(t, func(log *slog.Logger) {
+		value := slog.StringValue("the innermost note")
+		for range 150 {
+			value = slog.GroupValue(slog.Attr{Key: "nested", Value: value})
+		}
+		log.Info("opening the notes", slog.Attr{Key: "trail", Value: value})
+	})
+
+	if frame := s.next(s.askChanges()); !frame.Done {
+		t.Errorf("changes frame = %+v, want done", frame)
+	}
+	if diagnostics := s.errOut.String(); !strings.Contains(diagnostics, "[too deeply nested]") {
+		t.Errorf("the walk never reports its depth cap:\n%s", diagnostics)
+	}
+}
+
+func TestASecretInAPanicReasonIsRedactedOnTheErrorStream(t *testing.T) {
+	for _, reason := range []struct {
+		name  string
+		value any
+	}{
+		{name: "a string reason", value: "the notes API refused " + secret},
+		{name: "an error reason", value: fmt.Errorf("the notes API refused %s", secret)},
+	} {
+		t.Run(reason.name, func(t *testing.T) {
+			s := serve(t, plugin{changes: func(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+				return func(func(lore.Batch, error) bool) { panic(reason.value) }
+			}})
+
+			assertError(t, s.next(s.askChangesWithSecrets(roundSecrets)), wire.KindInternal)
+			if frame := s.next(s.ask(wire.OpShutdown)); !frame.OK {
+				t.Errorf("shutdown frame = %+v, want ok", frame)
+			}
+
+			diagnostics := s.errOut.String()
+			if strings.Contains(diagnostics, secret) {
+				t.Errorf("the error stream carries the round's secret:\n%s", diagnostics)
+			}
+			if !strings.Contains(diagnostics, "the notes API refused [redacted]") {
+				t.Errorf("the panic reason lost more than the secret:\n%s", diagnostics)
+			}
+		})
+	}
+}
+
+type credentials struct{ Token string }
+
+func TestALoggedCompositeValueIsNamedByItsTypeAndNotRendered(t *testing.T) {
+	s := serveLogging(t, func(log *slog.Logger) {
+		log.Info("opening the notes", slog.Any("credentials", credentials{Token: secret}))
+	})
+
+	if frame := s.next(s.askChangesWithSecrets(roundSecrets)); !frame.Done {
+		t.Errorf("changes frame = %+v, want done", frame)
+	}
+
+	diagnostics := s.errOut.String()
+	if strings.Contains(diagnostics, secret) {
+		t.Errorf("the composite value was rendered, secret and all:\n%s", diagnostics)
+	}
+	if want := fmt.Sprintf("[value of type %T omitted]", credentials{}); !strings.Contains(diagnostics, want) {
+		t.Errorf("the error stream does not name the value's type as %q:\n%s", want, diagnostics)
+	}
+}
+
+type unprintableError struct{}
+
+func (unprintableError) Error() string { panic("the author's Error method is broken") }
+
+func TestALoggedErrorThatPanicsCostsNeitherTheRoundNorTheRecord(t *testing.T) {
+	s := serveLogging(t, func(log *slog.Logger) {
+		log.Info("opening the notes", slog.Any("cause", unprintableError{}))
+	})
+
+	frame := s.next(s.askChanges())
+	if !frame.Done || frame.Error != nil {
+		t.Errorf("changes frame = %+v, want done", frame)
+	}
+	if diagnostics := s.errOut.String(); !strings.Contains(diagnostics, "opening the notes") {
+		t.Errorf("the record never reached the error stream:\n%s", diagnostics)
+	}
+}
+
+func TestAnAuthorsFailureKindReachesTheWire(t *testing.T) {
+	for _, reported := range []struct {
+		name  string
+		cause error
+		kind  string
+	}{
+		{
+			name:  "an unkinded failure defers to its cause",
+			cause: lore.Failure{Err: lore.Failure{Kind: wire.KindAuth, Err: errors.New("the token expired")}},
+			kind:  wire.KindAuth,
+		},
+		{
+			name:  "a failure yielded by pointer",
+			cause: &lore.Failure{Kind: wire.KindRateLimit, Err: errors.New("too many reads this minute")},
+			kind:  wire.KindRateLimit,
+		},
+		{
+			name:  "a failure wrapped by a plain error",
+			cause: fmt.Errorf("opening %q: %w", instance, lore.Failure{Kind: wire.KindNotFound, Err: errors.New("no such notebook")}),
+			kind:  wire.KindNotFound,
+		},
+		{
+			name:  "a kind the protocol does not publish",
+			cause: lore.Failure{Kind: "astrological", Err: errors.New("mercury is in retrograde")},
+			kind:  "astrological",
+		},
+	} {
+		t.Run(reported.name, func(t *testing.T) {
+			s := serve(t, plugin{changes: func(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+				return func(yield func(lore.Batch, error) bool) { yield(lore.Batch{}, reported.cause) }
+			}})
+
+			assertError(t, s.next(s.askChanges()), reported.kind)
+		})
 	}
 }
