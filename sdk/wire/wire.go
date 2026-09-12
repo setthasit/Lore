@@ -112,3 +112,13 @@ type Error struct {
 	Message string `json:"message"`
 	Kind    string `json:"kind"`
 }
+
+// The kinds the host recognises; it reads any other kind as KindInternal and
+// says so in the message it reports.
+const (
+	KindInvalidConfig = "invalid_config"
+	KindAuth          = "auth"
+	KindRateLimit     = "rate_limit"
+	KindNotFound      = "not_found"
+	KindInternal      = "internal"
+)
