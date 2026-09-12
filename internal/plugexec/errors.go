@@ -9,11 +9,11 @@ import (
 type errorKind string
 
 const (
-	kindInvalidConfig errorKind = "invalid_config"
-	kindAuth          errorKind = "auth"
-	kindRateLimit     errorKind = "rate_limit"
-	kindNotFound      errorKind = "not_found"
-	kindInternal      errorKind = "internal"
+	kindInvalidConfig errorKind = wire.KindInvalidConfig
+	kindAuth          errorKind = wire.KindAuth
+	kindRateLimit     errorKind = wire.KindRateLimit
+	kindNotFound      errorKind = wire.KindNotFound
+	kindInternal      errorKind = wire.KindInternal
 )
 
 type pluginError struct {
