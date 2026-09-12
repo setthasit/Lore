@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 type tuning struct {
@@ -68,14 +69,14 @@ func spawn(binary, instance string, host lore.Host, tune tuning) (*session, erro
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, protocolError(instance, opManifest, nil, "cannot open the plugin's stdin: %v", err)
+		return nil, protocolError(instance, wire.OpManifest, nil, "cannot open the plugin's stdin: %v", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, protocolError(instance, opManifest, nil, "cannot open the plugin's stdout: %v", err)
+		return nil, protocolError(instance, wire.OpManifest, nil, "cannot open the plugin's stdout: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, protocolError(instance, opManifest, nil, "cannot execute the plugin binary %s: %v", binary, err)
+		return nil, protocolError(instance, wire.OpManifest, nil, "cannot execute the plugin binary %s: %v", binary, err)
 	}
 
 	return &session{
@@ -96,8 +97,8 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 		return nil, lore.Manifest{}, err
 	}
 
-	env := s.begin(opManifest)
-	if err := s.send(ctx, env, manifestRequest{envelope: env}, s.tuning.manifest); err != nil {
+	env := s.begin(wire.OpManifest)
+	if err := s.send(ctx, env, wire.ManifestRequest{Envelope: env}, s.tuning.manifest); err != nil {
 		return nil, lore.Manifest{}, err
 	}
 	f, err := s.await(ctx, env, s.tuning.manifest)
@@ -106,38 +107,38 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 	}
 	if f.Manifest == nil {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil, "answered the handshake without a manifest")
+		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil, "answered the handshake without a manifest")
 	}
 
 	manifest := *f.Manifest
 	if manifest.APIVersion != lore.APIVersion {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil,
+		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
 			"plugin %q speaks api_version %d, host speaks %d", manifest.Name, manifest.APIVersion, lore.APIVersion)
 	}
 	if manifest.Name == "" {
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil, "manifest declares no name")
+		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil, "manifest declares no name")
 	}
 	switch manifest.Kind {
 	case lore.KindSource, lore.KindProvider, lore.KindCode:
 	default:
 		s.abort()
-		return nil, lore.Manifest{}, protocolError(instance, opManifest, nil,
+		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
 			"plugin %q declares kind %q, which is none of %q, %q, %q",
 			manifest.Name, manifest.Kind, lore.KindSource, lore.KindProvider, lore.KindCode)
 	}
 	return s, manifest, nil
 }
 
-func (s *session) begin(op string) envelope {
+func (s *session) begin(op string) wire.Envelope {
 	s.requests++
-	return envelope{V: lore.APIVersion, ID: fmt.Sprintf("%s-%d", s.idPrefix, s.requests), Op: op}
+	return wire.Envelope{V: lore.APIVersion, ID: fmt.Sprintf("%s-%d", s.idPrefix, s.requests), Op: op}
 }
 
 // send writes one request line under a timeout: a plugin that never reads its
 // stdin would otherwise hang the host once a request outgrows the pipe buffer.
-func (s *session) send(ctx context.Context, env envelope, req any, timeout time.Duration) error {
+func (s *session) send(ctx context.Context, env wire.Envelope, req any, timeout time.Duration) error {
 	line, err := json.Marshal(req)
 	if err != nil {
 		s.abort()
@@ -169,7 +170,7 @@ func (s *session) send(ctx context.Context, env envelope, req any, timeout time.
 	}
 }
 
-func (s *session) await(ctx context.Context, env envelope, timeout time.Duration) (*frame, error) {
+func (s *session) await(ctx context.Context, env wire.Envelope, timeout time.Duration) (*wire.Frame, error) {
 	f, err := s.read(ctx, env.Op, timeout)
 	if err != nil {
 		return nil, err
@@ -193,14 +194,14 @@ func (s *session) await(ctx context.Context, env envelope, timeout time.Duration
 }
 
 func (s *session) endRound(ctx context.Context, op string) {
-	if op == opShutdown {
+	if op == wire.OpShutdown {
 		s.abort()
 		return
 	}
 	_ = s.close(ctx)
 }
 
-func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*frame, error) {
+func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*wire.Frame, error) {
 	type result struct {
 		line []byte
 		err  error
@@ -221,12 +222,12 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		case errors.Is(r.err, errLineTooLong):
 			s.abort()
 			return nil, protocolError(s.instance, op, nil,
-				"answered %s with a line over the %d MiB limit; a batch too large to frame must be split", op, maxLineBytes>>20)
+				"answered %s with a line over the %d MiB limit; a batch too large to frame must be split", op, wire.MaxLineBytes>>20)
 		case r.err != nil:
 			return nil, s.crashed(op, r.err)
 		}
 
-		var f frame
+		var f wire.Frame
 		if err := json.Unmarshal(r.line, &f); err != nil {
 			s.abort()
 			return nil, protocolError(s.instance, op, err,
@@ -248,7 +249,7 @@ func (s *session) readLine() ([]byte, error) {
 	var line []byte
 	for {
 		chunk, err := s.stdout.ReadSlice('\n')
-		if len(line)+len(chunk) > maxLineBytes {
+		if len(line)+len(chunk) > wire.MaxLineBytes {
 			return nil, errLineTooLong
 		}
 		line = append(line, chunk...)
@@ -264,8 +265,8 @@ func (s *session) readLine() ([]byte, error) {
 }
 
 func (s *session) close(ctx context.Context) error {
-	env := s.begin(opShutdown)
-	if err := s.send(ctx, env, shutdownRequest{envelope: env}, s.tuning.shutdown); err != nil {
+	env := s.begin(wire.OpShutdown)
+	if err := s.send(ctx, env, wire.ShutdownRequest{Envelope: env}, s.tuning.shutdown); err != nil {
 		return err
 	}
 	f, err := s.await(ctx, env, s.tuning.shutdown)
@@ -274,12 +275,12 @@ func (s *session) close(ctx context.Context) error {
 	}
 	if !f.OK {
 		s.abort()
-		return protocolError(s.instance, opShutdown, nil, "answered shutdown without ok")
+		return protocolError(s.instance, wire.OpShutdown, nil, "answered shutdown without ok")
 	}
 
 	_ = s.stdin.Close()
 	if err := s.waitWithin(s.tuning.shutdown); err != nil {
-		return &crashError{instance: s.instance, op: opShutdown, detail: err.Error(), cause: err}
+		return &crashError{instance: s.instance, op: wire.OpShutdown, detail: err.Error(), cause: err}
 	}
 	return nil
 }

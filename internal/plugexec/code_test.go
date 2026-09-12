@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 func codeOf(t *testing.T, text, root string) lore.CodeRepo {
@@ -118,8 +119,8 @@ func TestAnAbsolutePathIsRefusedInsteadOfReRootedUnderTheClone(t *testing.T) {
 			if commits != nil {
 				t.Errorf("Log(%q) returned %v, want nothing re-rooted under the clone", tt.path, commits)
 			}
-			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), opLog) {
-				t.Errorf("Log(%q) error = %q, want it to name %s and %q", tt.path, err, opLog, tt.want)
+			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), wire.OpLog) {
+				t.Errorf("Log(%q) error = %q, want it to name %s and %q", tt.path, err, wire.OpLog, tt.want)
 			}
 		})
 	}

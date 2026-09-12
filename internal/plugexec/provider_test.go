@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 func embedderOf(t *testing.T, text string, cfg lore.ProviderConfig) (lore.Embedder, error) {
@@ -173,8 +174,8 @@ func TestAWidthNobodyDeclaredIsRefusedWithoutEmbedding(t *testing.T) {
 		t.Errorf("error %q does not name the width that is missing", err)
 	}
 	var pluginErr *pluginError
-	if !errors.As(err, &pluginErr) || pluginErr.op != opEmbed {
-		t.Fatalf("error = %v, want a *pluginError naming %s", err, opEmbed)
+	if !errors.As(err, &pluginErr) || pluginErr.op != wire.OpEmbed {
+		t.Fatalf("error = %v, want a *pluginError naming %s", err, wire.OpEmbed)
 	}
 	if strings.Contains(logs.String(), reached) {
 		t.Error("construction sent an embed request instead of trusting the configured width")
@@ -225,8 +226,8 @@ func TestAnEmptyCompletionIsAnError(t *testing.T) {
 			if !errors.As(err, &pluginErr) || pluginErr.kind != kindInternal {
 				t.Fatalf("error = %v, want an internal *pluginError", err)
 			}
-			if pluginErr.op != opComplete {
-				t.Errorf("error names op %q, want %q", pluginErr.op, opComplete)
+			if pluginErr.op != wire.OpComplete {
+				t.Errorf("error names op %q, want %q", pluginErr.op, wire.OpComplete)
 			}
 		})
 	}

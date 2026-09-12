@@ -1,6 +1,10 @@
 package plugexec
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/setthasit/Lore/sdk/wire"
+)
 
 type errorKind string
 
@@ -41,14 +45,14 @@ func (e *crashError) Error() string {
 
 func (e *crashError) Unwrap() error { return e.cause }
 
-func fromWire(instance, op string, wire *wireError) *pluginError {
-	kind := errorKind(wire.Kind)
-	message := wire.Message
+func fromWire(instance, op string, reported *wire.Error) *pluginError {
+	kind := errorKind(reported.Kind)
+	message := reported.Message
 	switch kind {
 	case kindInvalidConfig, kindAuth, kindRateLimit, kindNotFound, kindInternal:
 	default:
-		if wire.Kind != "" {
-			message = fmt.Sprintf("%s (plugin reported unknown kind %q)", message, wire.Kind)
+		if reported.Kind != "" {
+			message = fmt.Sprintf("%s (plugin reported unknown kind %q)", message, reported.Kind)
 		}
 		kind = kindInternal
 	}

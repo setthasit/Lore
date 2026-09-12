@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 var scriptedBinary string
@@ -315,8 +316,8 @@ func TestAnErrorFrameOnManifestRefusesToOpen(t *testing.T) {
 	if !errors.As(err, &pluginErr) {
 		t.Fatalf("open error = %v (%T), want a *pluginError", err, err)
 	}
-	if pluginErr.op != opManifest || pluginErr.kind != kindInternal {
-		t.Errorf("error = %+v, want op %q kind %q", pluginErr, opManifest, kindInternal)
+	if pluginErr.op != wire.OpManifest || pluginErr.kind != kindInternal {
+		t.Errorf("error = %+v, want op %q kind %q", pluginErr, wire.OpManifest, kindInternal)
 	}
 }
 
@@ -456,7 +457,7 @@ func TestStrayNonProtocolLineFailsTheOperation(t *testing.T) {
 }
 
 func TestLineOverTheLimitFailsTheOperationNamingInstanceAndOp(t *testing.T) {
-	text := script(providerManifest, fmt.Sprintf("complete bigline %d", maxLineBytes+1), shutdownOK)
+	text := script(providerManifest, fmt.Sprintf("complete bigline %d", wire.MaxLineBytes+1), shutdownOK)
 
 	plugin := mustOpenScript(t, text)
 	provider, err := plugin.(lore.ProviderPlugin).NewProvider(lore.ProviderConfig{
@@ -473,7 +474,7 @@ func TestLineOverTheLimitFailsTheOperationNamingInstanceAndOp(t *testing.T) {
 	if err == nil {
 		t.Fatal("a line over the limit was accepted")
 	}
-	for _, want := range []string{`"big"`, opComplete, "8 MiB"} {
+	for _, want := range []string{`"big"`, wire.OpComplete, "8 MiB"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -534,7 +535,7 @@ func TestAnErrorFrameKeepsTheKindThePluginReported(t *testing.T) {
 			if pluginErr.kind != tt.wantKind {
 				t.Errorf("kind = %q, want %q", pluginErr.kind, tt.wantKind)
 			}
-			if pluginErr.instance != "linear" || pluginErr.op != opChanges {
+			if pluginErr.instance != "linear" || pluginErr.op != wire.OpChanges {
 				t.Errorf("error = %+v, want instance linear and op changes", pluginErr)
 			}
 		})
@@ -569,8 +570,8 @@ func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 	}
 	defer session.abort()
 
-	env := session.begin(opChanges)
-	request := changesRequest{envelope: env, Instance: "linear", Cursor: cursorOrEmpty(nil)}
+	env := session.begin(wire.OpChanges)
+	request := wire.ChangesRequest{Envelope: env, Instance: "linear", Cursor: cursorOrEmpty(nil)}
 	if err := session.send(ctx, env, request, tune.unary); err != nil {
 		t.Fatalf("send changes: %v", err)
 	}
@@ -605,7 +606,7 @@ func TestNonZeroExitIsACrashNamingInstanceAndOp(t *testing.T) {
 	if !errors.As(err, &crash) {
 		t.Fatalf("error = %v (%T), want a *crashError", err, err)
 	}
-	if crash.instance != "linear" || crash.op != opChanges {
+	if crash.instance != "linear" || crash.op != wire.OpChanges {
 		t.Errorf("crash = %+v, want instance linear and op changes", crash)
 	}
 	if !strings.Contains(crash.Error(), "exit status 3") {

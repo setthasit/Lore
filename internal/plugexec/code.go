@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 type codeRepo struct {
@@ -16,13 +17,13 @@ type codeRepo struct {
 var _ lore.CodeRepo = (*codeRepo)(nil)
 
 func (r *codeRepo) Blame(ctx context.Context, path string, startLine, endLine int) ([]lore.BlameSpan, error) {
-	absolute, err := r.resolve(opBlame, path)
+	absolute, err := r.resolve(wire.OpBlame, path)
 	if err != nil {
 		return nil, err
 	}
 
-	frame, err := r.unary(ctx, r.manifest.Name, opBlame, r.tuning.unary, func(env envelope) any {
-		return blameRequest{envelope: env, Path: absolute, StartLine: startLine, EndLine: endLine}
+	frame, err := r.unary(ctx, r.manifest.Name, wire.OpBlame, r.tuning.unary, func(env wire.Envelope) any {
+		return wire.BlameRequest{Envelope: env, Path: absolute, StartLine: startLine, EndLine: endLine}
 	})
 	if err != nil {
 		return nil, err
@@ -31,13 +32,13 @@ func (r *codeRepo) Blame(ctx context.Context, path string, startLine, endLine in
 }
 
 func (r *codeRepo) Log(ctx context.Context, path string) ([]lore.CommitRef, error) {
-	absolute, err := r.resolve(opLog, path)
+	absolute, err := r.resolve(wire.OpLog, path)
 	if err != nil {
 		return nil, err
 	}
 
-	frame, err := r.unary(ctx, r.manifest.Name, opLog, r.tuning.unary, func(env envelope) any {
-		return pathRequest{envelope: env, Path: absolute}
+	frame, err := r.unary(ctx, r.manifest.Name, wire.OpLog, r.tuning.unary, func(env wire.Envelope) any {
+		return wire.PathRequest{Envelope: env, Path: absolute}
 	})
 	if err != nil {
 		return nil, err
@@ -46,13 +47,13 @@ func (r *codeRepo) Log(ctx context.Context, path string) ([]lore.CommitRef, erro
 }
 
 func (r *codeRepo) HasFileAtHEAD(ctx context.Context, path string) (bool, error) {
-	absolute, err := r.resolve(opHasFile, path)
+	absolute, err := r.resolve(wire.OpHasFile, path)
 	if err != nil {
 		return false, err
 	}
 
-	frame, err := r.unary(ctx, r.manifest.Name, opHasFile, r.tuning.unary, func(env envelope) any {
-		return pathRequest{envelope: env, Path: absolute}
+	frame, err := r.unary(ctx, r.manifest.Name, wire.OpHasFile, r.tuning.unary, func(env wire.Envelope) any {
+		return wire.PathRequest{Envelope: env, Path: absolute}
 	})
 	if err != nil {
 		return false, err

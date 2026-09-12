@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 // Open executes binary once for the manifest handshake; the plugin it returns
@@ -16,7 +17,7 @@ func Open(binary string, host lore.Host) (lore.Plugin, error) {
 
 func open(binary string, host lore.Host, tune tuning) (lore.Plugin, error) {
 	if binary == "" {
-		return nil, protocolError("", opManifest, nil, "no plugin binary to execute")
+		return nil, protocolError("", wire.OpManifest, nil, "no plugin binary to execute")
 	}
 
 	label := filepath.Base(binary)
@@ -61,14 +62,14 @@ func (e external) dial(ctx context.Context, instance string) (*session, error) {
 	}
 	if manifest.Name != e.manifest.Name || manifest.Kind != e.manifest.Kind {
 		session.abort()
-		return nil, protocolError(instance, opManifest, nil,
+		return nil, protocolError(instance, wire.OpManifest, nil,
 			"answered the handshake as %q (%s) after registering as %q (%s)",
 			manifest.Name, manifest.Kind, e.manifest.Name, e.manifest.Kind)
 	}
 	return session, nil
 }
 
-func (e external) unary(ctx context.Context, instance, op string, timeout time.Duration, build func(envelope) any) (*frame, error) {
+func (e external) unary(ctx context.Context, instance, op string, timeout time.Duration, build func(wire.Envelope) any) (*wire.Frame, error) {
 	session, err := e.dial(ctx, instance)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ type providerPlugin struct {
 
 func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, error) {
 	if !p.manifest.Capabilities.Declares(cfg.Capability) {
-		return nil, protocolError(cfg.Instance, opManifest, nil,
+		return nil, protocolError(cfg.Instance, wire.OpManifest, nil,
 			"plugin %q does not declare %s", p.manifest.Name, cfg.Capability)
 	}
 
@@ -128,7 +129,7 @@ func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, er
 	case lore.CapabilityComplete:
 		return &completer{call: call}, nil
 	default:
-		return nil, protocolError(cfg.Instance, opManifest, nil, "unknown capability %q", cfg.Capability)
+		return nil, protocolError(cfg.Instance, wire.OpManifest, nil, "unknown capability %q", cfg.Capability)
 	}
 }
 
@@ -138,7 +139,7 @@ type codePlugin struct {
 
 func (p *codePlugin) NewCode(cfg lore.CodeConfig) (lore.CodeRepo, error) {
 	if cfg.Root == "" {
-		return nil, protocolError(p.manifest.Name, opBlame, nil, "a code instance needs a clone root")
+		return nil, protocolError(p.manifest.Name, wire.OpBlame, nil, "a code instance needs a clone root")
 	}
 	return &codeRepo{external: p.withHost(cfg.Host), root: cfg.Root}, nil
 }

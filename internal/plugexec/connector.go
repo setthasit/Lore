@@ -6,6 +6,7 @@ import (
 	"iter"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 type connector struct {
@@ -27,9 +28,9 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			return
 		}
 
-		env := session.begin(opChanges)
-		request := changesRequest{
-			envelope: env,
+		env := session.begin(wire.OpChanges)
+		request := wire.ChangesRequest{
+			Envelope: env,
 			Instance: c.instance,
 			Config:   c.config,
 			Secrets:  c.secrets,
@@ -55,12 +56,12 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 				return
 			case frame.Batch == nil:
 				session.abort()
-				yield(lore.Batch{}, protocolError(c.instance, opChanges, nil,
+				yield(lore.Batch{}, protocolError(c.instance, wire.OpChanges, nil,
 					"answered changes with a frame carrying neither a batch nor done"))
 				return
 			case frame.Batch.Cursor == nil || len(*frame.Batch.Cursor) == 0:
 				session.abort()
-				yield(lore.Batch{}, protocolError(c.instance, opChanges, nil,
+				yield(lore.Batch{}, protocolError(c.instance, wire.OpChanges, nil,
 					"sent a batch of %d documents without a cursor, so committing it would checkpoint nothing",
 					len(frame.Batch.Docs)))
 				return
@@ -80,9 +81,9 @@ func (c *connector) MatchesRemote(remote string) bool {
 		return false
 	}
 
-	frame, err := c.unary(context.Background(), c.instance, opRemote, c.tuning.unary, func(env envelope) any {
-		return remoteRequest{
-			envelope: env,
+	frame, err := c.unary(context.Background(), c.instance, wire.OpRemote, c.tuning.unary, func(env wire.Envelope) any {
+		return wire.RemoteRequest{
+			Envelope: env,
 			Instance: c.instance,
 			Config:   c.config,
 			Secrets:  c.secrets,

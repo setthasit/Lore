@@ -12,6 +12,7 @@ import (
 
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/conform"
+	"github.com/setthasit/Lore/sdk/wire"
 )
 
 const fixturePath = "../../test/fixtures/plugins/pysource.py"
@@ -104,7 +105,7 @@ func TestAPluginKilledMidStreamResumesWithoutDuplicates(t *testing.T) {
 	if !errors.As(err, &crash) {
 		t.Fatalf("error = %v (%T), want a *crashError", err, err)
 	}
-	if crash.instance != "pysource" || crash.op != opChanges {
+	if crash.instance != "pysource" || crash.op != wire.OpChanges {
 		t.Errorf("crash = %+v, want instance pysource and op changes", crash)
 	}
 	if len(committed) != 2 {
