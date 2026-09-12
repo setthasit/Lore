@@ -6,6 +6,7 @@ package stdio
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,8 +29,8 @@ func Serve(plugin lore.Plugin) error {
 	return ServeStreams(plugin, os.Stdin, os.Stdout, os.Stderr)
 }
 
-// ServeStreams is Serve over streams the caller chooses; out carries answers
-// and errOut carries diagnostics and the plugin's own logs.
+// ServeStreams is Serve over streams the caller chooses; out carries answers and
+// errOut diagnostics and logs. Its read of in outlives the return until in closes.
 func ServeStreams(plugin lore.Plugin, in io.Reader, out, errOut io.Writer) error {
 	s := server{
 		plugin: plugin,
@@ -57,30 +58,31 @@ const (
 )
 
 func (s server) run(in io.Reader) error {
-	requests := bufio.NewScanner(in)
-	requests.Buffer(make([]byte, 0, readBufferBytes), wire.MaxLineBytes)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	for requests.Scan() {
-		line := requests.Bytes()
+	requests := make(chan request)
+	stop := make(chan struct{})
+	defer close(stop)
 
-		var env wire.Envelope
-		cause := json.Unmarshal(line, &env)
-		if cause != nil || env.ID == "" {
-			if err := s.reportUnusable(env.ID, cause); err != nil {
+	failed := make(chan error, 1)
+	go func() { failed <- readRequests(in, requests, stop, cancel) }()
+
+	for req := range requests {
+		switch {
+		case req.cause != nil || req.env.ID == "":
+			if err := s.reportUnusable(req.env.ID, req.cause); err != nil {
 				return err
 			}
-			continue
-		}
-
-		if err := s.respond(env, line); err != nil {
-			return err
-		}
-		if env.Op == wire.OpShutdown {
-			return nil
+		default:
+			err := s.respond(ctx, req.env, req.line)
+			if err != nil || req.env.Op == wire.OpShutdown {
+				return err
+			}
 		}
 	}
 
-	err := requests.Err()
+	err := <-failed
 	switch {
 	case errors.Is(err, bufio.ErrTooLong):
 		tooLong := fmt.Errorf("a request line exceeds the protocol's cap of %d bytes", wire.MaxLineBytes)
@@ -90,6 +92,31 @@ func (s server) run(in io.Reader) error {
 		return fmt.Errorf("reading requests: %w", err)
 	}
 	return nil
+}
+
+type request struct {
+	env   wire.Envelope
+	line  []byte
+	cause error
+}
+
+func readRequests(in io.Reader, requests chan<- request, stop <-chan struct{}, cancel context.CancelFunc) error {
+	defer close(requests)
+	defer cancel()
+
+	lines := bufio.NewScanner(in)
+	lines.Buffer(make([]byte, 0, readBufferBytes), wire.MaxLineBytes)
+
+	for lines.Scan() {
+		req := request{line: bytes.Clone(lines.Bytes())}
+		req.cause = json.Unmarshal(req.line, &req.env)
+		select {
+		case requests <- req:
+		case <-stop:
+			return nil
+		}
+	}
+	return lines.Err()
 }
 
 func (s server) reportUnusable(id string, cause error) error {
@@ -104,7 +131,7 @@ func (s server) reportUnusable(id string, cause error) error {
 	return s.answer(errorFrame(id, wire.KindInternal, message))
 }
 
-func (s server) respond(env wire.Envelope, line []byte) (err error) {
+func (s server) respond(ctx context.Context, env wire.Envelope, line []byte) (err error) {
 	defer func() {
 		if panicked := recover(); panicked != nil {
 			_, _ = fmt.Fprintf(s.errOut, "panic answering %q: %v\n%s", env.Op, panicked, debug.Stack())
@@ -123,7 +150,7 @@ func (s server) respond(env wire.Envelope, line []byte) (err error) {
 		manifest := s.plugin.Manifest()
 		return s.answer(wire.Frame{V: lore.APIVersion, ID: env.ID, OK: true, Manifest: &manifest})
 	case wire.OpChanges:
-		return s.streamChanges(env, line)
+		return s.streamChanges(ctx, env, line)
 	case wire.OpRemote:
 		return s.answer(s.remoteFrame(env, line))
 	case wire.OpShutdown:
@@ -132,7 +159,7 @@ func (s server) respond(env wire.Envelope, line []byte) (err error) {
 	return s.answer(errorFrame(env.ID, wire.KindInternal, fmt.Sprintf("the plugin implements no operation %q", env.Op)))
 }
 
-func (s server) streamChanges(env wire.Envelope, line []byte) error {
+func (s server) streamChanges(ctx context.Context, env wire.Envelope, line []byte) error {
 	var req wire.ChangesRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		return s.answer(errorFrame(env.ID, wire.KindInternal, fmt.Sprintf("unreadable %s request: %v", env.Op, err)))
@@ -170,7 +197,7 @@ func (s server) streamChanges(env wire.Envelope, line []byte) error {
 		return err
 	}
 
-	for batch, err := range connector.Changes(context.Background(), cursor) {
+	for batch, err := range connector.Changes(ctx, cursor) {
 		switch {
 		case err != nil:
 			return terminate(failureFrame(env.ID, err, wire.KindInternal, req.Secrets))
@@ -188,6 +215,9 @@ func (s server) streamChanges(env wire.Envelope, line []byte) error {
 			answered = true
 			return nil
 		}
+	}
+	if cause := ctx.Err(); cause != nil {
+		return terminate(failureFrame(env.ID, cause, wire.KindInternal, req.Secrets))
 	}
 	return terminate(wire.Frame{V: lore.APIVersion, ID: env.ID, Done: true})
 }
