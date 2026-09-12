@@ -36,6 +36,25 @@ type CodePlugin interface {
 	NewCode(CodeConfig) (CodeRepo, error)
 }
 
+// Failure carries a kind to the operator alongside Err; Kind is one of the
+// kinds sdk/wire publishes and the host reports any other value as internal.
+type Failure struct {
+	Kind string
+	Err  error
+}
+
+func (f Failure) Error() string {
+	switch {
+	case f.Err != nil:
+		return f.Err.Error()
+	case f.Kind == "":
+		return "the plugin reported a failure with no kind and no cause"
+	}
+	return "the plugin reported a " + f.Kind + " failure with no cause"
+}
+
+func (f Failure) Unwrap() error { return f.Err }
+
 // Provider satisfies Embedder, Completer or both, matching the capabilities its
 // manifest declares; the host asserts it against them.
 type Provider = any
