@@ -2,6 +2,7 @@ package plugexec
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"time"
 
@@ -131,6 +132,21 @@ func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, er
 	default:
 		return nil, protocolError(cfg.Instance, wire.OpManifest, nil, "unknown capability %q", cfg.Capability)
 	}
+}
+
+// json.RawMessage(nil) marshals as `null`, which a plugin's config decoder never has to handle.
+func emptyObject(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return raw
+}
+
+func secretsOrEmpty(secrets map[string]string) map[string]string {
+	if secrets == nil {
+		return map[string]string{}
+	}
+	return secrets
 }
 
 type codePlugin struct {

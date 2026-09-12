@@ -75,6 +75,13 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 	}
 }
 
+func cursorOrEmpty(cursor lore.Cursor) lore.Cursor {
+	if cursor == nil {
+		return lore.Cursor{}
+	}
+	return cursor
+}
+
 // GitHub's repository identifiers are case-insensitive and GitLab's are not, so only the plugin can compare them.
 func (c *connector) MatchesRemote(remote string) bool {
 	if remote == "" || !c.manifest.Capabilities.RepoRemotes {
