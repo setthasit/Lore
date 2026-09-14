@@ -63,7 +63,9 @@ func newPluginVerifyCommand(configPath *string, reg *registry.Registry) *cobra.C
 		Short: "Re-check the digest of an installed plugin and report it",
 		Long: "Re-hashes the installed binary and compares it with the digest recorded when it\n" +
 			"was installed, so a cached binary rewritten after installation is caught. It\n" +
-			"reports the exact binary that will run.",
+			"reports the exact binary that will run and, when a sources: entry uses the\n" +
+			"plugin, certifies it with that instance's configuration and secrets, so that\n" +
+			"instance's environment variables must be exported for the suite to run.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPluginVerify(cmd, args[0], *configPath, reg)
@@ -138,11 +140,47 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	out := cmd.OutOrStdout()
 	renderVerify(out, report)
 
-	certification, err := plugexec.Certify(name, report.Binary, reg.Host(name))
+	prepared, err := declaredPreparation(workspace, name, report.Binary)
 	if err != nil {
 		return err
 	}
-	return renderCertification(out, name, certification)
+
+	ident := prepared.instance.Ident()
+	certification, err := plugexec.Certify(ident, report.Binary, reg.Host(ident), prepared.config, prepared.secrets)
+	if err != nil {
+		return err
+	}
+	return renderCertification(out, prepared.instance, certification)
+}
+
+type preparedInstance struct {
+	instance registry.Instance
+	config   []byte
+	secrets  map[string]string
+}
+
+func declaredPreparation(workspace *plugindist.Workspace, name, binary string) (preparedInstance, error) {
+	declared, found := workspace.SourceUsing(name)
+	if !found {
+		return preparedInstance{instance: registry.Instance{Use: name}}, nil
+	}
+
+	in, err := di.InstanceOf(declared, sourcesKey)
+	if err != nil {
+		return preparedInstance{}, err
+	}
+	manifest, err := declaredManifest(binary)
+	if err != nil {
+		return preparedInstance{}, err
+	}
+	if manifest.Kind != lore.KindSource {
+		return preparedInstance{instance: registry.Instance{Use: name}}, nil
+	}
+	cfg, secrets, err := registry.Prepare(manifest, in, registry.OriginExternal(binary))
+	if err != nil {
+		return preparedInstance{}, err
+	}
+	return preparedInstance{instance: in, config: cfg, secrets: secrets}, nil
 }
 
 func declaredManifest(binary string) (lore.Manifest, error) {
@@ -218,21 +256,26 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  from:    %s", urlx.RedactIfUserinfo(report.LockedURL))
 }
 
-func renderCertification(out io.Writer, name string, certification plugexec.Certification) error {
+func renderCertification(out io.Writer, in registry.Instance, certification plugexec.Certification) error {
+	label := "conformance"
+	if field := in.Field; field != "" {
+		label += " (" + field + ")"
+	}
+
 	if certification.Kind != lore.KindSource {
-		printfln(out, "  conformance: not run — %s is a %s plugin, and the suite certifies sources",
-			name, certification.Kind)
+		printfln(out, "  %s: not run — %s is a %s plugin, and the suite certifies sources",
+			label, plugindist.Label(in.Use), certification.Kind)
 		return nil
 	}
 	if len(certification.Findings) == 0 {
-		printfln(out, "  conformance: passed")
+		printfln(out, "  %s: passed", label)
 		return nil
 	}
 
-	printfln(out, "  conformance: %s", plural(len(certification.Findings), "failure", "failures"))
+	printfln(out, "  %s: %s", label, plural(len(certification.Findings), "failure", "failures"))
 	for _, finding := range certification.Findings {
 		printfln(out, "    %s: %s", finding.Check, finding.Detail)
 	}
-	return internalerror.NewPreconditionError(
-		name+" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
+	return internalerror.NewPreconditionError(plugindist.Label(in.Use)+
+		" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
 }

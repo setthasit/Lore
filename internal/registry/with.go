@@ -14,7 +14,10 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-func prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
+func Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
+	if err := checkInstanceID(in); err != nil {
+		return nil, nil, err
+	}
 	if err := checkKeys(manifest, in); err != nil {
 		return nil, nil, err
 	}
@@ -29,6 +32,16 @@ func prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[st
 		return nil, nil, err
 	}
 	return cfg, secrets, nil
+}
+
+func checkInstanceID(in Instance) error {
+	id := in.Ident()
+	if instancePattern.MatchString(id) {
+		return nil
+	}
+	return internalerror.NewBadRequestError(fmt.Sprintf(
+		"%s has id %q; an instance id becomes the prefix of every document identity it produces, so it must start with a letter or digit and hold only letters, digits, - and _",
+		in.Field, id), nil)
 }
 
 func checkKeys(manifest lore.Manifest, in Instance) error {

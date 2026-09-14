@@ -66,7 +66,7 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 		return nil, err
 	}
 
-	cfg, secrets, err := prepare(manifest, in, origin)
+	cfg, secrets, err := Prepare(manifest, in, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 			"%s binds provider %q, which does not serve %s; %s", b.Field, id, b.Capability, serves(manifest)), nil)
 	}
 
-	cfg, secrets, err := prepare(manifest, in, origin)
+	cfg, secrets, err := Prepare(manifest, in, origin)
 	if err != nil {
 		return BuiltProvider{}, err
 	}
@@ -234,10 +234,8 @@ func (in Instance) Ident() string {
 
 func (r *Registry) resolve(in Instance, kind lore.Kind) (string, lore.Plugin, lore.Manifest, string, error) {
 	id := in.Ident()
-	if !instancePattern.MatchString(id) {
-		return "", nil, lore.Manifest{}, "", internalerror.NewBadRequestError(fmt.Sprintf(
-			"%s has id %q; an instance id becomes the prefix of every document identity it produces, so it must start with a letter or digit and hold only letters, digits, - and _",
-			in.Field, id), nil)
+	if err := checkInstanceID(in); err != nil {
+		return "", nil, lore.Manifest{}, "", err
 	}
 
 	entry, known := r.entries[in.Use]

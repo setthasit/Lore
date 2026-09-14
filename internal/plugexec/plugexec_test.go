@@ -951,7 +951,7 @@ func TestReadLineReturnsWholeFramesAcrossTheBufferBoundary(t *testing.T) {
 }
 
 func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
-	certification, err := Certify("served", servedBinary, testHost(nil))
+	certification, err := Certify("served", servedBinary, testHost(nil), nil, nil)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}
@@ -968,7 +968,7 @@ func TestCertifyReportsAStreamWhoseBatchOmitsACursor(t *testing.T) {
 	cursorless := batchLine(ticket("scripted", "1"), `null`)
 	binary := scripted(t, script(sourceManifest, cursorless+"\n"+doneLine, shutdownOK))
 
-	certification, err := Certify("scripted", binary, testHost(nil))
+	certification, err := Certify("scripted", binary, testHost(nil), nil, nil)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}

@@ -16,7 +16,7 @@ type Certification struct {
 }
 
 // The fixture is zero because a host cannot know a stranger's stream shape.
-func Certify(instance, binary string, host lore.Host) (Certification, error) {
+func Certify(instance, binary string, host lore.Host, config []byte, secrets map[string]string) (Certification, error) {
 	plugin, err := Open(binary, host)
 	if err != nil {
 		return Certification{}, err
@@ -28,7 +28,12 @@ func Certify(instance, binary string, host lore.Host) (Certification, error) {
 	}
 
 	newConnector := func() lore.Connector {
-		conn, err := source.NewSource(lore.SourceConfig{Instance: instance, Host: host})
+		conn, err := source.NewSource(lore.SourceConfig{
+			Instance: instance,
+			Config:   config,
+			Secrets:  secrets,
+			Host:     host,
+		})
 		if err != nil {
 			return failedConnector{name: instance, err: err}
 		}

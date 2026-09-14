@@ -65,6 +65,15 @@ func (w *Workspace) Plugins() []config.PluginDecl {
 	return w.config.Plugins
 }
 
+func (w *Workspace) SourceUsing(plugin string) (config.Instance, bool) {
+	for _, instance := range w.config.Sources {
+		if instance.Use == plugin {
+			return instance, true
+		}
+	}
+	return config.Instance{}, false
+}
+
 // A Fault is the store's refusal; an empty Binary with no Fault means nothing is installed.
 type Installation struct {
 	Binary string

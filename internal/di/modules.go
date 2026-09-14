@@ -248,18 +248,26 @@ func newProviderInstances(cfg *config.Config, reg *registry.Registry) (providerI
 func instances(declared []config.Instance, block string) ([]registry.Instance, error) {
 	out := make([]registry.Instance, 0, len(declared))
 	for _, decl := range declared {
-		with, err := decl.WithValues()
+		in, err := InstanceOf(decl, block)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, registry.Instance{
-			ID:    decl.ID,
-			Use:   decl.Use,
-			With:  with,
-			Field: block + "[" + decl.Ident() + "]",
-		})
+		out = append(out, in)
 	}
 	return out, nil
+}
+
+func InstanceOf(decl config.Instance, block string) (registry.Instance, error) {
+	with, err := decl.WithValues()
+	if err != nil {
+		return registry.Instance{}, err
+	}
+	return registry.Instance{
+		ID:    decl.ID,
+		Use:   decl.Use,
+		With:  with,
+		Field: block + "[" + decl.Ident() + "]",
+	}, nil
 }
 
 type clones []registry.LocalClone
