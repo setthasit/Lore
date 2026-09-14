@@ -148,9 +148,9 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 		{
 			name: "changes batch",
 			frame: wire.Frame{
-				V:    lore.APIVersion,
-				ID:   "p-3",
-				OK:   true,
+				V:  lore.APIVersion,
+				ID: "p-3",
+				OK: true,
 				Batch: &wire.Batch{
 					Docs: []lore.Document{{
 						ID:        lore.NewDocID("github-main", lore.DocTypeIssue, "7"),

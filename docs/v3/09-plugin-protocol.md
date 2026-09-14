@@ -124,10 +124,10 @@ is empty: the host refuses a frame whose `cursor` is absent or an empty object,
 naming the count of documents that would have been checkpointed by nothing, and
 aborts the stream. The host commits the documents, **then** persists that
 frame's cursor — the batch is the checkpoint unit, exactly as for in-process
-connectors ([04](04-connectors-and-sync.md)). A stream that emits documents and
-defers its cursor to `done` is malformed: it makes crash-safe resume
-unimplementable; the host refuses such a frame, naming the count of documents it
-carried, and aborts the stream.
+connectors ([04](04-connectors-and-sync.md)). Two frame shapes are refused
+outright, aborting the stream: `done` carrying a batch, whatever cursor that
+batch holds, since neither its documents nor its cursor could be committed;
+and a frame carrying neither a batch nor `done`, which the host cannot act on.
 
 ### matches_remote
 
@@ -289,12 +289,15 @@ after which the process stays alive and ready for the next request.
 One process per instance per round: the host spawns, sends `manifest`, runs
 the operation (a whole `changes` stream for a source, one call for a provider
 or code op), then `shutdown`; no state survives a round except what the plugin
-put in the cursor. Cancellation escalates in three steps — close stdin, then
-`SIGTERM`, then `SIGKILL` after a 5s grace — and a plugin MUST treat stdin EOF
-as cancel, abandoning in-flight work and exiting. The host MUST NOT assume a
-killed plugin flushed anything, which is safe because the last persisted
-cursor is authoritative: unflushed frames are work the next round redoes, and
-re-ingest is idempotent by `id`.
+put in the cursor. Teardown is bounded at every step, and the steps run in
+sequence: the host closes stdin and waits for the process to exit, then sends
+`SIGTERM` and waits again, then `SIGKILL`s. A round the host abandons instead
+of ending — a timeout, a protocol violation — skips the wait on stdin and goes
+straight to `SIGTERM`. A plugin MUST treat stdin EOF as cancel, abandoning
+in-flight work and exiting: it is the only path that spends none of those
+windows. The host MUST NOT assume a killed plugin flushed anything, which is
+safe because the last persisted cursor is authoritative: unflushed frames are
+work the next round redoes, and re-ingest is idempotent by `id`.
 
 | Operation | Timeout |
 |---|---|
@@ -302,10 +305,15 @@ re-ingest is idempotent by `id`.
 | `embed`, `blame`, `log`, `has_file`, `matches_remote` | 60s |
 | `complete` | 120s, matching the in-process `lore.CompleteTimeout` |
 | `changes` | none while frames keep arriving; 300s idle |
-| `shutdown` | 5s, then the escalation above |
+| `shutdown` | 5s to take the request, 5s to answer it, then the escalation above |
 
 The `changes` timeout is idle-only — a long backfill is legitimate, a silent
-process is not.
+process is not. Teardown windows add up rather than overlap: after the request
+is written, a plugin that answers `shutdown` and then ignores both stdin EOF
+and `SIGTERM` has up to 5s to answer, 5s to exit on the EOF and a 5s grace
+before the `SIGKILL` — up to about 15s — and a further 5s may pass reaping
+output pipes a descendant it left behind still holds. A round pays that per
+stalled instance, which is why exiting on EOF is a MUST rather than a courtesy.
 
 ## Secrets
 
@@ -334,6 +342,8 @@ controls are in [10](10-plugin-distribution.md).
 only a `lore.Connector` and the client shim that speaks this protocol is one —
 so one suite certifies compiled and external plugins identically. It asserts:
 
+- that a full stream reaches `done` at all, since a stream that never
+  completes leaves the rest nothing to judge;
 - resumability from a mid-stream cursor: replaying from batch *n*'s cursor
   yields batch *n+1* onward, no gap and no rewind;
 - idempotency: a full replay produces no duplicate documents, since upserts
@@ -343,8 +353,23 @@ so one suite certifies compiled and external plugins identically. It asserts:
 - full identity on every document — `id`, `source`, `type`, `url` present and
   `id` consistent with its three parts.
 
-`lore plugin verify` is this suite pointed at an installed binary — the same
-code path a third-party author runs locally before publishing.
+A check reports a verdict only on the material the stream gave it. A stream
+that carried no batch leaves the cursor check unreachable, one that carried no
+document leaves timestamps and identity unreachable, and idempotency is the
+exception: two empty streams compare equal, so it passes. Each unreachable
+check is reported by name with its reason, neither a pass nor a finding.
+
+Certifying a source no `sources:` entry configures is weaker again. Resume is
+excused below two batches, and a refusal to stream at all for want of
+configuration certifies nothing instead of failing, reported in the plugin's
+own words — cut to a quoted 120-byte excerpt, as every plugin string the host
+quotes back is. A defect committed once the stream is open stays a finding.
+
+`lore plugin verify` is this suite pointed at an installed binary: it opens the
+binary, reads the manifest the binary reports, prepares the declared instance's
+`with:` block and secrets against that manifest, and certifies under that
+instance's id — the same code path a third-party author runs locally before
+publishing.
 
 ## Non-goals
 

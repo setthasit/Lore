@@ -69,7 +69,9 @@ func noDocument(batches []lore.Batch) string {
 // Check runs the suite outside `go test`. newConnector is called once per
 // stream and must open the same unchanged source every time. A cancelled ctx
 // returns early with the checks it reached, so check ctx.Err() before trusting
-// the Result.
+// the Result. Pass nil for unconfigured: a non-nil predicate skips, rather
+// than faults, a stream that fails before its first batch with an error the
+// predicate accepts, and waives the resume check below two batches.
 func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixture, unconfigured func(error) bool) Result {
 	var result Result
 

@@ -47,8 +47,9 @@ Contract rules:
   (edit time / watermark). A source without true creation time sets
   `CreatedAt = UpdatedAt` and says so in its manifest summary.
 - **Conformance-tested.** Every connector passes `sdk/conform` — resumability,
-  idempotency, batch-cursor honesty, timestamps, full identity — which is also
-  the third-party certification suite ([08](08-extensibility.md)).
+  idempotency, batch-cursor honesty, timestamps, full identity, and a stream
+  that reaches its end — which is also the third-party certification suite
+  ([08](08-extensibility.md)).
 
 ### GitHubConnector (v1)
 

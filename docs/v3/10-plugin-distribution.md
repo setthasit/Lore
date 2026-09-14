@@ -194,12 +194,15 @@ Same shape as the rest of the surface ([06](06-interfaces-and-config.md#cli)):
 | `lore plugin verify <name>` | re-check the digest and run `sdk/conform` against the installed binary; when a `sources:` entry uses the plugin, the suite runs with that instance's configuration and secrets, so that instance's environment variables must be exported, and it streams that live source for real — twice in full, then once from a mid-stream cursor. Interrupting the command ends the run |
 | `lore plugin search <query>` | query the plugin index — a JSON file in a git repository |
 
-`verify` runs the same certification suite the official plugins run
-([09](09-plugin-protocol.md#conformance)); it needs only a `lore.Connector`, so
-it neither knows nor cares that the implementation is a subprocess. `search` is
-deliberately the last piece built: there is nothing to search until an
-ecosystem exists, and an index shipped before then is an empty file that still
-has to be maintained.
+`verify` runs the certification suite the official plugins run
+([09](09-plugin-protocol.md#conformance)) against the installed binary, and a
+plugin no `sources:` entry configures is certified on whatever its
+unconfigured stream can show rather than failed for the configuration it was
+never given.
+
+`search` is deliberately the last piece built: there is nothing to search
+until an ecosystem exists, and an index shipped before then is an empty file
+that still has to be maintained.
 
 Custom binaries, modelled on xcaddy:
 
