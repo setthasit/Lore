@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 const trustNotice = "installing a plugin runs that author's code on this machine, with your privileges" +
@@ -146,7 +148,8 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	}
 
 	ident := prepared.instance.Ident()
-	certification, err := plugexec.Certify(ident, report.Binary, reg.Host(ident), prepared.config, prepared.secrets)
+	certification, err := plugexec.Certify(
+		ident, report.Binary, reg.Host(ident), prepared.config, prepared.secrets, prepared.declared)
 	if err != nil {
 		return err
 	}
@@ -157,15 +160,16 @@ type preparedInstance struct {
 	instance registry.Instance
 	config   []byte
 	secrets  map[string]string
+	declared bool
 }
 
 func declaredPreparation(workspace *plugindist.Workspace, name, binary string) (preparedInstance, error) {
-	declared, found := workspace.SourceUsing(name)
+	decl, found := workspace.SourceUsing(name)
 	if !found {
 		return preparedInstance{instance: registry.Instance{Use: name}}, nil
 	}
 
-	in, err := di.InstanceOf(declared, sourcesKey)
+	in, err := di.InstanceOf(decl, sourcesKey)
 	if err != nil {
 		return preparedInstance{}, err
 	}
@@ -180,7 +184,7 @@ func declaredPreparation(workspace *plugindist.Workspace, name, binary string) (
 	if err != nil {
 		return preparedInstance{}, err
 	}
-	return preparedInstance{instance: in, config: cfg, secrets: secrets}, nil
+	return preparedInstance{instance: in, config: cfg, secrets: secrets, declared: true}, nil
 }
 
 func declaredManifest(binary string) (lore.Manifest, error) {
@@ -267,15 +271,45 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 			label, plugindist.Label(in.Use), certification.Kind)
 		return nil
 	}
-	if len(certification.Findings) == 0 {
-		printfln(out, "  %s: passed", label)
+	if len(certification.Ran) == 0 {
+		printfln(out, "  %s: not run — no check ran", label)
+		renderSkipped(out, certification.Skipped)
 		return nil
 	}
 
-	printfln(out, "  %s: %s", label, plural(len(certification.Findings), "failure", "failures"))
-	for _, finding := range certification.Findings {
-		printfln(out, "    %s: %s", finding.Check, finding.Detail)
+	reduced := len(certification.Skipped) > 0
+	suffix := ""
+	if reduced {
+		suffix = fmt.Sprintf(" on %d of %d checks",
+			len(certification.Ran), len(certification.Ran)+len(certification.Skipped))
 	}
-	return internalerror.NewPreconditionError(plugindist.Label(in.Use)+
-		" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
+
+	var refusal error
+	if len(certification.Findings) == 0 {
+		printfln(out, "  %s: passed%s", label, suffix)
+	} else {
+		printfln(out, "  %s: %s%s", label,
+			plural(len(certification.Findings), "failure", "failures"), suffix)
+		for _, finding := range certification.Findings {
+			printfln(out, "    %s: %s", finding.Check, finding.Detail)
+		}
+		refusal = internalerror.NewPreconditionError(plugindist.Label(in.Use)+
+			" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
+	}
+
+	if reduced {
+		printfln(out, "    ran:")
+		for _, check := range certification.Ran {
+			printfln(out, "      %s", check)
+		}
+		renderSkipped(out, certification.Skipped)
+	}
+	return refusal
+}
+
+func renderSkipped(out io.Writer, skipped []conform.Skip) {
+	printfln(out, "    skipped:")
+	for _, skip := range skipped {
+		printfln(out, "      %s — %s", skip.Check, skip.Reason)
+	}
 }

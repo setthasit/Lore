@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -951,7 +952,7 @@ func TestReadLineReturnsWholeFramesAcrossTheBufferBoundary(t *testing.T) {
 }
 
 func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
-	certification, err := Certify("served", servedBinary, testHost(nil), nil, nil)
+	certification, err := Certify("served", servedBinary, testHost(nil), nil, nil, false)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}
@@ -962,13 +963,23 @@ func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
 		t.Errorf("the served plugin drew %d findings, want none: %+v",
 			len(certification.Findings), certification.Findings)
 	}
+	if len(certification.Skipped) != 0 {
+		t.Errorf("the served plugin skipped %+v, want the full check set to run", certification.Skipped)
+	}
+	want := []conform.CheckName{
+		conform.CheckStream, conform.CheckCursors, conform.CheckTimestamps,
+		conform.CheckIdentity, conform.CheckIdempotent, conform.CheckResumable,
+	}
+	if !slices.Equal(certification.Ran, want) {
+		t.Errorf("ran = %v, want %v", certification.Ran, want)
+	}
 }
 
 func TestCertifyReportsAStreamWhoseBatchOmitsACursor(t *testing.T) {
 	cursorless := batchLine(ticket("scripted", "1"), `null`)
 	binary := scripted(t, script(sourceManifest, cursorless+"\n"+doneLine, shutdownOK))
 
-	certification, err := Certify("scripted", binary, testHost(nil), nil, nil)
+	certification, err := Certify("scripted", binary, testHost(nil), nil, nil, false)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}

@@ -2,6 +2,7 @@ package plugexec
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/setthasit/Lore/sdk"
@@ -11,12 +12,11 @@ import (
 // Certification is what the suite could say about one binary: a Kind other than
 // KindSource means it never ran, because the suite certifies sources.
 type Certification struct {
-	Kind     lore.Kind
-	Findings []conform.Finding
+	Kind lore.Kind
+	conform.Result
 }
 
-// The fixture is zero because a host cannot know a stranger's stream shape.
-func Certify(instance, binary string, host lore.Host, config []byte, secrets map[string]string) (Certification, error) {
+func Certify(instance, binary string, host lore.Host, config []byte, secrets map[string]string, declared bool) (Certification, error) {
 	plugin, err := Open(binary, host)
 	if err != nil {
 		return Certification{}, err
@@ -39,10 +39,22 @@ func Certify(instance, binary string, host lore.Host, config []byte, secrets map
 		}
 		return conn
 	}
+	var unconfigured func(error) bool
+	if !declared {
+		unconfigured = refusesWithoutConfiguration
+	}
 	return Certification{
-		Kind:     lore.KindSource,
-		Findings: conform.Check(newConnector, conform.Fixture{}),
+		Kind:   lore.KindSource,
+		Result: conform.Check(newConnector, conform.Fixture{}, unconfigured),
 	}, nil
+}
+
+func refusesWithoutConfiguration(err error) bool {
+	var refused *pluginError
+	if !errors.As(err, &refused) {
+		return false
+	}
+	return refused.kind == kindInvalidConfig || refused.kind == kindAuth
 }
 
 type failedConnector struct {

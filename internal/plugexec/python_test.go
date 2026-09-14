@@ -87,7 +87,7 @@ func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 func TestPythonFixturePassesTheHostSideCheck(t *testing.T) {
 	binary := pythonPlugin(t)
 
-	findings := conform.Check(func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{})
+	findings := conform.Check(func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{}, nil).Findings
 	for _, f := range findings {
 		t.Errorf("%s: %s", f.Check, f.Detail)
 	}

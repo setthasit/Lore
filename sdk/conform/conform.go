@@ -41,29 +41,152 @@ type Finding struct {
 	Detail string
 }
 
+// Result records one run: a finding is attributable only to a check in Ran.
+type Result struct {
+	Findings []Finding
+	Ran      []CheckName
+	Skipped  []Skip
+}
+
+type Skip struct {
+	Check  CheckName
+	Reason string
+}
+
+type stage struct {
+	check  CheckName
+	skip   func(batches []lore.Batch) string
+	assert func() []Finding
+}
+
+func noDocument(batches []lore.Batch) string {
+	if countDocs(batches) > 0 {
+		return ""
+	}
+	return "the stream carried no document to check"
+}
+
 // Check runs the suite outside `go test`. newConnector is called once per
 // stream and must open the same unchanged source every time.
-func Check(newConnector func() lore.Connector, fixture Fixture) []Finding {
-	conn := newConnector()
-	full, err := collect(conn, nil)
-	if err != nil {
-		return []Finding{{Check: CheckStream, Detail: fmt.Sprintf("%s: full stream: %v", conn.Name(), err)}}
-	}
-	if fixture.Docs > 0 {
-		if n := countDocs(full); n != fixture.Docs {
-			return []Finding{{Check: CheckStream, Detail: fmt.Sprintf(
-				"%s: full stream yielded %d documents in %d batches, fixture declares %d",
-				conn.Name(), n, len(full), fixture.Docs)}}
-		}
+func Check(newConnector func() lore.Connector, fixture Fixture, unconfigured func(error) bool) Result {
+	var result Result
+
+	source, full, failed := fullStream(newConnector, fixture)
+	stages := []stage{
+		{
+			check: CheckCursors,
+			skip: func(batches []lore.Batch) string {
+				if len(batches) > 0 {
+					return ""
+				}
+				return "the stream carried no batch whose cursor could be checked"
+			},
+			assert: func() []Finding { return batchCursors(full, "") },
+		},
+		{
+			check:  CheckTimestamps,
+			skip:   noDocument,
+			assert: func() []Finding { return timestamps(full) },
+		},
+		{
+			check:  CheckIdentity,
+			skip:   noDocument,
+			assert: func() []Finding { return identity(full, source) },
+		},
+		{
+			check:  CheckIdempotent,
+			assert: func() []Finding { return idempotent(newConnector, full) },
+		},
+		{
+			check: CheckResumable,
+			skip: func(batches []lore.Batch) string {
+				if unconfigured == nil || !tooShortToResume(batches) {
+					return ""
+				}
+				return fmt.Sprintf(
+					"the stream an unconfigured source gave has %d batch(es), and %s",
+					len(batches), resumeNeedsTwoBatches)
+			},
+			assert: func() []Finding { return resumable(newConnector, full, fixture) },
+		},
 	}
 
-	var findings []Finding
-	findings = append(findings, batchCursors(full, "")...)
-	findings = append(findings, timestamps(full)...)
-	findings = append(findings, identity(full, conn.Name())...)
-	findings = append(findings, idempotent(newConnector, full)...)
-	findings = append(findings, resumable(newConnector, full, fixture)...)
-	return findings
+	if failed != nil {
+		if unconfigured != nil && !failed.opened && unconfigured(failed.err) {
+			result.recordSkip(CheckStream, fmt.Sprintf(
+				"no configuration was supplied, and the source declined to stream without it: %v", failed.err))
+		} else {
+			result.recordRan(CheckStream, []Finding{failed.finding})
+		}
+		for _, s := range stages {
+			result.recordSkip(s.check, failed.reason)
+		}
+		return result
+	}
+
+	result.recordRan(CheckStream, nil)
+	for _, s := range stages {
+		if s.skip != nil {
+			if reason := s.skip(full); reason != "" {
+				result.recordSkip(s.check, reason)
+				continue
+			}
+		}
+		result.recordRan(s.check, s.assert())
+	}
+	return result
+}
+
+const resumeNeedsTwoBatches = "a mid-stream resume needs at least two"
+
+func tooShortToResume(batches []lore.Batch) bool { return len(batches) < 2 }
+
+func (r *Result) recordRan(check CheckName, findings []Finding) {
+	r.Ran = append(r.Ran, check)
+	r.Findings = append(r.Findings, findings...)
+}
+
+func (r *Result) recordSkip(check CheckName, reason string) {
+	r.Skipped = append(r.Skipped, Skip{Check: check, Reason: reason})
+}
+
+type streamFailure struct {
+	finding Finding
+	err     error
+	opened  bool
+	reason  string
+}
+
+func fullStream(newConnector func() lore.Connector, fixture Fixture) (string, []lore.Batch, *streamFailure) {
+	conn := newConnector()
+
+	full, delivered, err := collect(conn, nil)
+	if err != nil {
+		failed := &streamFailure{
+			finding: Finding{CheckStream, fmt.Sprintf("%s: full stream: %v", conn.Name(), err)},
+			err:     err,
+			opened:  delivered > 0,
+			reason:  "no complete batch reached the suite before the stream failed",
+		}
+		if failed.opened {
+			failed.reason = fmt.Sprintf(
+				"the stream broke after %d batch(es), so what it delivered is not a complete sample", delivered)
+		}
+		return conn.Name(), nil, failed
+	}
+
+	if fixture.Docs > 0 {
+		if n := countDocs(full); n != fixture.Docs {
+			return conn.Name(), nil, &streamFailure{
+				finding: Finding{CheckStream, fmt.Sprintf(
+					"%s: full stream yielded %d documents in %d batches, fixture declares %d",
+					conn.Name(), n, len(full), fixture.Docs)},
+				opened: true,
+				reason: "the stream it reads completed but disagreed with the declared document count",
+			}
+		}
+	}
+	return conn.Name(), full, nil
 }
 
 // Run is Check as a `go test` subtest tree; newConnector is called once per
@@ -77,16 +200,19 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 		t.Fatalf("fixture declares %d documents: the whole suite would hold vacuously", fixture.Docs)
 	}
 
-	findings := Check(newConnector, fixture)
-	for _, f := range findings {
+	result := Check(newConnector, fixture, nil)
+	for _, f := range result.Findings {
 		if f.Check == CheckStream {
 			t.Fatal(f.Detail)
 		}
 	}
 
-	for _, check := range []CheckName{CheckCursors, CheckTimestamps, CheckIdentity, CheckIdempotent, CheckResumable} {
+	for _, check := range result.Ran {
+		if check == CheckStream {
+			continue
+		}
 		t.Run(string(check), func(t *testing.T) {
-			for _, f := range findings {
+			for _, f := range result.Findings {
 				if f.Check == check {
 					t.Error(f.Detail)
 				}
@@ -159,7 +285,7 @@ func identity(batches []lore.Batch, source string) []Finding {
 }
 
 func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding {
-	second, err := collect(newConnector(), nil)
+	second, _, err := collect(newConnector(), nil)
 	if err != nil {
 		return []Finding{{CheckIdempotent, fmt.Sprintf("second full stream: %v", err)}}
 	}
@@ -181,9 +307,9 @@ func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding
 }
 
 func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) []Finding {
-	if len(full) < 2 {
+	if tooShortToResume(full) {
 		return []Finding{{CheckResumable, fmt.Sprintf(
-			"the full stream has %d batch(es): a mid-stream resume needs at least two", len(full))}}
+			"the full stream has %d batch(es): %s", len(full), resumeNeedsTwoBatches)}}
 	}
 	at := fixture.ResumeAfterBatch
 	if at < 0 || at >= len(full)-1 {
@@ -206,7 +332,7 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 	}
 
 	cursor := full[at].Cursor
-	resumed, err := collect(newConnector(), cursor)
+	resumed, _, err := collect(newConnector(), cursor)
 	if err != nil {
 		return []Finding{{CheckResumable, fmt.Sprintf("resuming from the batch %d cursor %v: %v", at, cursor, err)}}
 	}
@@ -245,15 +371,15 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 	return findings
 }
 
-func collect(c lore.Connector, cursor lore.Cursor) ([]lore.Batch, error) {
+func collect(c lore.Connector, cursor lore.Cursor) ([]lore.Batch, int, error) {
 	var batches []lore.Batch
 	for batch, err := range c.Changes(context.Background(), cursor) {
 		if err != nil {
-			return nil, err
+			return nil, len(batches), err
 		}
 		batches = append(batches, batch)
 	}
-	return batches, nil
+	return batches, len(batches), nil
 }
 
 func countDocs(batches []lore.Batch) int {
