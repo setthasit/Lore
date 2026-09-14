@@ -289,6 +289,14 @@ func waitForExit(pid int) error {
 	}
 }
 
+func signalOf(state *os.ProcessState) syscall.Signal {
+	status, ok := state.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return 0
+	}
+	return status.Signal()
+}
+
 func TestOpenReturnsOnlyTheKindTheManifestDeclares(t *testing.T) {
 	plugin := mustOpenScript(t, script(sourceManifest, shutdownOK))
 
@@ -448,6 +456,39 @@ func TestBatchWithoutACursorIsRefused(t *testing.T) {
 	}
 }
 
+func TestAFrameCarryingBothABatchAndDoneIsRefused(t *testing.T) {
+	tests := []struct {
+		name     string
+		docs     string
+		wantDocs int
+	}{
+		{name: "documents", docs: ticket("linear", "1"), wantDocs: 1},
+		{name: "an empty batch", docs: "", wantDocs: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := fmt.Sprintf(`changes emit {"v":1,"id":"$ID","done":true,"batch":{"docs":[%s],"cursor":{"after":"9"}}}`, tt.docs)
+			text := script(sourceManifest, frame, shutdownOK)
+
+			batches, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+			var pluginErr *pluginError
+			if !errors.As(err, &pluginErr) {
+				t.Fatalf("error = %v (%T), want a *pluginError", err, err)
+			}
+			if len(batches) != 0 {
+				t.Errorf("yielded %d batches from the frame that ends the stream, want none", len(batches))
+			}
+			if pluginErr.instance != "linear" || pluginErr.op != wire.OpChanges {
+				t.Errorf("error = %+v, want instance linear and op changes", pluginErr)
+			}
+			if want := fmt.Sprintf("%d documents", tt.wantDocs); !strings.Contains(pluginErr.message, want) {
+				t.Errorf("message %q does not report %s", pluginErr.message, want)
+			}
+		})
+	}
+}
+
 func TestStrayNonProtocolLineFailsTheOperation(t *testing.T) {
 	text := script(
 		sourceManifest,
@@ -465,6 +506,55 @@ func TestStrayNonProtocolLineFailsTheOperation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a protocol frame") {
 		t.Errorf("error %q does not name the stray line", err)
+	}
+}
+
+func TestAFieldTheHostCannotDecodeIsNamedWithTheShapeExpected(t *testing.T) {
+	text := script(
+		sourceManifest,
+		`changes emit {"v":1,"id":"$ID","batch":{"docs":"one ticket","cursor":{"after":"1"}}}`,
+		shutdownOK,
+	)
+
+	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+	if err == nil {
+		t.Fatal("a frame whose docs field holds a string was accepted")
+	}
+	for _, want := range []string{`"batch.docs"`, `"string"`, "an array", `"one ticket`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestAFrameThatIsNotAnObjectKeepsTheNotAFrameMessage(t *testing.T) {
+	text := script(sourceManifest, "changes raw [1,2]", shutdownOK)
+
+	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+	if err == nil {
+		t.Fatal("a JSON array on stdout was accepted as a frame")
+	}
+	if !strings.Contains(err.Error(), "not a protocol frame") {
+		t.Errorf("error %q does not say the line was not a frame", err)
+	}
+}
+
+func TestAFieldPathThePluginChoseIsBounded(t *testing.T) {
+	text := script(
+		sourceManifest,
+		fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[],"cursor":{"%s":1}}}`, strings.Repeat("K", 1<<20)),
+		shutdownOK,
+	)
+
+	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+	if err == nil {
+		t.Fatal("a cursor whose value is a number was accepted")
+	}
+	if got := len(err.Error()); got > 1000 {
+		t.Errorf("the error runs to %d bytes: a field path the plugin chose is not bounded", got)
+	}
+	if !strings.Contains(err.Error(), "batch.cursor.KKK") {
+		t.Errorf("error %q does not name the field path", err)
 	}
 }
 
@@ -567,6 +657,44 @@ func TestUnknownKindKeepsWhatThePluginClaimed(t *testing.T) {
 	}
 }
 
+func TestAnOversizedPluginMessageIsCutToTheExcerpt(t *testing.T) {
+	text := script(
+		sourceManifest,
+		fmt.Sprintf(`changes emit {"v":1,"id":"$ID","error":{"message":"%s","kind":"internal"}}`, strings.Repeat("A", 1<<20)),
+		shutdownOK,
+	)
+
+	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+	if err == nil {
+		t.Fatal("an error frame carrying a megabyte of text was not reported")
+	}
+	if want := strconv.Quote(strings.Repeat("A", 120)) + "…"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not carry the 120-character excerpt", err)
+	}
+	if strings.Contains(err.Error(), strings.Repeat("A", 121)) {
+		t.Errorf("the error reaching the operator runs to %d bytes, so the message was not cut", len(err.Error()))
+	}
+}
+
+func TestControlCharactersInAPluginMessageAreEscaped(t *testing.T) {
+	text := script(
+		sourceManifest,
+		`changes emit {"v":1,"id":"$ID","error":{"message":"\u001b[31mfake\u001b[0m\nlinear: all is well","kind":"internal"}}`,
+		shutdownOK,
+	)
+
+	_, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
+	if err == nil {
+		t.Fatal("an error frame carrying terminal control sequences was not reported")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b\n\r") {
+		t.Errorf("error %q reaches the operator with control characters intact", err)
+	}
+	if !strings.Contains(err.Error(), `\x1b[31mfake`) {
+		t.Errorf("error %q does not carry the escaped sequence", err)
+	}
+}
+
 func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 	text := script(
 		sourceManifest,
@@ -599,6 +727,86 @@ func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 	}
 	if state.ExitCode() != 0 {
 		t.Errorf("exit code = %d, want 0: the plugin answered shutdown and should not have been signalled", state.ExitCode())
+	}
+}
+
+func TestShutdownEscalatesToTheSignalThenTheKill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the rows turn on POSIX signals: there the host kills outright and no plugin can ignore that")
+	}
+
+	const (
+		answered  = 200 * time.Millisecond
+		signalled = 600 * time.Millisecond
+	)
+	tests := []struct {
+		name        string
+		steps       string
+		wantSignal  syscall.Signal
+		wantWaited  time.Duration
+		wantWarned  int
+		wantOutcome string
+	}{
+		{
+			name:  "a plugin that exits when its input closes is neither signalled nor warned about",
+			steps: shutdownOK,
+		},
+		{
+			name:        "a plugin that lingers exits on the termination signal",
+			steps:       shutdownOK + "\nshutdown sleep 5000",
+			wantSignal:  syscall.SIGTERM,
+			wantWaited:  answered,
+			wantWarned:  2,
+			wantOutcome: "exited on the termination signal",
+		},
+		{
+			name:        "a plugin deaf to the signal is killed after the grace window",
+			steps:       "shutdown ignoresignal\n" + shutdownOK + "\nshutdown sleep 5000",
+			wantSignal:  syscall.SIGKILL,
+			wantWaited:  answered + signalled,
+			wantWarned:  2,
+			wantOutcome: "was killed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tune := testTuning()
+			tune.shutdown = answered
+			tune.grace = signalled
+
+			logs := &syncBuffer{}
+			session, _, err := handshake(t.Context(), scripted(t, script(sourceManifest, tt.steps)), "linear", testHost(logs), tune)
+			if err != nil {
+				t.Fatalf("handshake: %v", err)
+			}
+			defer session.abort()
+
+			start := time.Now()
+			if err := session.close(t.Context()); err != nil {
+				t.Fatalf("close = %v, want nil: the plugin answered shutdown, so its answer stands", err)
+			}
+			elapsed := time.Since(start)
+
+			state := session.cmd.ProcessState
+			if state == nil {
+				t.Fatal("the process was never waited for: shutdown left it running")
+			}
+			if got := signalOf(state); got != tt.wantSignal {
+				t.Errorf("the plugin was ended by signal %v, want %v", got, tt.wantSignal)
+			}
+			if elapsed < tt.wantWaited {
+				t.Errorf("shutdown ended after %v, under the %v the host owes the plugin", elapsed, tt.wantWaited)
+			}
+
+			out := logs.String()
+			if got := strings.Count(out, "termination signal"); got != tt.wantWarned {
+				t.Errorf("the host logged %d lines about the termination signal, want %d:\n%s", got, tt.wantWarned, out)
+			}
+			if tt.wantOutcome != "" && !strings.Contains(out, tt.wantOutcome) {
+				t.Errorf("the host never recorded that the plugin %q:\n%s", tt.wantOutcome, out)
+			}
+		})
 	}
 }
 

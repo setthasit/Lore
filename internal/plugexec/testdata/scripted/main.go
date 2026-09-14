@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -92,6 +94,8 @@ func run(out *bufio.Writer, s step, req request) {
 	case "sleep":
 		ms, _ := strconv.Atoi(s.arg)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
+	case "ignoresignal":
+		signal.Ignore(syscall.SIGTERM)
 	case "exit":
 		code, _ := strconv.Atoi(s.arg)
 		_ = out.Flush()
