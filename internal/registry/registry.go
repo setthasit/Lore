@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/plugexec"
 	"github.com/setthasit/Lore/sdk"
 	"maps"
 )
@@ -102,8 +103,8 @@ func checkDeclaredName(declared string, m lore.Manifest) error {
 		return nil
 	}
 	return internalerror.NewBadRequestError(fmt.Sprintf(
-		"plugins[%s] is a binary whose manifest calls itself %q; rename the declaration or the plugin",
-		declared, m.Name), nil)
+		"plugins[%s] is a binary whose manifest calls itself %s; rename the declaration or the plugin",
+		declared, plugexec.Excerpt(m.Name)), nil)
 }
 
 func (r *Registry) register(origin string, plugins ...lore.Plugin) error {

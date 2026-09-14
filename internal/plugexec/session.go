@@ -114,7 +114,7 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 	if manifest.APIVersion != lore.APIVersion {
 		s.abort()
 		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
-			"plugin %q speaks api_version %d, host speaks %d", manifest.Name, manifest.APIVersion, lore.APIVersion)
+			"plugin %s speaks api_version %d, host speaks %d", Excerpt(manifest.Name), manifest.APIVersion, lore.APIVersion)
 	}
 	if manifest.Name == "" {
 		s.abort()
@@ -125,8 +125,8 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 	default:
 		s.abort()
 		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
-			"plugin %q declares kind %q, which is none of %q, %q, %q",
-			manifest.Name, manifest.Kind, lore.KindSource, lore.KindProvider, lore.KindCode)
+			"plugin %s declares kind %s, which is none of %q, %q, %q",
+			Excerpt(manifest.Name), Excerpt(string(manifest.Kind)), lore.KindSource, lore.KindProvider, lore.KindCode)
 	}
 	return s, manifest, nil
 }
@@ -178,7 +178,7 @@ func (s *session) await(ctx context.Context, env wire.Envelope, timeout time.Dur
 	if f.ID != env.ID {
 		s.abort()
 		return nil, protocolError(s.instance, env.Op, nil,
-			"answered %s with id %q, host sent id %q, so no frame can be correlated any more", env.Op, f.ID, env.ID)
+			"answered %s with id %s, host sent id %q, so no frame can be correlated any more", env.Op, Excerpt(f.ID), env.ID)
 	}
 	// Checked before the version below, so a plugin's own rejection message is not replaced by ours.
 	if f.Error != nil {
@@ -231,7 +231,8 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		if err := json.Unmarshal(r.line, &f); err != nil {
 			s.abort()
 			return nil, protocolError(s.instance, op, err,
-				"wrote a line on stdout that is not a protocol frame during %s: %s", op, excerpt(r.line))
+				"wrote a line on stdout that is not a protocol frame during %s: %s", op,
+				Excerpt(string(r.line[:min(len(r.line), excerptLimit+1)])))
 		}
 		return &f, nil
 	case <-timer.C:
@@ -381,14 +382,6 @@ func (s *session) crashed(op string, cause error) error {
 		detail += " though the process exited 0"
 	}
 	return &crashError{instance: s.instance, op: op, detail: detail, cause: waitErr}
-}
-
-func excerpt(line []byte) string {
-	const limit = 120
-	if len(line) > limit {
-		return strconv.Quote(string(line[:limit])) + "…"
-	}
-	return strconv.Quote(string(line))
 }
 
 type stderrLog struct {

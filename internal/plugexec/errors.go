@@ -2,6 +2,7 @@ package plugexec
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/setthasit/Lore/sdk/wire"
 )
@@ -26,7 +27,7 @@ type pluginError struct {
 }
 
 func (e *pluginError) Error() string {
-	return fmt.Sprintf("plugin instance %q: %s: %s (%s)", e.instance, e.op, e.message, e.kind)
+	return fmt.Sprintf("plugin instance %s: %s: %s (%s)", Excerpt(e.instance), e.op, e.message, e.kind)
 }
 
 func (e *pluginError) Unwrap() error { return e.cause }
@@ -40,19 +41,22 @@ type crashError struct {
 }
 
 func (e *crashError) Error() string {
-	return fmt.Sprintf("plugin instance %q crashed during %s: %s", e.instance, e.op, e.detail)
+	return fmt.Sprintf("plugin instance %s crashed during %s: %s", Excerpt(e.instance), e.op, e.detail)
 }
 
 func (e *crashError) Unwrap() error { return e.cause }
 
 func fromWire(instance, op string, reported *wire.Error) *pluginError {
 	kind := errorKind(reported.Kind)
-	message := reported.Message
+	message := ""
+	if reported.Message != "" {
+		message = Excerpt(reported.Message)
+	}
 	switch kind {
 	case kindInvalidConfig, kindAuth, kindRateLimit, kindNotFound, kindInternal:
 	default:
 		if reported.Kind != "" {
-			message = fmt.Sprintf("%s (plugin reported unknown kind %q)", message, reported.Kind)
+			message = fmt.Sprintf("%s (plugin reported unknown kind %s)", message, Excerpt(reported.Kind))
 		}
 		kind = kindInternal
 	}
@@ -76,4 +80,13 @@ func protocolError(instance, op string, cause error, format string, args ...any)
 		message:  fmt.Sprintf(format, args...),
 		cause:    cause,
 	}
+}
+
+const excerptLimit = 120
+
+func Excerpt(text string) string {
+	if len(text) > excerptLimit {
+		return strconv.Quote(text[:excerptLimit]) + "…"
+	}
+	return strconv.Quote(text)
 }

@@ -63,8 +63,8 @@ func (e external) dial(ctx context.Context, instance string) (*session, error) {
 	if manifest.Name != e.manifest.Name || manifest.Kind != e.manifest.Kind {
 		session.abort()
 		return nil, protocolError(instance, wire.OpManifest, nil,
-			"answered the handshake as %q (%s) after registering as %q (%s)",
-			manifest.Name, manifest.Kind, e.manifest.Name, e.manifest.Kind)
+			"answered the handshake as %s (%s) after registering as %s (%s)",
+			Excerpt(manifest.Name), Excerpt(string(manifest.Kind)), Excerpt(e.manifest.Name), Excerpt(string(e.manifest.Kind)))
 	}
 	return session, nil
 }
@@ -113,7 +113,7 @@ type providerPlugin struct {
 func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, error) {
 	if !p.manifest.Capabilities.Declares(cfg.Capability) {
 		return nil, protocolError(cfg.Instance, wire.OpManifest, nil,
-			"plugin %q does not declare %s", p.manifest.Name, cfg.Capability)
+			"plugin %s does not declare %s", Excerpt(p.manifest.Name), cfg.Capability)
 	}
 
 	call := call{
