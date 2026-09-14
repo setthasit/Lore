@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -230,9 +231,15 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		var f wire.Frame
 		if err := json.Unmarshal(r.line, &f); err != nil {
 			s.abort()
+			shown := Excerpt(string(r.line[:min(len(r.line), excerptLimit+1)]))
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Field != "" {
+				return nil, protocolError(s.instance, op, err,
+					"answered %s with a frame whose %s field holds a JSON %s where the host expects %s: %s", op,
+					Excerpt(typeErr.Field), Excerpt(typeErr.Value), wireShape(typeErr.Type), shown)
+			}
 			return nil, protocolError(s.instance, op, err,
-				"wrote a line on stdout that is not a protocol frame during %s: %s", op,
-				Excerpt(string(r.line[:min(len(r.line), excerptLimit+1)])))
+				"wrote a line on stdout that is not a protocol frame during %s: %s", op, shown)
 		}
 		return &f, nil
 	case <-timer.C:
@@ -241,6 +248,25 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 	case <-ctx.Done():
 		s.abort()
 		return nil, protocolError(s.instance, op, ctx.Err(), "cancelled while waiting for %s", op)
+	}
+}
+
+func wireShape(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Map, reflect.Struct:
+		return "an object"
+	case reflect.Slice, reflect.Array:
+		return "an array"
+	case reflect.String:
+		return "a string"
+	case reflect.Bool:
+		return "a bool"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return "a number"
+	default:
+		return t.String()
 	}
 }
 
