@@ -30,7 +30,7 @@ func publishRelease(t *testing.T, workspace *Workspace, coord Coordinate) {
 	workspace.installer = fakeInstaller(fake, workspace.store)
 }
 
-func stubHandshake(binary string) (lore.Manifest, error) {
+func stubHandshake(_ context.Context, binary string) (lore.Manifest, error) {
 	return lore.Manifest{Name: filepath.Base(binary), Kind: lore.KindSource, APIVersion: 1}, nil
 }
 
@@ -41,7 +41,7 @@ type countingHandshake struct {
 	binary string
 }
 
-func (h *countingHandshake) answer(binary string) (lore.Manifest, error) {
+func (h *countingHandshake) answer(_ context.Context, binary string) (lore.Manifest, error) {
 	h.calls++
 	h.binary = binary
 	return h.manifest, nil

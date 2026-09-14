@@ -183,7 +183,7 @@ func assertOwnLogsOnly(t *testing.T, want ...instanceLog) {
 
 func openScript(t *testing.T, text string) (lore.Plugin, error) {
 	t.Helper()
-	return open(scripted(t, text), testHost(nil), testTuning())
+	return open(t.Context(), scripted(t, text), testHost(nil), testTuning())
 }
 
 func mustOpenScript(t *testing.T, text string) lore.Plugin {
@@ -198,7 +198,7 @@ func mustOpenScript(t *testing.T, text string) lore.Plugin {
 func openWithLogs(t *testing.T, text string) (lore.Plugin, *syncBuffer) {
 	t.Helper()
 	logs := &syncBuffer{}
-	plugin, err := open(scripted(t, text), testHost(logs), testTuning())
+	plugin, err := open(t.Context(), scripted(t, text), testHost(logs), testTuning())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -783,7 +783,7 @@ func TestAnIdleStreamTimesOut(t *testing.T) {
 		shutdownOK,
 	)
 
-	plugin, err := open(scripted(t, text), testHost(nil), tune)
+	plugin, err := open(t.Context(), scripted(t, text), testHost(nil), tune)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -952,7 +952,11 @@ func TestReadLineReturnsWholeFramesAcrossTheBufferBoundary(t *testing.T) {
 }
 
 func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
-	certification, err := Certify("served", servedBinary, testHost(nil), nil, nil, false)
+	plugin, err := Open(t.Context(), servedBinary, testHost(nil))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	certification, err := Certify(t.Context(), "served", plugin, testHost(nil), nil, nil, false)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}
@@ -979,7 +983,11 @@ func TestCertifyReportsAStreamWhoseBatchOmitsACursor(t *testing.T) {
 	cursorless := batchLine(ticket("scripted", "1"), `null`)
 	binary := scripted(t, script(sourceManifest, cursorless+"\n"+doneLine, shutdownOK))
 
-	certification, err := Certify("scripted", binary, testHost(nil), nil, nil, false)
+	plugin, err := Open(t.Context(), binary, testHost(nil))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	certification, err := Certify(t.Context(), "scripted", plugin, testHost(nil), nil, nil, false)
 	if err != nil {
 		t.Fatalf("Certify: %v", err)
 	}
@@ -993,7 +1001,7 @@ func TestCertifyReportsAStreamWhoseBatchOmitsACursor(t *testing.T) {
 
 func servedSource(t *testing.T) lore.Connector {
 	t.Helper()
-	plugin, err := open(servedBinary, testHost(nil), testTuning())
+	plugin, err := open(t.Context(), servedBinary, testHost(nil), testTuning())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,7 +59,7 @@ func sourceArgument(reg *registry.Registry) []string {
 }
 
 func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *registry.Registry) error {
-	manifest, compiledIn, err := sourceToAdd(args, configPath, reg)
+	manifest, compiledIn, err := sourceToAdd(cmd.Context(), args, configPath, reg)
 	if err != nil {
 		return err
 	}
@@ -102,7 +103,7 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	return nil
 }
 
-func sourceToAdd(args []string, configPath string, reg *registry.Registry) (lore.Manifest, bool, error) {
+func sourceToAdd(ctx context.Context, args []string, configPath string, reg *registry.Registry) (lore.Manifest, bool, error) {
 	if len(args) > 0 {
 		if manifest, known := reg.Manifest(args[0]); known && manifest.Kind == lore.KindSource {
 			return manifest, true, nil
@@ -114,20 +115,20 @@ func sourceToAdd(args []string, configPath string, reg *registry.Registry) (lore
 		return lore.Manifest{}, false, err
 	}
 	if len(args) > 0 {
-		manifest, err := installedSource(workspace, args[0])
+		manifest, err := installedSource(ctx, workspace, args[0])
 		if err != nil || manifest.Kind == lore.KindSource {
 			return manifest, false, err
 		}
 	}
-	return lore.Manifest{}, false, noSourceToAdd(args, addableSources(workspace, reg))
+	return lore.Manifest{}, false, noSourceToAdd(args, addableSources(ctx, workspace, reg))
 }
 
-func installedSource(workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
+func installedSource(ctx context.Context, workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
 	decl, declared := workspace.Declaration(name)
 	if !declared {
 		return lore.Manifest{}, nil
 	}
-	manifest, err := workspace.Manifest(decl)
+	manifest, err := workspace.Manifest(ctx, decl)
 	if err != nil {
 		return lore.Manifest{}, err
 	}
@@ -137,13 +138,13 @@ func installedSource(workspace *plugindist.Workspace, name string) (lore.Manifes
 	return manifest, nil
 }
 
-func addableSources(workspace *plugindist.Workspace, reg *registry.Registry) string {
+func addableSources(ctx context.Context, workspace *plugindist.Workspace, reg *registry.Registry) string {
 	names := reg.Names(lore.KindSource)
 	for _, decl := range workspace.Plugins() {
 		if _, compiled := reg.Manifest(decl.Name); compiled {
 			continue
 		}
-		if manifest, err := installedSource(workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
+		if manifest, err := installedSource(ctx, workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
 			names = append(names, decl.Name)
 		}
 	}

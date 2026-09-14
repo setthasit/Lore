@@ -67,11 +67,13 @@ func noDocument(batches []lore.Batch) string {
 }
 
 // Check runs the suite outside `go test`. newConnector is called once per
-// stream and must open the same unchanged source every time.
-func Check(newConnector func() lore.Connector, fixture Fixture, unconfigured func(error) bool) Result {
+// stream and must open the same unchanged source every time. A cancelled ctx
+// returns early with the checks it reached, so check ctx.Err() before trusting
+// the Result.
+func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixture, unconfigured func(error) bool) Result {
 	var result Result
 
-	source, full, failed := fullStream(newConnector, fixture)
+	source, full, failed := fullStream(ctx, newConnector, fixture)
 	stages := []stage{
 		{
 			check: CheckCursors,
@@ -95,7 +97,7 @@ func Check(newConnector func() lore.Connector, fixture Fixture, unconfigured fun
 		},
 		{
 			check:  CheckIdempotent,
-			assert: func() []Finding { return idempotent(newConnector, full) },
+			assert: func() []Finding { return idempotent(ctx, newConnector, full) },
 		},
 		{
 			check: CheckResumable,
@@ -107,7 +109,7 @@ func Check(newConnector func() lore.Connector, fixture Fixture, unconfigured fun
 					"the stream an unconfigured source gave has %d batch(es), and %s",
 					len(batches), resumeNeedsTwoBatches)
 			},
-			assert: func() []Finding { return resumable(newConnector, full, fixture) },
+			assert: func() []Finding { return resumable(ctx, newConnector, full, fixture) },
 		},
 	}
 
@@ -126,6 +128,9 @@ func Check(newConnector func() lore.Connector, fixture Fixture, unconfigured fun
 
 	result.recordRan(CheckStream, nil)
 	for _, s := range stages {
+		if ctx.Err() != nil {
+			return result
+		}
 		if s.skip != nil {
 			if reason := s.skip(full); reason != "" {
 				result.recordSkip(s.check, reason)
@@ -157,10 +162,10 @@ type streamFailure struct {
 	reason  string
 }
 
-func fullStream(newConnector func() lore.Connector, fixture Fixture) (string, []lore.Batch, *streamFailure) {
+func fullStream(ctx context.Context, newConnector func() lore.Connector, fixture Fixture) (string, []lore.Batch, *streamFailure) {
 	conn := newConnector()
 
-	full, delivered, err := collect(conn, nil)
+	full, delivered, err := collect(ctx, conn, nil)
 	if err != nil {
 		failed := &streamFailure{
 			finding: Finding{CheckStream, fmt.Sprintf("%s: full stream: %v", conn.Name(), err)},
@@ -200,7 +205,7 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 		t.Fatalf("fixture declares %d documents: the whole suite would hold vacuously", fixture.Docs)
 	}
 
-	result := Check(newConnector, fixture, nil)
+	result := Check(t.Context(), newConnector, fixture, nil)
 	for _, f := range result.Findings {
 		if f.Check == CheckStream {
 			t.Fatal(f.Detail)
@@ -284,8 +289,8 @@ func identity(batches []lore.Batch, source string) []Finding {
 	return findings
 }
 
-func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding {
-	second, _, err := collect(newConnector(), nil)
+func idempotent(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch) []Finding {
+	second, _, err := collect(ctx, newConnector(), nil)
 	if err != nil {
 		return []Finding{{CheckIdempotent, fmt.Sprintf("second full stream: %v", err)}}
 	}
@@ -306,7 +311,7 @@ func idempotent(newConnector func() lore.Connector, full []lore.Batch) []Finding
 	return nil
 }
 
-func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) []Finding {
+func resumable(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) []Finding {
 	if tooShortToResume(full) {
 		return []Finding{{CheckResumable, fmt.Sprintf(
 			"the full stream has %d batch(es): %s", len(full), resumeNeedsTwoBatches)}}
@@ -332,7 +337,7 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 	}
 
 	cursor := full[at].Cursor
-	resumed, _, err := collect(newConnector(), cursor)
+	resumed, _, err := collect(ctx, newConnector(), cursor)
 	if err != nil {
 		return []Finding{{CheckResumable, fmt.Sprintf("resuming from the batch %d cursor %v: %v", at, cursor, err)}}
 	}
@@ -371,9 +376,9 @@ func resumable(newConnector func() lore.Connector, full []lore.Batch, fixture Fi
 	return findings
 }
 
-func collect(c lore.Connector, cursor lore.Cursor) ([]lore.Batch, int, error) {
+func collect(ctx context.Context, c lore.Connector, cursor lore.Cursor) ([]lore.Batch, int, error) {
 	var batches []lore.Batch
-	for batch, err := range c.Changes(context.Background(), cursor) {
+	for batch, err := range c.Changes(ctx, cursor) {
 		if err != nil {
 			return nil, len(batches), err
 		}

@@ -1,6 +1,7 @@
 package di
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/setthasit/Lore/internal/config"
@@ -44,7 +45,7 @@ func newExternals(cfg *config.Config, dir WorkspaceDir, compiled registry.Compil
 			return externals{}, err
 		}
 
-		plugin, err := plugexec.Open(binary, compiled.Host(decl.Name))
+		plugin, err := plugexec.Open(context.Background(), binary, compiled.Host(decl.Name))
 		if err != nil {
 			return externals{}, internalerror.NewPreconditionError(fmt.Sprintf(
 				"plugins[%s] does not answer the plugin protocol at %s: %s", decl.Name, binary, err.Error()), err)

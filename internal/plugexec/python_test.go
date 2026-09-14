@@ -50,7 +50,7 @@ func quote(path string) string {
 
 func pythonSource(t *testing.T, binary, config string) lore.Connector {
 	t.Helper()
-	plugin, err := open(binary, testHost(nil), testTuning())
+	plugin, err := open(t.Context(), binary, testHost(nil), testTuning())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -73,7 +73,7 @@ func pythonSource(t *testing.T, binary, config string) lore.Connector {
 func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 	binary := pythonPlugin(t)
 
-	plugin, err := open(binary, testHost(nil), testTuning())
+	plugin, err := open(t.Context(), binary, testHost(nil), testTuning())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestPythonFixturePassesTheConformanceSuite(t *testing.T) {
 func TestPythonFixturePassesTheHostSideCheck(t *testing.T) {
 	binary := pythonPlugin(t)
 
-	findings := conform.Check(func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{}, nil).Findings
+	findings := conform.Check(t.Context(), func() lore.Connector { return pythonSource(t, binary, `{}`) }, conform.Fixture{}, nil).Findings
 	for _, f := range findings {
 		t.Errorf("%s: %s", f.Check, f.Detail)
 	}

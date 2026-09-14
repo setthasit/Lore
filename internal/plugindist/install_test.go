@@ -401,7 +401,7 @@ func TestInstallRefusedByTheHandshakeLeavesNothingCached(t *testing.T) {
 
 	scene := newScene(t)
 	lock, first := scene.installed(t)
-	refuse := func(string) (lore.Manifest, error) {
+	refuse := func(context.Context, string) (lore.Manifest, error) {
 		return lore.Manifest{}, errors.New("wrote a line on stdout that is not a protocol frame")
 	}
 

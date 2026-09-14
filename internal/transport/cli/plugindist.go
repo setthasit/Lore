@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -67,7 +68,9 @@ func newPluginVerifyCommand(configPath *string, reg *registry.Registry) *cobra.C
 			"was installed, so a cached binary rewritten after installation is caught. It\n" +
 			"reports the exact binary that will run and, when a sources: entry uses the\n" +
 			"plugin, certifies it with that instance's configuration and secrets, so that\n" +
-			"instance's environment variables must be exported for the suite to run.",
+			"instance's environment variables must be exported for the suite to run. The\n" +
+			"suite streams that live source for real — twice in full, then once from a\n" +
+			"mid-stream cursor — and interrupting the command ends the run.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPluginVerify(cmd, args[0], *configPath, reg)
@@ -91,7 +94,7 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 		return nil
 	}
 
-	renderInstalls(out, configPath, results)
+	renderInstalls(cmd.Context(), out, configPath, results)
 	return nil
 }
 
@@ -142,14 +145,18 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	out := cmd.OutOrStdout()
 	renderVerify(out, report)
 
-	prepared, err := declaredPreparation(workspace, name, report.Binary)
+	plugin, err := openDeclared(cmd.Context(), report.Binary)
+	if err != nil {
+		return err
+	}
+	prepared, err := declaredPreparation(workspace, name, report.Binary, plugin.Manifest())
 	if err != nil {
 		return err
 	}
 
 	ident := prepared.instance.Ident()
-	certification, err := plugexec.Certify(
-		ident, report.Binary, reg.Host(ident), prepared.config, prepared.secrets, prepared.declared)
+	certification, err := plugexec.Certify(cmd.Context(),
+		ident, plugin, reg.Host(ident), prepared.config, prepared.secrets, prepared.declared)
 	if err != nil {
 		return err
 	}
@@ -163,17 +170,13 @@ type preparedInstance struct {
 	declared bool
 }
 
-func declaredPreparation(workspace *plugindist.Workspace, name, binary string) (preparedInstance, error) {
+func declaredPreparation(workspace *plugindist.Workspace, name, binary string, manifest lore.Manifest) (preparedInstance, error) {
 	decl, found := workspace.SourceUsing(name)
 	if !found {
 		return preparedInstance{instance: registry.Instance{Use: name}}, nil
 	}
 
 	in, err := di.InstanceOf(decl, sourcesKey)
-	if err != nil {
-		return preparedInstance{}, err
-	}
-	manifest, err := declaredManifest(binary)
 	if err != nil {
 		return preparedInstance{}, err
 	}
@@ -187,22 +190,26 @@ func declaredPreparation(workspace *plugindist.Workspace, name, binary string) (
 	return preparedInstance{instance: in, config: cfg, secrets: secrets, declared: true}, nil
 }
 
-func declaredManifest(binary string) (lore.Manifest, error) {
-	plugin, err := plugexec.Open(binary, lore.Host{Log: di.DiagnosticLogger()})
+func openDeclared(ctx context.Context, binary string) (lore.Plugin, error) {
+	return plugexec.Open(ctx, binary, lore.Host{Log: di.DiagnosticLogger()})
+}
+
+func declaredManifest(ctx context.Context, binary string) (lore.Manifest, error) {
+	plugin, err := openDeclared(ctx, binary)
 	if err != nil {
 		return lore.Manifest{}, err
 	}
 	return plugin.Manifest(), nil
 }
 
-func renderInstalls(out io.Writer, configPath string, results []plugindist.Result) {
+func renderInstalls(ctx context.Context, out io.Writer, configPath string, results []plugindist.Result) {
 	workspace, openErr := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
 	for _, result := range results {
 		renderInstall(out, result)
 
 		manifest, err := lore.Manifest{}, openErr
 		if err == nil {
-			manifest, err = installedManifest(workspace, configPath, result.Name)
+			manifest, err = installedManifest(ctx, workspace, configPath, result.Name)
 		}
 		if err != nil {
 			printfln(out, "  manifest: unreadable — %s", internalerror.MessageOf(err))
@@ -213,13 +220,13 @@ func renderInstalls(out io.Writer, configPath string, results []plugindist.Resul
 	}
 }
 
-func installedManifest(workspace *plugindist.Workspace, configPath, name string) (lore.Manifest, error) {
+func installedManifest(ctx context.Context, workspace *plugindist.Workspace, configPath, name string) (lore.Manifest, error) {
 	decl, declared := workspace.Declaration(name)
 	if !declared {
 		return lore.Manifest{}, internalerror.NewPreconditionError(
 			plugindist.Label(name)+" is installed, but "+configPath+" no longer declares it", nil)
 	}
-	return workspace.Manifest(decl)
+	return workspace.Manifest(ctx, decl)
 }
 
 func renderInstall(out io.Writer, result plugindist.Result) {

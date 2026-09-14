@@ -97,7 +97,7 @@ func (w *Workspace) Installed(decl config.PluginDecl) (Installation, error) {
 	}
 }
 
-func (w *Workspace) Manifest(decl config.PluginDecl) (lore.Manifest, error) {
+func (w *Workspace) Manifest(ctx context.Context, decl config.PluginDecl) (lore.Manifest, error) {
 	coord, err := Resolve(w.dir, decl)
 	if err != nil {
 		return lore.Manifest{}, err
@@ -114,7 +114,7 @@ func (w *Workspace) Manifest(decl config.PluginDecl) (lore.Manifest, error) {
 	if w.handshake == nil {
 		return lore.Manifest{}, noHandshake(coord.Name, "a manifest lookup")
 	}
-	manifest, err := w.handshake(report.Binary)
+	manifest, err := w.handshake(ctx, report.Binary)
 	if err != nil {
 		return lore.Manifest{}, protocolRefusal(coord.Name, report.Binary, err)
 	}

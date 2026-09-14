@@ -12,17 +12,16 @@ import (
 
 // Open executes binary once for the manifest handshake; the plugin it returns
 // implements only the SDK interface its manifest's kind names.
-func Open(binary string, host lore.Host) (lore.Plugin, error) {
-	return open(binary, host, defaultTuning())
+func Open(ctx context.Context, binary string, host lore.Host) (lore.Plugin, error) {
+	return open(ctx, binary, host, defaultTuning())
 }
 
-func open(binary string, host lore.Host, tune tuning) (lore.Plugin, error) {
+func open(ctx context.Context, binary string, host lore.Host, tune tuning) (lore.Plugin, error) {
 	if binary == "" {
 		return nil, protocolError("", wire.OpManifest, nil, "no plugin binary to execute")
 	}
 
 	label := filepath.Base(binary)
-	ctx := context.Background()
 	session, manifest, err := handshake(ctx, binary, label, host, tune)
 	if err != nil {
 		return nil, err

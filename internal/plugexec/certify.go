@@ -3,6 +3,7 @@ package plugexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 
 	"github.com/setthasit/Lore/sdk"
@@ -16,12 +17,7 @@ type Certification struct {
 	conform.Result
 }
 
-func Certify(instance, binary string, host lore.Host, config []byte, secrets map[string]string, declared bool) (Certification, error) {
-	plugin, err := Open(binary, host)
-	if err != nil {
-		return Certification{}, err
-	}
-
+func Certify(ctx context.Context, instance string, plugin lore.Plugin, host lore.Host, config []byte, secrets map[string]string, declared bool) (Certification, error) {
 	source, ok := plugin.(lore.SourcePlugin)
 	if !ok {
 		return Certification{Kind: plugin.Manifest().Kind}, nil
@@ -43,10 +39,12 @@ func Certify(instance, binary string, host lore.Host, config []byte, secrets map
 	if !declared {
 		unconfigured = refusesWithoutConfiguration
 	}
-	return Certification{
-		Kind:   lore.KindSource,
-		Result: conform.Check(newConnector, conform.Fixture{}, unconfigured),
-	}, nil
+
+	result := conform.Check(ctx, newConnector, conform.Fixture{}, unconfigured)
+	if err := ctx.Err(); err != nil {
+		return Certification{}, fmt.Errorf("certifying %s: %w", instance, err)
+	}
+	return Certification{Kind: lore.KindSource, Result: result}, nil
 }
 
 func refusesWithoutConfiguration(err error) bool {

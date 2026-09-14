@@ -81,13 +81,13 @@ func checkNames(findings []conform.Finding) []conform.CheckName {
 }
 
 func TestCheckPassesAConformantConnector(t *testing.T) {
-	for _, f := range conform.Check(newStub(conformant), conform.Fixture{Docs: 4}, nil).Findings {
+	for _, f := range conform.Check(t.Context(), newStub(conformant), conform.Fixture{Docs: 4}, nil).Findings {
 		t.Errorf("%s: %s", f.Check, f.Detail)
 	}
 }
 
 func TestCheckWithoutFixtureFactsStillCertifies(t *testing.T) {
-	for _, f := range conform.Check(newStub(conformant), conform.Fixture{}, nil).Findings {
+	for _, f := range conform.Check(t.Context(), newStub(conformant), conform.Fixture{}, nil).Findings {
 		t.Errorf("%s: %s", f.Check, f.Detail)
 	}
 }
@@ -188,7 +188,7 @@ func TestCheckReportsTheFailedAssertion(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			findings := conform.Check(newStub(tt.stream), conform.Fixture{Docs: 4}, nil).Findings
+			findings := conform.Check(t.Context(), newStub(tt.stream), conform.Fixture{Docs: 4}, nil).Findings
 			if len(findings) == 0 {
 				t.Fatal("the suite passed a connector that breaks a rule")
 			}
@@ -217,10 +217,10 @@ func TestReplayableTypesAreAllowedBackIntoTheStream(t *testing.T) {
 		return batches, nil
 	}
 
-	if findings := conform.Check(newStub(replays), conform.Fixture{Docs: 4}, nil).Findings; len(findings) == 0 {
+	if findings := conform.Check(t.Context(), newStub(replays), conform.Fixture{Docs: 4}, nil).Findings; len(findings) == 0 {
 		t.Error("an undeclared replay was accepted")
 	}
-	findings := conform.Check(newStub(replays), conform.Fixture{
+	findings := conform.Check(t.Context(), newStub(replays), conform.Fixture{
 		Docs:            4,
 		ReplayableTypes: []lore.DocType{lore.DocTypeTicket},
 	}, nil).Findings
@@ -232,7 +232,7 @@ func TestReplayableTypesAreAllowedBackIntoTheStream(t *testing.T) {
 func TestAStreamThatFailsIsReportedOnce(t *testing.T) {
 	broken := func(lore.Cursor) ([]lore.Batch, error) { return nil, errors.New("token expired") }
 
-	findings := conform.Check(newStub(broken), conform.Fixture{Docs: 4}, nil).Findings
+	findings := conform.Check(t.Context(), newStub(broken), conform.Fixture{Docs: 4}, nil).Findings
 	if len(findings) != 1 {
 		t.Fatalf("findings = %+v, want the one failure the others all derive from", findings)
 	}
@@ -242,7 +242,7 @@ func TestAStreamThatFailsIsReportedOnce(t *testing.T) {
 }
 
 func TestADeclaredCountThatDisagreesIsAFailure(t *testing.T) {
-	findings := conform.Check(newStub(conformant), conform.Fixture{Docs: 5}, nil).Findings
+	findings := conform.Check(t.Context(), newStub(conformant), conform.Fixture{Docs: 5}, nil).Findings
 	if len(findings) != 1 || findings[0].Check != conform.CheckStream {
 		t.Fatalf("findings = %+v, want one stream failure about the count", findings)
 	}
@@ -256,7 +256,7 @@ func TestASingleBatchStreamCannotProveResumability(t *testing.T) {
 		return []lore.Batch{{Docs: []lore.Document{doc(1)}, Cursor: lore.Cursor{"after": "1"}}}, nil
 	}
 
-	findings := conform.Check(newStub(single), conform.Fixture{Docs: 1}, nil).Findings
+	findings := conform.Check(t.Context(), newStub(single), conform.Fixture{Docs: 1}, nil).Findings
 	if len(findings) != 1 || findings[0].Check != conform.CheckResumable {
 		t.Fatalf("findings = %+v, want the resume check to report that it could not run", findings)
 	}

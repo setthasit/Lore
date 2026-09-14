@@ -14,7 +14,7 @@ import (
 // downloadTimeout bounds a whole artifact fetch, not one read: a stalled supply chain must fail, not hang.
 const downloadTimeout = 5 * time.Minute
 
-type Handshake func(binary string) (lore.Manifest, error)
+type Handshake func(ctx context.Context, binary string) (lore.Manifest, error)
 
 type Installer struct {
 	store     *Store
@@ -144,7 +144,7 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	}
 	result.Binary, result.BinaryDigest = path, record.BinaryDigest
 
-	if err := ins.captureManifest(coord, record, path); err != nil {
+	if err := ins.captureManifest(ctx, coord, record, path); err != nil {
 		_ = os.RemoveAll(filepath.Dir(path))
 		return Result{}, err
 	}
@@ -156,12 +156,12 @@ func (ins *Installer) Install(ctx context.Context, req Request, lock *Lock) (Res
 	return result, nil
 }
 
-func (ins *Installer) captureManifest(coord Coordinate, record installRecord, binary string) error {
+func (ins *Installer) captureManifest(ctx context.Context, coord Coordinate, record installRecord, binary string) error {
 	if ins.handshake == nil {
 		return noHandshake(coord.Name, "install")
 	}
 
-	manifest, err := ins.handshake(binary)
+	manifest, err := ins.handshake(ctx, binary)
 	if err != nil {
 		return protocolRefusal(coord.Name, binary, err)
 	}

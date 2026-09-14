@@ -191,7 +191,7 @@ Same shape as the rest of the surface ([06](06-interfaces-and-config.md#cli)):
 | `lore plugin install [<name> \| <coordinate>[@latest]]` | resolve, download, verify, unpack, handshake, write `lore.lock`; no argument installs everything declared |
 | `lore plugin update <name>[@<version>]` | re-resolve and rewrite the locked version, URLs and digests |
 | `lore plugin remove <name>` | drop the declaration, the lock entry and the cached versions |
-| `lore plugin verify <name>` | re-check the digest and run `sdk/conform` against the installed binary; when a `sources:` entry uses the plugin, the suite runs with that instance's configuration and secrets, so that instance's environment variables must be exported |
+| `lore plugin verify <name>` | re-check the digest and run `sdk/conform` against the installed binary; when a `sources:` entry uses the plugin, the suite runs with that instance's configuration and secrets, so that instance's environment variables must be exported, and it streams that live source for real — twice in full, then once from a mid-stream cursor. Interrupting the command ends the run |
 | `lore plugin search <query>` | query the plugin index — a JSON file in a git repository |
 
 `verify` runs the same certification suite the official plugins run

@@ -174,7 +174,7 @@ func capturedManifest(t *testing.T, dir string) lore.Manifest {
 func reportedManifest(t *testing.T, binary string) lore.Manifest {
 	t.Helper()
 
-	manifest, err := declaredManifest(binary)
+	manifest, err := declaredManifest(t.Context(), binary)
 	if err != nil {
 		t.Fatalf("handshake the installed binary: %v", err)
 	}

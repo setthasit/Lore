@@ -516,7 +516,7 @@ func plantCaptureAboveTheVersion(t *testing.T, dir string) string {
 func TestPluginManifestServesTheStoredCaptureWithoutAHandshake(t *testing.T) {
 	workspace, handshake, installed := installedWorkspace(t)
 
-	manifest, err := workspace.Manifest(workspace.Plugins()[0])
+	manifest, err := workspace.Manifest(t.Context(), workspace.Plugins()[0])
 	if err != nil {
 		t.Fatalf("serve the stored manifest: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestPluginManifestServesTheStoredCaptureWithoutAHandshake(t *testing.T) {
 		t.Errorf("serving a stored capture ran the binary %d times, want none", handshake.calls)
 	}
 
-	captured, _ := stubHandshake(installed.Binary)
+	captured, _ := stubHandshake(t.Context(), installed.Binary)
 	if !reflect.DeepEqual(manifest, captured) {
 		t.Fatalf("manifest = %+v, want the capture the install stored %+v", manifest, captured)
 	}
@@ -595,7 +595,7 @@ func TestPluginManifestReHandshakesOnceForAnUnusableCapture(t *testing.T) {
 			workspace, handshake, installed := installedWorkspace(t)
 			test.damage(t, filepath.Dir(installed.Binary))
 
-			manifest, err := workspace.Manifest(workspace.Plugins()[0])
+			manifest, err := workspace.Manifest(t.Context(), workspace.Plugins()[0])
 			if err != nil {
 				t.Fatalf("serve a manifest around an unusable capture: %v", err)
 			}
@@ -619,7 +619,7 @@ func TestPluginManifestRefusesARewrittenBinaryWithoutAHandshake(t *testing.T) {
 		t.Fatalf("rewrite the cached binary: %v", err)
 	}
 
-	manifest, err := workspace.Manifest(workspace.Plugins()[0])
+	manifest, err := workspace.Manifest(t.Context(), workspace.Plugins()[0])
 	if err == nil {
 		t.Fatalf("a rewritten binary answered with %+v, want a refusal", manifest)
 	}
