@@ -279,10 +279,34 @@ func (s *session) close(ctx context.Context) error {
 	}
 
 	_ = s.stdin.Close()
-	if err := s.waitWithin(s.tuning.shutdown); err != nil {
-		return &crashError{instance: s.instance, op: wire.OpShutdown, detail: err.Error(), cause: err}
+	switch exitErr := s.exitedWithin(s.tuning.shutdown); {
+	case errors.Is(exitErr, errStillRunning):
+		s.escalate()
+	case exitErr != nil:
+		return &crashError{instance: s.instance, op: wire.OpShutdown, detail: exitErr.Error(), cause: exitErr}
 	}
 	return nil
+}
+
+func (s *session) escalate() {
+	s.log.Warn(fmt.Sprintf("%s: answered shutdown but has not exited %s later; sending it the termination signal and waiting a further %s before killing it",
+		s.instance, s.tuning.shutdown, s.tuning.grace))
+
+	s.interrupt()
+	if err := s.exitedWithin(s.tuning.grace); !errors.Is(err, errStillRunning) {
+		s.log.Warn(fmt.Sprintf("%s: exited on the termination signal (%s)", s.instance, exitStatus(err)))
+		return
+	}
+	s.kill()
+	s.log.Warn(fmt.Sprintf("%s: ignored the termination signal for %s and was killed (%s)",
+		s.instance, s.tuning.grace, exitStatus(s.wait())))
+}
+
+func exitStatus(err error) string {
+	if err == nil {
+		return "exit status 0"
+	}
+	return err.Error()
 }
 
 func (s *session) abort() {
@@ -291,26 +315,43 @@ func (s *session) abort() {
 
 func (s *session) terminate() error {
 	_ = s.stdin.Close()
-	if s.cmd.Process != nil {
-		_ = interrupt(s.cmd.Process)
-	}
+	s.interrupt()
 	return s.waitWithin(s.tuning.grace)
 }
 
+func (s *session) interrupt() {
+	if s.cmd.Process != nil {
+		_ = interrupt(s.cmd.Process)
+	}
+}
+
+func (s *session) kill() {
+	if s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+	}
+}
+
+var errStillRunning = errors.New("plugin has not exited")
+
 func (s *session) waitWithin(grace time.Duration) error {
+	if err := s.exitedWithin(grace); !errors.Is(err, errStillRunning) {
+		return err
+	}
+	s.kill()
+	return s.wait()
+}
+
+func (s *session) exitedWithin(limit time.Duration) error {
 	done := make(chan error, 1)
 	go func() { done <- s.wait() }()
 
-	timer := time.NewTimer(grace)
+	timer := time.NewTimer(limit)
 	defer timer.Stop()
 	select {
 	case err := <-done:
 		return err
 	case <-timer.C:
-		if s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
-		}
-		return <-done
+		return errStillRunning
 	}
 }
 
