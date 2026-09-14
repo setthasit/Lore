@@ -19,6 +19,7 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/conform"
 )
 
 var scriptedFixtureDir string
@@ -62,15 +63,48 @@ func pluginStub(t *testing.T) string {
 	return string(body)
 }
 
-var pluginScript = manifestScript(`{"name":"linear","kind":"source","api_version":1,` +
-	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
-	`"repo_remotes":false},"fields":[],"secrets":[]}`)
+var pluginScript = manifestScript(sourceManifest("", ""))
+
+func sourceManifest(fields, secrets string) string {
+	return `{"name":"linear","kind":"source","api_version":1,` +
+		`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
+		`"repo_remotes":false},"fields":[` + fields + `],"secrets":[` + secrets + `]}`
+}
+
+func ticketsManifest() string {
+	return sourceManifest(`{"name":"team","type":"string","required":true}`,
+		`{"key":"token","config_field":"token_env"}`)
+}
 
 func manifestScript(manifest string) string {
 	return `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":` + manifest + `}
 
 shutdown emit {"v":1,"id":"$ID","ok":true}
 `
+}
+
+func streamingScript(manifest string, changesFrames ...string) string {
+	script := manifestScript(manifest) + "\n"
+	for _, frame := range changesFrames {
+		script += "changes emit " + frame + "\n"
+	}
+	return script
+}
+
+func assertSkippedWithReason(t *testing.T, stdout string, checks ...conform.CheckName) {
+	t.Helper()
+
+	for _, check := range checks {
+		_, after, listed := strings.Cut(stdout, "      "+string(check)+" — ")
+		if !listed {
+			t.Errorf("stdout %q does not list %q among the checks it skipped", stdout, check)
+			continue
+		}
+		reason, _, _ := strings.Cut(after, "\n")
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("stdout %q skips %q without saying why", stdout, check)
+		}
+	}
 }
 
 func pythonPlugin(t *testing.T) string {
@@ -204,6 +238,12 @@ func pluginBinaryName() string {
 
 func declaredConfig(from string) string {
 	return "workspace: myproject\n\nplugins:\n  - name: linear\n    from: " + from + "\n"
+}
+
+func ticketsConfig(from string) string {
+	return declaredConfig(from) +
+		"\nsources:\n  - id: tickets\n    use: linear\n    with:\n      team: PLATFORM\n" +
+		"      token_env: LORE_LINEAR_TOKEN\n"
 }
 
 func lockFile(t *testing.T, configPath string) string {
@@ -480,11 +520,158 @@ func TestPluginVerifyReportsTheDigestAndCertifiesTheBinary(t *testing.T) {
 		"re-checked now",
 		publishedDigest(fake, "v0.3.1"),
 		filepath.Join("plugins", "linear", "v0.3.1", pluginBinaryName()),
-		"conformance: passed",
+		"conformance: passed\n",
 	} {
 		if !strings.Contains(res.stdout, want) {
 			t.Fatalf("stdout %q does not mention %q", res.stdout, want)
 		}
+	}
+}
+
+func TestPluginVerifyCertifiesWithTheDeclaredInstancesConfiguration(t *testing.T) {
+	fake := newFakeReleases(t)
+	t.Setenv("LORE_LINEAR_TOKEN", "fake-linear-token")
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(ticketsManifest(),
+		`{"v":1,"id":"$ID","error":{"kind":"invalid_config",`+
+			`"message":"got team=$CONFIG{team} token=$SECRET{token}"}}`))
+	path := writeConfigFile(t, ticketsConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+	if res.exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+			res.exitCode, exitPrecondition, res.stdout, res.stderr)
+	}
+	for _, want := range []string{
+		"conformance (sources[tickets]): 1 failure on 1 of 6 checks",
+		"tickets: full stream",
+		"got team=PLATFORM token=fake-linear-token",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout %q does not mention %q", res.stdout, want)
+		}
+	}
+}
+
+func TestPluginVerifyReportsNotRunWhenAnUndeclaredPluginWantsConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		kind   string
+		reason string
+	}{
+		{"invalid_config", "no team is configured, so there is nothing to stream"},
+		{"auth", "no credential was supplied, so the tracker refuses to talk"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			fake := newFakeReleases(t)
+			publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(sourceManifest("", ""),
+				`{"v":1,"id":"$ID","error":{"kind":"`+test.kind+`","message":"`+test.reason+`"}}`))
+			path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+			if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+				t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+			}
+
+			res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+					res.exitCode, exitOK, res.stdout, res.stderr)
+			}
+			for _, want := range []string{"conformance: not run", test.reason} {
+				if !strings.Contains(res.stdout, want) {
+					t.Errorf("stdout %q does not mention %q", res.stdout, want)
+				}
+			}
+			assertSkippedWithReason(t, res.stdout,
+				conform.CheckStream, conform.CheckCursors, conform.CheckTimestamps,
+				conform.CheckIdentity, conform.CheckIdempotent, conform.CheckResumable)
+		})
+	}
+}
+
+func TestPluginVerifyReportsTheReducedCountOfAnEmptyStream(t *testing.T) {
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t),
+		streamingScript(sourceManifest("", ""), `{"v":1,"id":"$ID","done":true}`))
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+			res.exitCode, exitOK, res.stdout, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "conformance: passed on 2 of 6 checks") {
+		t.Errorf("stdout %q does not report a reduced run of 2 of 6 checks", res.stdout)
+	}
+	assertSkippedWithReason(t, res.stdout,
+		conform.CheckCursors, conform.CheckTimestamps, conform.CheckIdentity, conform.CheckResumable)
+	for _, check := range []conform.CheckName{conform.CheckStream, conform.CheckIdempotent} {
+		if !strings.Contains(res.stdout, "      "+string(check)+"\n") {
+			t.Errorf("stdout %q does not name %q among the checks it ran", res.stdout, check)
+		}
+	}
+}
+
+func TestPluginVerifyFailsAnUndeclaredPluginThatBreaksAfterOpeningTheStream(t *testing.T) {
+	fake := newFakeReleases(t)
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(sourceManifest("", ""),
+		`{"v":1,"id":"$ID","batch":{"docs":[{"id":"linear:ticket:1","source":"linear",`+
+			`"type":"ticket","title":"Ticket 1","created_at":"2026-08-10T09:00:00Z",`+
+			`"updated_at":"2026-08-10T17:30:00Z"}],"cursor":{"after":"1"}}}`,
+		`{"v":1,"id":"$ID","error":{"kind":"invalid_config",`+
+			`"message":"the team vanished after the first batch"}}`))
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+	if res.exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+			res.exitCode, exitPrecondition, res.stdout, res.stderr)
+	}
+	for _, want := range []string{
+		"conformance: 1 failure on 1 of 6 checks",
+		"the team vanished after the first batch",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout %q does not mention %q", res.stdout, want)
+		}
+	}
+	assertSkippedWithReason(t, res.stdout,
+		conform.CheckCursors, conform.CheckTimestamps, conform.CheckIdentity,
+		conform.CheckIdempotent, conform.CheckResumable)
+}
+
+func TestPluginVerifyRefusesWhenTheDeclaredSecretIsUnset(t *testing.T) {
+	fake := newFakeReleases(t)
+	t.Setenv("LORE_LINEAR_TOKEN", "")
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(ticketsManifest()))
+	path := writeConfigFile(t, ticketsConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+			res.exitCode, exitBadRequest, res.stdout, res.stderr)
+	}
+	for _, want := range []string{"sources[tickets].with.token_env", "LORE_LINEAR_TOKEN"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr %q does not name %q", res.stderr, want)
+		}
+	}
+	if strings.Contains(res.stdout, "conformance") {
+		t.Errorf("stdout %q certified anyway", res.stdout)
 	}
 }
 
