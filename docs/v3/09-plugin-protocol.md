@@ -126,7 +126,8 @@ aborts the stream. The host commits the documents, **then** persists that
 frame's cursor — the batch is the checkpoint unit, exactly as for in-process
 connectors ([04](04-connectors-and-sync.md)). A stream that emits documents and
 defers its cursor to `done` is malformed: it makes crash-safe resume
-unimplementable.
+unimplementable; the host refuses such a frame, naming the count of documents it
+carried, and aborts the stream.
 
 ### matches_remote
 

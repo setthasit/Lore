@@ -49,6 +49,12 @@ func (c *connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[l
 			}
 
 			switch {
+			case frame.Done && frame.Batch != nil:
+				session.abort()
+				yield(lore.Batch{}, protocolError(c.instance, wire.OpChanges, nil,
+					"sent a batch of %d documents in the frame that ends the stream, so neither the documents nor the cursor can be committed",
+					len(frame.Batch.Docs)))
+				return
 			case frame.Done:
 				if err := session.close(ctx); err != nil {
 					yield(lore.Batch{}, err)

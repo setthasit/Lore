@@ -151,7 +151,6 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				V:    lore.APIVersion,
 				ID:   "p-3",
 				OK:   true,
-				Done: true,
 				Batch: &wire.Batch{
 					Docs: []lore.Document{{
 						ID:        lore.NewDocID("github-main", lore.DocTypeIssue, "7"),
@@ -169,7 +168,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 					Cursor: &cursor,
 				},
 			},
-			want: `{"v":1,"id":"p-3","ok":true,"done":true,"error":null,"manifest":null,` +
+			want: `{"v":1,"id":"p-3","ok":true,"done":false,"error":null,"manifest":null,` +
 				`"batch":{"docs":[{"id":"github-main:issue:7","source":"github-main","type":"issue","repo_ref":"github:owner/name",` +
 				`"title":"flaky test","body":"it fails","author":"ann","url":"https://example.test/7",` +
 				`"created_at":"2026-08-30T14:02:11Z","updated_at":"2026-09-01T07:45:03+02:00",` +
