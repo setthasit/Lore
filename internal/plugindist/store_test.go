@@ -525,8 +525,8 @@ func TestPluginManifestServesTheStoredCaptureWithoutAHandshake(t *testing.T) {
 	}
 
 	captured, _ := stubHandshake(t.Context(), installed.Binary)
-	if !reflect.DeepEqual(manifest, captured) {
-		t.Fatalf("manifest = %+v, want the capture the install stored %+v", manifest, captured)
+	if got, want := plugindisttest.EncodedManifest(t, manifest), plugindisttest.EncodedManifest(t, captured); got != want {
+		t.Fatalf("manifest = %s, want the capture the install stored %s", got, want)
 	}
 }
 

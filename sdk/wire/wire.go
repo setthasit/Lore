@@ -3,6 +3,7 @@ package wire
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/setthasit/Lore/sdk"
 )
@@ -45,12 +46,24 @@ type ChangesRequest struct {
 	Cursor   lore.Cursor       `json:"cursor"`
 }
 
+func (r ChangesRequest) MarshalJSON() ([]byte, error) {
+	type wire ChangesRequest
+	r.Secrets, r.Cursor = mapOrEmpty(r.Secrets), mapOrEmpty(r.Cursor)
+	return json.Marshal(wire(r))
+}
+
 type EmbedRequest struct {
 	Envelope
 	Config  json.RawMessage   `json:"config"`
 	Secrets map[string]string `json:"secrets"`
 	Model   string            `json:"model"`
 	Texts   []string          `json:"texts"`
+}
+
+func (r EmbedRequest) MarshalJSON() ([]byte, error) {
+	type wire EmbedRequest
+	r.Secrets, r.Texts = mapOrEmpty(r.Secrets), listOrEmpty(r.Texts)
+	return json.Marshal(wire(r))
 }
 
 type CompleteRequest struct {
@@ -60,6 +73,12 @@ type CompleteRequest struct {
 	Model   string            `json:"model"`
 	System  string            `json:"system"`
 	User    string            `json:"user"`
+}
+
+func (r CompleteRequest) MarshalJSON() ([]byte, error) {
+	type wire CompleteRequest
+	r.Secrets = mapOrEmpty(r.Secrets)
+	return json.Marshal(wire(r))
 }
 
 type BlameRequest struct {
@@ -83,6 +102,12 @@ type RemoteRequest struct {
 	Remote   string            `json:"remote"`
 }
 
+func (r RemoteRequest) MarshalJSON() ([]byte, error) {
+	type wire RemoteRequest
+	r.Secrets = mapOrEmpty(r.Secrets)
+	return json.Marshal(wire(r))
+}
+
 type Frame struct {
 	V     int    `json:"v"`
 	ID    string `json:"id"`
@@ -103,9 +128,50 @@ type Frame struct {
 	Matches bool             `json:"matches"`
 }
 
+func (f Frame) MarshalJSON() ([]byte, error) {
+	type wire Frame
+	f.Vectors, f.Spans, f.Commits = rowsOrEmpty(f.Vectors), listOrEmpty(f.Spans), listOrEmpty(f.Commits)
+	return json.Marshal(wire(f))
+}
+
 type Batch struct {
 	Docs   []lore.Document `json:"docs"`
 	Cursor *lore.Cursor    `json:"cursor"`
+}
+
+func (b Batch) MarshalJSON() ([]byte, error) {
+	type wire Batch
+	b.Docs = listOrEmpty(b.Docs)
+	if b.Cursor == nil || *b.Cursor == nil {
+		b.Cursor = &lore.Cursor{}
+	}
+	return json.Marshal(wire(b))
+}
+
+func listOrEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
+}
+
+func mapOrEmpty[M ~map[K]V, K comparable, V any](m M) M {
+	if m == nil {
+		return M{}
+	}
+	return m
+}
+
+func rowsOrEmpty(rows [][]float32) [][]float32 {
+	if !slices.ContainsFunc(rows, func(row []float32) bool { return row == nil }) {
+		return listOrEmpty(rows)
+	}
+
+	out := make([][]float32, len(rows))
+	for i, row := range rows {
+		out[i] = listOrEmpty(row)
+	}
+	return out
 }
 
 type Error struct {

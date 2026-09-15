@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/setthasit/Lore/sdk"
 )
 
 const checksumsAsset = "checksums.txt"
@@ -184,4 +186,14 @@ func checksums(assets map[string][]byte) []byte {
 		lines.WriteString(hex.EncodeToString(sum[:]) + "  " + name + "\n")
 	}
 	return []byte(lines.String())
+}
+
+func EncodedManifest(t *testing.T, manifest lore.Manifest) string {
+	t.Helper()
+
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("encode a manifest: %v", err)
+	}
+	return string(raw)
 }

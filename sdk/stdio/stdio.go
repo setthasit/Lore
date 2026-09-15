@@ -333,9 +333,6 @@ func bounded(text string) string {
 }
 
 func batchFrame(id string, batch lore.Batch) wire.Frame {
-	if batch.Docs == nil {
-		batch.Docs = []lore.Document{}
-	}
 	return wire.Frame{V: lore.APIVersion, ID: id, Batch: &wire.Batch{Docs: batch.Docs, Cursor: &batch.Cursor}}
 }
 

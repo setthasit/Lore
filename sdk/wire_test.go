@@ -2,13 +2,21 @@ package lore_test
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/setthasit/Lore/sdk"
+	"github.com/setthasit/Lore/sdk/wire"
 )
+
+var sdkPackage = reflect.TypeOf(lore.Document{}).PkgPath()
 
 // Every type an out-of-process plugin exchanges with the host. A field added without a tag
 // travels under its Go name, which is a silent protocol break.
@@ -23,16 +31,28 @@ func wireTypes() []any {
 		lore.Secret{},
 		lore.BlameSpan{},
 		lore.CommitRef{},
+		wire.Envelope{},
+		wire.ManifestRequest{},
+		wire.ShutdownRequest{},
+		wire.ChangesRequest{},
+		wire.EmbedRequest{},
+		wire.CompleteRequest{},
+		wire.BlameRequest{},
+		wire.PathRequest{},
+		wire.RemoteRequest{},
+		wire.Frame{},
+		wire.Batch{},
+		wire.Error{},
 	}
 }
 
 func TestEveryWireFieldCarriesASnakeCaseTag(t *testing.T) {
 	for _, value := range wireTypes() {
 		typ := reflect.TypeOf(value)
-		t.Run(typ.Name(), func(t *testing.T) {
+		t.Run(typ.String(), func(t *testing.T) {
 			for i := range typ.NumField() {
 				field := typ.Field(i)
-				if !field.IsExported() {
+				if !field.IsExported() || field.Anonymous {
 					continue
 				}
 
@@ -54,6 +74,173 @@ func TestEveryWireFieldCarriesASnakeCaseTag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEveryListAndMapFieldEncodesEmptyRatherThanNull(t *testing.T) {
+	for _, value := range wireTypes() {
+		typ := reflect.TypeOf(value)
+		t.Run(typ.String(), func(t *testing.T) {
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatalf("marshal a zero %s: %v", typ, err)
+			}
+
+			var encoded map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &encoded); err != nil {
+				t.Fatalf("decode the encoded %s: %v", typ, err)
+			}
+
+			for i := range typ.NumField() {
+				field := typ.Field(i)
+				want := ""
+				switch {
+				case !field.IsExported():
+					continue
+				case isList(field.Type):
+					want = "[]"
+				case isMap(field.Type):
+					want = "{}"
+				default:
+					continue
+				}
+
+				name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+				switch got, ok := encoded[name]; {
+				case !ok:
+					t.Errorf("zero %s omits %s; a collection field always travels", typ, name)
+				case string(got) != want:
+					t.Errorf("zero %s encodes %s as %s, want %s", typ, name, got, want)
+				}
+			}
+		})
+	}
+}
+
+// An unreferenced request type is invisible to reflection; only the declaration shows it.
+func TestWireTypesEnumeratesEveryDeclaredWireStruct(t *testing.T) {
+	listed := map[string]bool{}
+	for _, value := range wireTypes() {
+		listed[reflect.TypeOf(value).String()] = true
+	}
+
+	for _, dir := range []string{".", "wire"} {
+		declared := taggedStructsIn(t, dir)
+		if len(declared) == 0 {
+			t.Errorf("%s holds no json-tagged struct declaration, so this guard scans nothing there", dir)
+		}
+		for _, name := range declared {
+			if !listed[name] {
+				t.Errorf("%s carries json tags but wireTypes() does not list it, so no test inspects it", name)
+			}
+		}
+	}
+}
+
+func taggedStructsIn(t *testing.T, dir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+
+	fset := token.NewFileSet()
+	var out []string
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(dir, entry.Name()), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", entry.Name(), err)
+		}
+		for _, decl := range file.Decls {
+			declaration, ok := decl.(*ast.GenDecl)
+			if !ok || declaration.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range declaration.Specs {
+				declared, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				if structure, ok := declared.Type.(*ast.StructType); ok && carriesJSONTag(structure) {
+					out = append(out, file.Name.Name+"."+declared.Name.Name)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func carriesJSONTag(structure *ast.StructType) bool {
+	for _, field := range structure.Fields.List {
+		if field.Tag != nil && strings.Contains(field.Tag.Value, "json:") {
+			return true
+		}
+	}
+	return false
+}
+
+// A struct named only by a field of another — wire.Error on a failed frame — is reached here
+// whether it carries json tags or not.
+func TestWireTypesEnumeratesEveryTypeItReaches(t *testing.T) {
+	listed := map[reflect.Type]bool{}
+	for _, value := range wireTypes() {
+		listed[reflect.TypeOf(value)] = true
+	}
+
+	for _, value := range wireTypes() {
+		for _, reached := range structsReachableFrom(reflect.TypeOf(value)) {
+			if !listed[reached] {
+				t.Errorf("%s carries %s, which wireTypes() does not list, so no test inspects it",
+					reflect.TypeOf(value), reached)
+			}
+		}
+	}
+}
+
+func structsReachableFrom(root reflect.Type) []reflect.Type {
+	var out []reflect.Type
+	seen := map[reflect.Type]bool{root: true}
+
+	var walk func(reflect.Type)
+	walk = func(typ reflect.Type) {
+		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Map {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct || seen[typ] || !strings.HasPrefix(typ.PkgPath(), sdkPackage) {
+			return
+		}
+
+		seen[typ] = true
+		out = append(out, typ)
+		for i := range typ.NumField() {
+			walk(typ.Field(i).Type)
+		}
+	}
+	for i := range root.NumField() {
+		walk(root.Field(i).Type)
+	}
+	return out
+}
+
+// A json.RawMessage carries whole JSON rather than a list, and a byte slice encodes as a string.
+func isList(t reflect.Type) bool {
+	t = pointee(t)
+	return t.Kind() == reflect.Slice && t.Elem().Kind() != reflect.Uint8
+}
+
+func isMap(t reflect.Type) bool {
+	return pointee(t).Kind() == reflect.Map
+}
+
+func pointee(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
 }
 
 // The protocol requires RFC 3339 with an offset and both document timestamps present: a batch without them cannot be ordered.

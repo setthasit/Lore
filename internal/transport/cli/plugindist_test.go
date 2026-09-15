@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -195,24 +194,24 @@ func capturedManifestPath(t *testing.T, dir string) string {
 	return filepath.Join(dir, record.Manifest)
 }
 
-func capturedManifest(t *testing.T, dir string) lore.Manifest {
+func capturedManifestJSON(t *testing.T, dir string) string {
 	t.Helper()
 
 	var manifest lore.Manifest
 	if err := json.Unmarshal([]byte(readConfigFile(t, capturedManifestPath(t, dir))), &manifest); err != nil {
 		t.Fatalf("decode the captured manifest: %v", err)
 	}
-	return manifest
+	return plugindisttest.EncodedManifest(t, manifest)
 }
 
-func reportedManifest(t *testing.T, binary string) lore.Manifest {
+func reportedManifestJSON(t *testing.T, binary string) string {
 	t.Helper()
 
 	manifest, err := declaredManifest(t.Context(), binary)
 	if err != nil {
 		t.Fatalf("handshake the installed binary: %v", err)
 	}
-	return manifest
+	return plugindisttest.EncodedManifest(t, manifest)
 }
 
 func assertDeclaredManifest(t *testing.T, stdout string) {
@@ -317,9 +316,9 @@ func TestPluginInstallPinsAndLocksADeclaredPlugin(t *testing.T) {
 	}
 
 	dir := installedPluginDir("v0.3.1")
-	stored, reported := capturedManifest(t, dir), reportedManifest(t, filepath.Join(dir, pluginBinaryName()))
-	if !reflect.DeepEqual(stored, reported) {
-		t.Fatalf("captured manifest = %+v, want what the binary reports: %+v", stored, reported)
+	stored, reported := capturedManifestJSON(t, dir), reportedManifestJSON(t, filepath.Join(dir, pluginBinaryName()))
+	if stored != reported {
+		t.Fatalf("captured manifest = %s, want what the binary reports: %s", stored, reported)
 	}
 	assertDeclaredManifest(t, res.stdout)
 }

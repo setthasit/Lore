@@ -142,8 +142,8 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 			},
 			want: `{"v":1,"id":"p-1","ok":true,"done":false,"error":null,` +
 				`"manifest":{"name":"github","kind":"source","api_version":1,"summary":"issues and pull requests",` +
-				`"capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":null,"secrets":null},` +
-				`"batch":null,"vectors":null,"dimensions":0,"text":"","spans":null,"commits":null,"present":false,"matches":false}`,
+				`"capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[],"default_models":{}},` +
+				`"batch":null,"vectors":[],"dimensions":0,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 		{
 			name: "changes batch",
@@ -173,7 +173,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				`"title":"flaky test","body":"it fails","author":"ann","url":"https://example.test/7",` +
 				`"created_at":"2026-08-30T14:02:11Z","updated_at":"2026-09-01T07:45:03+02:00",` +
 				`"refs":[{"kind":"commit_sha","value":"deadbeef"}]}],"cursor":{"since":"42"}},` +
-				`"vectors":null,"dimensions":0,"text":"","spans":null,"commits":null,"present":false,"matches":false}`,
+				`"vectors":[],"dimensions":0,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 		{
 			name: "embed vectors",
@@ -186,7 +186,20 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Dimensions: 2,
 			},
 			want: `{"v":1,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
-				`"vectors":[[0.5,-1.25]],"dimensions":2,"text":"","spans":null,"commits":null,"present":false,"matches":false}`,
+				`"vectors":[[0.5,-1.25]],"dimensions":2,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
+		},
+		{
+			name: "embed vectors with an empty row",
+			frame: wire.Frame{
+				V:          lore.APIVersion,
+				ID:         "p-4",
+				OK:         true,
+				Done:       true,
+				Vectors:    [][]float32{nil},
+				Dimensions: 2,
+			},
+			want: `{"v":1,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
+				`"vectors":[[]],"dimensions":2,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 		{
 			name: "blame spans and log commits",
@@ -208,7 +221,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Matches: true,
 			},
 			want: `{"v":1,"id":"p-6","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
-				`"vectors":null,"dimensions":0,"text":"",` +
+				`"vectors":[],"dimensions":0,"text":"",` +
 				`"spans":[{"sha":"deadbeef","line_start":3,"line_end":4,"author":"ann","time":"2026-08-30T14:02:11Z","lines":["package app",""]}],` +
 				`"commits":[{"sha":"deadbeef","author":"ann","time":"2026-08-30T14:02:11Z","subject":"init"}],` +
 				`"present":true,"matches":true}`,
@@ -222,14 +235,14 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Error: &wire.Error{Message: "rate limited", Kind: "transient"},
 			},
 			want: `{"v":1,"id":"p-3","ok":false,"done":true,"error":{"message":"rate limited","kind":"transient"},` +
-				`"manifest":null,"batch":null,"vectors":null,"dimensions":0,"text":"","spans":null,"commits":null,` +
+				`"manifest":null,"batch":null,"vectors":[],"dimensions":0,"text":"","spans":[],"commits":[],` +
 				`"present":false,"matches":false}`,
 		},
 		{
 			name:  "completion text",
 			frame: wire.Frame{V: lore.APIVersion, ID: "p-5", OK: true, Done: true, Text: "an answer"},
 			want: `{"v":1,"id":"p-5","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
-				`"vectors":null,"dimensions":0,"text":"an answer","spans":null,"commits":null,"present":false,"matches":false}`,
+				`"vectors":[],"dimensions":0,"text":"an answer","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 	}
 

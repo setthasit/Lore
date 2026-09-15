@@ -2,6 +2,7 @@ package lore
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -27,6 +28,12 @@ type BlameSpan struct {
 	Author    string    `json:"author"`
 	Time      time.Time `json:"time"`
 	Lines     []string  `json:"lines"`
+}
+
+func (s BlameSpan) MarshalJSON() ([]byte, error) {
+	type wire BlameSpan
+	s.Lines = listOrEmpty(s.Lines)
+	return json.Marshal(wire(s))
 }
 
 // Time is the author time in UTC.

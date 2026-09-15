@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -466,8 +465,8 @@ func TestInstallStoresTheManifestTheBinaryReported(t *testing.T) {
 	if err := readJSON(filepath.Join(filepath.Dir(result.Binary), manifestFileName), &stored); err != nil {
 		t.Fatalf("read the manifest stored beside the binary: %v", err)
 	}
-	if !reflect.DeepEqual(stored, handshake.manifest) {
-		t.Fatalf("stored manifest = %+v, want the one the binary reported %+v", stored, handshake.manifest)
+	if got, want := plugindisttest.EncodedManifest(t, stored), plugindisttest.EncodedManifest(t, handshake.manifest); got != want {
+		t.Fatalf("stored manifest = %s, want the one the binary reported %s", got, want)
 	}
 }
 

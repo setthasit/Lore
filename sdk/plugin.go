@@ -1,6 +1,7 @@
 package lore
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -86,7 +87,14 @@ type Manifest struct {
 
 	// DefaultModels suggests one model per capability for scaffolds and prompts;
 	// the host never applies a suggestion.
-	DefaultModels map[Capability]string `json:"default_models,omitempty"`
+	DefaultModels map[Capability]string `json:"default_models"`
+}
+
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	type wire Manifest
+	m.Fields, m.Secrets = listOrEmpty(m.Fields), listOrEmpty(m.Secrets)
+	m.DefaultModels = mapOrEmpty(m.DefaultModels)
+	return json.Marshal(wire(m))
 }
 
 type Capabilities struct {

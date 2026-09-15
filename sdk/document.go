@@ -49,6 +49,12 @@ type Document struct {
 	Refs []RawRef `json:"refs"`
 }
 
+func (d Document) MarshalJSON() ([]byte, error) {
+	type wire Document
+	d.Refs = listOrEmpty(d.Refs)
+	return json.Marshal(wire(d))
+}
+
 // The vocabulary is closed: an unknown kind is rejected at ingest, never dropped.
 type RefKind string
 
@@ -91,12 +97,23 @@ type Batch struct {
 	Cursor Cursor     `json:"cursor"`
 }
 
-// docs is never null: docs/v3/09-plugin-protocol.md types it as a list.
 // One frame caps at 8 MiB; a longer one fails the operation, so a plugin splits an oversized Batch across batches.
 func (b Batch) MarshalJSON() ([]byte, error) {
 	type wire Batch
-	if b.Docs == nil {
-		b.Docs = []Document{}
-	}
+	b.Docs, b.Cursor = listOrEmpty(b.Docs), mapOrEmpty(b.Cursor)
 	return json.Marshal(wire(b))
+}
+
+func listOrEmpty[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
+}
+
+func mapOrEmpty[M ~map[K]V, K comparable, V any](m M) M {
+	if m == nil {
+		return M{}
+	}
+	return m
 }
