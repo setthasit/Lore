@@ -1181,6 +1181,7 @@ func TestAPluginServedByTheSDKCertifiesWithNoFindings(t *testing.T) {
 	want := []conform.CheckName{
 		conform.CheckStream, conform.CheckCursors, conform.CheckTimestamps,
 		conform.CheckIdentity, conform.CheckIdempotent, conform.CheckResumable,
+		conform.CheckStreamError,
 	}
 	if !slices.Equal(certification.Ran, want) {
 		t.Errorf("ran = %v, want %v", certification.Ran, want)

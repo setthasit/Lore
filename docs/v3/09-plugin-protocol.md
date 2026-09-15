@@ -340,7 +340,8 @@ controls are in [10](10-plugin-distribution.md).
 
 `sdk/conform` runs against an external plugin **unchanged**, because it needs
 only a `lore.Connector` and the client shim that speaks this protocol is one —
-so one suite certifies compiled and external plugins identically. It asserts:
+so one suite certifies compiled and external plugins identically, save the
+stream-error rule the host shim absorbs at the boundary. It asserts:
 
 - that a full stream reaches `done` at all, since a stream that never
   completes leaves the rest nothing to judge;
@@ -351,19 +352,35 @@ so one suite certifies compiled and external plugins identically. It asserts:
 - every batch carries a cursor, empty ones included;
 - `created_at` and `updated_at` both set and non-zero on every document;
 - full identity on every document — `id`, `source`, `type`, `url` present and
-  `id` consistent with its three parts.
+  `id` consistent with its three parts;
+- that an error ends the stream — nothing is yielded after it, and no batch
+  carrying documents or a cursor rides in the same yield, since a consumer
+  drops that batch. This one is proved on the connector itself, which is what
+  an in-process suite run drives; a subprocess plugin reaches the suite
+  through the host shim, which ends the stream on an error frame, drops
+  whatever that frame carried beside the error, and refuses a batch in the
+  `done` frame, so `lore plugin verify` enforces the rule at the boundary
+  rather than failing the plugin on it.
 
 A check reports a verdict only on the material the stream gave it. A stream
 that carried no batch leaves the cursor check unreachable, one that carried no
-document leaves timestamps and identity unreachable, and idempotency is the
-exception: two empty streams compare equal, so it passes. Each unreachable
-check is reported by name with its reason, neither a pass nor a finding.
+document leaves timestamps and identity unreachable. Idempotency and the error
+check are the exceptions: two empty streams compare equal, and a stream that
+never failed broke no rule about what follows an error, so both pass. After an
+error the suite reads one more value and stops there; the Go runtime rejects a
+sequence that keeps yielding past that, and a connector that hangs instead of
+returning is bounded by the context it was given, as it is for every consumer
+of `Changes`. Each unreachable check is reported by name with its reason,
+neither a pass nor a finding.
 
 Certifying a source no `sources:` entry configures is weaker again. Resume is
 excused below two batches, and a refusal to stream at all for want of
 configuration certifies nothing instead of failing, reported in the plugin's
 own words — cut to a quoted 120-byte excerpt, as every plugin string the host
-quotes back is. A defect committed once the stream is open stays a finding.
+quotes back is. A defect committed once the stream is open stays a finding,
+and so does one committed in the refusal itself: an in-process source that
+rides documents or a cursor beside the error it declines with — or yields
+anything after it — is reported and fails certification.
 
 `lore plugin verify` is this suite pointed at an installed binary: it opens the
 binary, reads the manifest the binary reports, prepares the declared instance's

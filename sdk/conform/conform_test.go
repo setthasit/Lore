@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -260,4 +261,150 @@ func TestASingleBatchStreamCannotProveResumability(t *testing.T) {
 	if len(findings) != 1 || findings[0].Check != conform.CheckResumable {
 		t.Fatalf("findings = %+v, want the resume check to report that it could not run", findings)
 	}
+}
+
+type scripted struct {
+	changes iter.Seq2[lore.Batch, error]
+}
+
+func (scripted) Name() string { return "stub" }
+
+func (s scripted) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return s.changes
+}
+
+func TestAnErrorHasToEndTheStream(t *testing.T) {
+	full, _ := conformant(nil)
+	tests := map[string]struct {
+		changes iter.Seq2[lore.Batch, error]
+		detail  string
+	}{
+		"a connector that keeps yielding after an error": {
+			changes: func(yield func(lore.Batch, error) bool) {
+				if !yield(full[0], nil) {
+					return
+				}
+				if !yield(lore.Batch{}, errors.New("page 2 timed out")) {
+					return
+				}
+				for _, batch := range []lore.Batch{full[1], full[0], full[1]} {
+					if !yield(batch, nil) {
+						return
+					}
+				}
+			},
+			detail: "full stream: the stream yielded a batch carrying 2 documents after an error",
+		},
+		"a connector that yields a batch beside the error": {
+			changes: func(yield func(lore.Batch, error) bool) {
+				if !yield(full[0], nil) {
+					return
+				}
+				yield(full[1], errors.New("page 2 timed out"))
+			},
+			detail: "full stream: an error arrived in the same yield as a batch carrying 2 documents and 1 cursor keys",
+		},
+		"a connector that yields a cursor beside the error": {
+			changes: func(yield func(lore.Batch, error) bool) {
+				if !yield(full[0], nil) {
+					return
+				}
+				yield(lore.Batch{Cursor: lore.Cursor{"after": "4"}}, errors.New("page 2 timed out"))
+			},
+			detail: "full stream: an error arrived in the same yield as a batch carrying 0 documents and 1 cursor keys",
+		},
+		"a connector that yields a second error after the first": {
+			changes: func(yield func(lore.Batch, error) bool) {
+				if !yield(full[0], nil) {
+					return
+				}
+				if !yield(lore.Batch{}, errors.New("page 2 timed out")) {
+					return
+				}
+				yield(lore.Batch{}, errors.New("page 3 timed out too"))
+			},
+			detail: "full stream: the stream yielded another error after the first",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			result := conform.Check(t.Context(), func() lore.Connector { return scripted{tt.changes} },
+				conform.Fixture{Docs: 4}, nil)
+			if !slices.Contains(result.Ran, conform.CheckStreamError) {
+				t.Fatalf("ran = %v, want the error check among them", result.Ran)
+			}
+
+			reported := 0
+			for _, f := range result.Findings {
+				if f.Check == conform.CheckStreamError && strings.Contains(f.Detail, tt.detail) {
+					reported++
+				}
+			}
+			if reported != 1 {
+				t.Errorf("findings %v report %q containing %q %d times, want once; details: %+v",
+					checkNames(result.Findings), conform.CheckStreamError, tt.detail, reported, result.Findings)
+			}
+		})
+	}
+}
+
+func TestAStreamThatNeverFailsStillRunsTheErrorCheck(t *testing.T) {
+	result := conform.Check(t.Context(), newStub(conformant), conform.Fixture{Docs: 4}, nil)
+	if !slices.Contains(result.Ran, conform.CheckStreamError) {
+		t.Errorf("ran = %v, want the error check among them", result.Ran)
+	}
+	if len(result.Skipped) != 0 {
+		t.Errorf("a conformant connector reduced the run: %+v", result.Skipped)
+	}
+}
+
+func TestTheErrorCheckWatchesEveryStreamTheSuiteDrives(t *testing.T) {
+	full, _ := conformant(nil)
+	runs := 0
+	newConnector := func() lore.Connector {
+		runs++
+		if runs == 1 {
+			return stub{name: "stub", stream: conformant}
+		}
+		return scripted{changes: func(yield func(lore.Batch, error) bool) {
+			if !yield(full[0], nil) {
+				return
+			}
+			if !yield(lore.Batch{}, errors.New("page 2 timed out")) {
+				return
+			}
+			yield(full[1], nil)
+		}}
+	}
+
+	result := conform.Check(t.Context(), newConnector, conform.Fixture{Docs: 4}, nil)
+	for _, f := range result.Findings {
+		if f.Check == conform.CheckStreamError &&
+			strings.Contains(f.Detail, "second full stream: the stream yielded a batch carrying 2 documents after an error") {
+			return
+		}
+	}
+	t.Errorf("the idempotency re-run went unwatched: %+v", result.Findings)
+}
+
+func TestASourceThatDeclinesIsStillHeldToTheErrorContract(t *testing.T) {
+	refusing := func() lore.Connector {
+		return scripted{changes: func(yield func(lore.Batch, error) bool) {
+			yield(lore.Batch{Cursor: lore.Cursor{"after": "0"}}, errors.New("no team is configured"))
+		}}
+	}
+	unconfigured := func(error) bool { return true }
+
+	result := conform.Check(t.Context(), refusing, conform.Fixture{}, unconfigured)
+	if !slices.Contains(result.Ran, conform.CheckStreamError) {
+		t.Fatalf("ran = %v, skipped = %+v: a violation observed beside the refusal was thrown away",
+			result.Ran, result.Skipped)
+	}
+	for _, f := range result.Findings {
+		if f.Check == conform.CheckStreamError && strings.Contains(f.Detail, "0 documents and 1 cursor keys") {
+			return
+		}
+	}
+	t.Errorf("findings %+v do not report the cursor the refusal carried", result.Findings)
 }

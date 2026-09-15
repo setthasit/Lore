@@ -545,7 +545,7 @@ func TestPluginVerifyCertifiesWithTheDeclaredInstancesConfiguration(t *testing.T
 			res.exitCode, exitPrecondition, res.stdout, res.stderr)
 	}
 	for _, want := range []string{
-		"conformance (sources[tickets]): 1 failure on 1 of 6 checks",
+		"conformance (sources[tickets]): 1 failure on 2 of 7 checks",
 		"tickets: full stream",
 		"got team=PLATFORM token=fake-linear-token",
 	} {
@@ -585,7 +585,8 @@ func TestPluginVerifyReportsNotRunWhenAnUndeclaredPluginWantsConfiguration(t *te
 			}
 			assertSkippedWithReason(t, res.stdout,
 				conform.CheckStream, conform.CheckCursors, conform.CheckTimestamps,
-				conform.CheckIdentity, conform.CheckIdempotent, conform.CheckResumable)
+				conform.CheckIdentity, conform.CheckIdempotent, conform.CheckResumable,
+				conform.CheckStreamError)
 		})
 	}
 }
@@ -605,12 +606,12 @@ func TestPluginVerifyReportsTheReducedCountOfAnEmptyStream(t *testing.T) {
 		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
 			res.exitCode, exitOK, res.stdout, res.stderr)
 	}
-	if !strings.Contains(res.stdout, "conformance: passed on 2 of 6 checks") {
-		t.Errorf("stdout %q does not report a reduced run of 2 of 6 checks", res.stdout)
+	if !strings.Contains(res.stdout, "conformance: passed on 3 of 7 checks") {
+		t.Errorf("stdout %q does not report a reduced run of 3 of 7 checks", res.stdout)
 	}
 	assertSkippedWithReason(t, res.stdout,
 		conform.CheckCursors, conform.CheckTimestamps, conform.CheckIdentity, conform.CheckResumable)
-	for _, check := range []conform.CheckName{conform.CheckStream, conform.CheckIdempotent} {
+	for _, check := range []conform.CheckName{conform.CheckStream, conform.CheckIdempotent, conform.CheckStreamError} {
 		if !strings.Contains(res.stdout, "      "+string(check)+"\n") {
 			t.Errorf("stdout %q does not name %q among the checks it ran", res.stdout, check)
 		}
@@ -637,7 +638,7 @@ func TestPluginVerifyFailsAnUndeclaredPluginThatBreaksAfterOpeningTheStream(t *t
 			res.exitCode, exitPrecondition, res.stdout, res.stderr)
 	}
 	for _, want := range []string{
-		"conformance: 1 failure on 1 of 6 checks",
+		"conformance: 1 failure on 2 of 7 checks",
 		"the team vanished after the first batch",
 	} {
 		if !strings.Contains(res.stdout, want) {

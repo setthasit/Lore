@@ -489,8 +489,12 @@ positive width before the index opens.
 ## Invariants a plugin must not break
 
 Certification ([`sdk/conform`](09-plugin-protocol.md#conformance)) checks the
-first four, less any the stream gave no material to check; the engine enforces
-the rest at runtime.
+first four, less any the stream gave no material to check, and the
+stream-error rule of the `Changes` contract ([04](04-connectors-and-sync.md)),
+which a stream that never failed passes rather than leaves unreached and which
+bites on an in-process connector, the host shim enforcing it at the boundary
+for a subprocess plugin ([09](09-plugin-protocol.md#conformance)); the engine
+enforces the rest at runtime.
 
 1. **Resumable and idempotent.** `Changes` from a mid-stream cursor yields the
    remainder, and re-running a stream re-yields identical `DocID`s. Upserts are

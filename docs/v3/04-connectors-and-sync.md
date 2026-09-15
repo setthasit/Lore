@@ -10,10 +10,10 @@ own binary ([08](08-extensibility.md)):
 type Connector interface {
     Name() string // "github", "notion", "jira", …
 
-    // Changes streams batches of documents modified since cursor,
-    // oldest-first. Each Batch carries the cursor that becomes durable
-    // once the batch is committed — the checkpoint unit IS the batch.
-    // Must be resumable and idempotent.
+    // Batches carry documents modified since cursor, oldest-first; a nil
+    // cursor streams everything. Must be resumable and idempotent. An error
+    // ends the stream: its batch is not committed and the cursor stays where
+    // the last committed batch left it.
     Changes(ctx context.Context, cursor Cursor) iter.Seq2[Batch, error]
 }
 
@@ -46,10 +46,15 @@ Contract rules:
 - Both timestamps populated: `CreatedAt` (event time) and `UpdatedAt`
   (edit time / watermark). A source without true creation time sets
   `CreatedAt = UpdatedAt` and says so in its manifest summary.
+- **An error ends the stream.** A connector that yields an error yields nothing
+  after it, and nothing beside it: the batch in that yield is dropped with the
+  error, so documents or a cursor riding there are lost rather than committed.
+  The orchestrator stops at the first error and leaves the cursor where the
+  last committed batch left it.
 - **Conformance-tested.** Every connector passes `sdk/conform` — resumability,
-  idempotency, batch-cursor honesty, timestamps, full identity, and a stream
-  that reaches its end — which is also the third-party certification suite
-  ([08](08-extensibility.md)).
+  idempotency, batch-cursor honesty, timestamps, full identity, a stream that
+  reaches its end, and an error that ends the stream — which is also the
+  third-party certification suite ([08](08-extensibility.md)).
 
 ### GitHubConnector (v1)
 

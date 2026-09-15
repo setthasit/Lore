@@ -18,7 +18,8 @@ const (
 	CheckIdempotent CheckName = "changes is idempotent"
 	CheckResumable  CheckName = "resume from a mid-stream cursor"
 
-	CheckStream CheckName = "changes streams to completion"
+	CheckStream      CheckName = "changes streams to completion"
+	CheckStreamError CheckName = "an error ends the stream"
 )
 
 type Fixture struct {
@@ -74,8 +75,9 @@ func noDocument(batches []lore.Batch) string {
 // predicate accepts, and waives the resume check below two batches.
 func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixture, unconfigured func(error) bool) Result {
 	var result Result
+	var watch errorWatch
 
-	source, full, failed := fullStream(ctx, newConnector, fixture)
+	source, full, failed := fullStream(ctx, newConnector, fixture, &watch)
 	stages := []stage{
 		{
 			check: CheckCursors,
@@ -99,7 +101,7 @@ func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixt
 		},
 		{
 			check:  CheckIdempotent,
-			assert: func() []Finding { return idempotent(ctx, newConnector, full) },
+			assert: func() []Finding { return idempotent(ctx, newConnector, full, &watch) },
 		},
 		{
 			check: CheckResumable,
@@ -111,7 +113,7 @@ func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixt
 					"the stream an unconfigured source gave has %d batch(es), and %s",
 					len(batches), resumeNeedsTwoBatches)
 			},
-			assert: func() []Finding { return resumable(ctx, newConnector, full, fixture) },
+			assert: func() []Finding { return resumable(ctx, newConnector, full, fixture, &watch) },
 		},
 	}
 
@@ -119,8 +121,11 @@ func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixt
 		if unconfigured != nil && !failed.opened && unconfigured(failed.err) {
 			result.recordSkip(CheckStream, fmt.Sprintf(
 				"no configuration was supplied, and the source declined to stream without it: %v", failed.err))
+			result.recordErrorWatch(&watch,
+				"the source declined to stream, so it yielded no error the suite could judge as ending a stream")
 		} else {
 			result.recordRan(CheckStream, []Finding{failed.finding})
+			result.recordErrorWatch(&watch, "")
 		}
 		for _, s := range stages {
 			result.recordSkip(s.check, failed.reason)
@@ -131,7 +136,7 @@ func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixt
 	result.recordRan(CheckStream, nil)
 	for _, s := range stages {
 		if ctx.Err() != nil {
-			return result
+			break
 		}
 		if s.skip != nil {
 			if reason := s.skip(full); reason != "" {
@@ -141,6 +146,7 @@ func Check(ctx context.Context, newConnector func() lore.Connector, fixture Fixt
 		}
 		result.recordRan(s.check, s.assert())
 	}
+	result.recordErrorWatch(&watch, "")
 	return result
 }
 
@@ -157,6 +163,44 @@ func (r *Result) recordSkip(check CheckName, reason string) {
 	r.Skipped = append(r.Skipped, Skip{Check: check, Reason: reason})
 }
 
+func (r *Result) recordErrorWatch(w *errorWatch, declined string) {
+	switch {
+	case len(w.findings) > 0:
+		r.recordRan(CheckStreamError, w.findings)
+	case declined != "":
+		r.recordSkip(CheckStreamError, declined)
+	default:
+		r.recordRan(CheckStreamError, nil)
+	}
+}
+
+type errorWatch struct {
+	findings []Finding
+}
+
+func (w *errorWatch) fail(stream, format string, args ...any) {
+	w.findings = append(w.findings, Finding{CheckStreamError, stream + ": " + fmt.Sprintf(format, args...)})
+}
+
+func (w *errorWatch) beside(stream string, batch lore.Batch) {
+	if len(batch.Docs) == 0 && len(batch.Cursor) == 0 {
+		return
+	}
+	w.fail(stream,
+		"an error arrived in the same yield as a batch carrying %d documents and %d cursor keys: a consumer drops that batch, so neither its documents nor its cursor survive the error",
+		len(batch.Docs), len(batch.Cursor))
+}
+
+func (w *errorWatch) after(stream string, batch lore.Batch, err error) {
+	if err != nil {
+		w.fail(stream, "the stream yielded another error after the first: an error ends the stream, so nothing after it reaches a consumer")
+		return
+	}
+	w.fail(stream,
+		"the stream yielded a batch carrying %d documents after an error: an error ends the stream, so nothing after it reaches a consumer",
+		len(batch.Docs))
+}
+
 type streamFailure struct {
 	finding Finding
 	err     error
@@ -164,10 +208,10 @@ type streamFailure struct {
 	reason  string
 }
 
-func fullStream(ctx context.Context, newConnector func() lore.Connector, fixture Fixture) (string, []lore.Batch, *streamFailure) {
+func fullStream(ctx context.Context, newConnector func() lore.Connector, fixture Fixture, watch *errorWatch) (string, []lore.Batch, *streamFailure) {
 	conn := newConnector()
 
-	full, delivered, err := collect(ctx, conn, nil)
+	full, delivered, err := collect(ctx, conn, nil, watch, "full stream")
 	if err != nil {
 		failed := &streamFailure{
 			finding: Finding{CheckStream, fmt.Sprintf("%s: full stream: %v", conn.Name(), err)},
@@ -208,11 +252,7 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 	}
 
 	result := Check(t.Context(), newConnector, fixture, nil)
-	for _, f := range result.Findings {
-		if f.Check == CheckStream {
-			t.Fatal(f.Detail)
-		}
-	}
+	reportSkipsAndFindingsBeforeTheFatal(t, result)
 
 	for _, check := range result.Ran {
 		if check == CheckStream {
@@ -226,6 +266,37 @@ func Run(t *testing.T, newConnector func() lore.Connector, fixture Fixture) {
 			}
 		})
 	}
+}
+
+type failureReporter interface {
+	Helper()
+	Logf(format string, args ...any)
+	Errorf(format string, args ...any)
+	Fatal(args ...any)
+}
+
+func reportSkipsAndFindingsBeforeTheFatal(t failureReporter, result Result) {
+	t.Helper()
+	for _, skip := range result.Skipped {
+		t.Logf("%s — %s", skip.Check, skip.Reason)
+	}
+
+	failed := ""
+	for _, f := range result.Findings {
+		if f.Check == CheckStream {
+			failed = f.Detail
+			break
+		}
+	}
+	if failed == "" {
+		return
+	}
+	for _, f := range result.Findings {
+		if f.Check == CheckStreamError {
+			t.Errorf("%s: %s", f.Check, f.Detail)
+		}
+	}
+	t.Fatal(failed)
 }
 
 func batchCursors(batches []lore.Batch, where string) []Finding {
@@ -291,8 +362,8 @@ func identity(batches []lore.Batch, source string) []Finding {
 	return findings
 }
 
-func idempotent(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch) []Finding {
-	second, _, err := collect(ctx, newConnector(), nil)
+func idempotent(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch, watch *errorWatch) []Finding {
+	second, _, err := collect(ctx, newConnector(), nil, watch, "second full stream")
 	if err != nil {
 		return []Finding{{CheckIdempotent, fmt.Sprintf("second full stream: %v", err)}}
 	}
@@ -313,7 +384,7 @@ func idempotent(ctx context.Context, newConnector func() lore.Connector, full []
 	return nil
 }
 
-func resumable(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch, fixture Fixture) []Finding {
+func resumable(ctx context.Context, newConnector func() lore.Connector, full []lore.Batch, fixture Fixture, watch *errorWatch) []Finding {
 	if tooShortToResume(full) {
 		return []Finding{{CheckResumable, fmt.Sprintf(
 			"the full stream has %d batch(es): %s", len(full), resumeNeedsTwoBatches)}}
@@ -339,7 +410,7 @@ func resumable(ctx context.Context, newConnector func() lore.Connector, full []l
 	}
 
 	cursor := full[at].Cursor
-	resumed, _, err := collect(ctx, newConnector(), cursor)
+	resumed, _, err := collect(ctx, newConnector(), cursor, watch, "resumed stream")
 	if err != nil {
 		return []Finding{{CheckResumable, fmt.Sprintf("resuming from the batch %d cursor %v: %v", at, cursor, err)}}
 	}
@@ -378,13 +449,23 @@ func resumable(ctx context.Context, newConnector func() lore.Connector, full []l
 	return findings
 }
 
-func collect(ctx context.Context, c lore.Connector, cursor lore.Cursor) ([]lore.Batch, int, error) {
+func collect(ctx context.Context, c lore.Connector, cursor lore.Cursor, watch *errorWatch, stream string) ([]lore.Batch, int, error) {
 	var batches []lore.Batch
+	var failure error
 	for batch, err := range c.Changes(ctx, cursor) {
+		if failure != nil {
+			watch.after(stream, batch, err)
+			break
+		}
 		if err != nil {
-			return nil, len(batches), err
+			failure = err
+			watch.beside(stream, batch)
+			continue
 		}
 		batches = append(batches, batch)
+	}
+	if failure != nil {
+		return nil, len(batches), failure
 	}
 	return batches, len(batches), nil
 }
