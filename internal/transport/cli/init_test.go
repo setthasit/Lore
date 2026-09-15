@@ -135,8 +135,9 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 			t.Errorf("stdout = %q, want it to name %s, which the scaffold mentions", res.stdout, variable)
 		}
 	}
-	if strings.Contains(res.stdout, "CHATTER_API_KEY") {
-		t.Errorf("stdout = %q, want no variable for the commented-out llm stanza", res.stdout)
+	const guidance = "export LORE_FORGE_TOKEN and VECTORS_API_KEY and CHATTER_API_KEY, then run"
+	if !strings.Contains(res.stdout, guidance) {
+		t.Errorf("stdout = %q, want it to name every scaffolded variable once, as %q", res.stdout, guidance)
 	}
 
 	scaffold := readConfigFile(t, path)
@@ -325,7 +326,7 @@ func TestCredentialNoteNamesEverySecretsDefaultVariable(t *testing.T) {
 		{
 			name: "two secrets sharing one variable",
 			envs: []string{"LORE_A_TOKEN", "LORE_A_TOKEN"},
-			want: "credentials come from LORE_A_TOKEN and LORE_A_TOKEN",
+			want: "credentials come from LORE_A_TOKEN",
 		},
 		{
 			name: "one secret suggesting nothing",

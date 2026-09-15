@@ -176,20 +176,12 @@ func (s *scaffold) embedderBlock() string {
 func (s *scaffold) llmBlock() string {
 	return "# Synthesis: lore ask and --explain answer in prose only with this block.\n" +
 		"# llm:\n" +
-		scaffoldLine("#   ", "provider: "+s.llm.Name, credentialNote(s.llm)) +
+		scaffoldLine("#   ", "provider: "+s.llm.Name, credentialNote(s.llm, uniqueVariables(s.embedder)...)) +
 		scaffoldLine("#   ", "model: "+scalar(s.llm.DefaultModels[lore.CapabilityComplete]), "")
 }
 
 func (s *scaffold) variables() []string {
-	var names []string
-	for _, manifest := range []lore.Manifest{s.source, s.embedder} {
-		for _, name := range defaultVariables(manifest) {
-			if !slices.Contains(names, name) {
-				names = append(names, name)
-			}
-		}
-	}
-	return names
+	return uniqueVariables(s.source, s.embedder, s.llm)
 }
 
 func withBlock(m lore.Manifest, indent string) string {
@@ -234,18 +226,26 @@ func scalar(value string) string {
 	return value
 }
 
-func credentialNote(m lore.Manifest) string {
-	names := defaultVariables(m)
-	if len(names) == 0 {
+func credentialNote(m lore.Manifest, alreadyNamed ...string) string {
+	var fresh []string
+	for _, name := range uniqueVariables(m) {
+		if !slices.Contains(alreadyNamed, name) {
+			fresh = append(fresh, name)
+		}
+	}
+	if len(fresh) == 0 {
 		return ""
 	}
-	return "credentials come from " + strings.Join(names, " and ")
+	return "credentials come from " + strings.Join(fresh, " and ")
 }
 
-func defaultVariables(m lore.Manifest) []string {
+func uniqueVariables(manifests ...lore.Manifest) []string {
 	var names []string
-	for _, secret := range m.Secrets {
-		if secret.DefaultEnv != "" {
+	for _, m := range manifests {
+		for _, secret := range m.Secrets {
+			if secret.DefaultEnv == "" || slices.Contains(names, secret.DefaultEnv) {
+				continue
+			}
 			names = append(names, secret.DefaultEnv)
 		}
 	}
