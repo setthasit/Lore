@@ -61,6 +61,10 @@ func (i *Instance) UnmarshalYAML(node *yaml.Node) error {
 
 	for pair := 0; pair+1 < len(node.Content); pair += 2 {
 		key, value := node.Content[pair], node.Content[pair+1]
+		if declaredEarlier(node.Content[:pair], key.Value) {
+			return fmt.Errorf("line %d: field %s is declared more than once in an instance",
+				key.Line, key.Value)
+		}
 		switch key.Value {
 		case "id":
 			if err := value.Decode(&i.ID); err != nil {
@@ -78,6 +82,15 @@ func (i *Instance) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+func declaredEarlier(content []*yaml.Node, name string) bool {
+	for prior := 0; prior < len(content); prior += 2 {
+		if content[prior].Value == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (i Instance) Ident() string {
