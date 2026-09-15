@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/wire"
 )
@@ -64,7 +65,8 @@ func (e external) dial(ctx context.Context, instance string) (*session, error) {
 		session.abort()
 		return nil, protocolError(instance, wire.OpManifest, nil,
 			"answered the handshake as %s (%s) after registering as %s (%s)",
-			Excerpt(manifest.Name), Excerpt(string(manifest.Kind)), Excerpt(e.manifest.Name), Excerpt(string(e.manifest.Kind)))
+			internalerror.Excerpt(manifest.Name), internalerror.Excerpt(manifest.Kind),
+			internalerror.Excerpt(e.manifest.Name), internalerror.Excerpt(e.manifest.Kind))
 	}
 	return session, nil
 }
@@ -113,7 +115,7 @@ type providerPlugin struct {
 func (p *providerPlugin) NewProvider(cfg lore.ProviderConfig) (lore.Provider, error) {
 	if !p.manifest.Capabilities.Declares(cfg.Capability) {
 		return nil, protocolError(cfg.Instance, wire.OpManifest, nil,
-			"plugin %s does not declare %s", Excerpt(p.manifest.Name), cfg.Capability)
+			"plugin %s does not declare %s", internalerror.Excerpt(p.manifest.Name), cfg.Capability)
 	}
 
 	call := call{

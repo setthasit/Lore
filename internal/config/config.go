@@ -192,14 +192,14 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func Decode(r io.Reader) (*Config, error) {
-	cfg, err := decode(r)
+	cfg, err := parse(r)
 	if err != nil {
 		return nil, internalerror.NewBadRequestError("invalid configuration", err)
 	}
 	return cfg, nil
 }
 
-func decode(r io.Reader) (*Config, error) {
+func parse(r io.Reader) (*Config, error) {
 	decoder := yaml.NewDecoder(r)
 	decoder.KnownFields(true)
 
@@ -220,9 +220,9 @@ func Load(path string) (*Config, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	cfg, err := decode(file)
+	cfg, err := parse(file)
 	if err != nil {
-		return nil, internalerror.NewBadRequestError("invalid configuration at "+path, err)
+		return nil, refuseUndecodable("invalid configuration at "+path, err)
 	}
 
 	if err := cfg.applyDefaults(); err != nil {
@@ -243,9 +243,9 @@ func ReadFile(path string) (text string, cfg *Config, err error) {
 		return "", nil, internalerror.NewInternalError("cannot read "+path, err)
 	}
 
-	parsed, err := Decode(bytes.NewReader(content))
+	parsed, err := parse(bytes.NewReader(content))
 	if err != nil {
-		return "", nil, internalerror.NewBadRequestError("cannot parse "+path, err)
+		return "", nil, refuseUndecodable("cannot parse "+path, err)
 	}
 	return string(content), parsed, nil
 }
@@ -253,6 +253,11 @@ func ReadFile(path string) (text string, cfg *Config, err error) {
 func refuseMissing(path string, cause error) error {
 	return internalerror.NewNotFoundError("no configuration at "+path+
 		" — run `lore init` to create one", cause)
+}
+
+func refuseUndecodable(refusal string, cause error) error {
+	return internalerror.NewBadRequestError(refusal+": "+
+		internalerror.Excerpt(internalerror.MessageOf(cause)), cause)
 }
 
 type Splice struct {

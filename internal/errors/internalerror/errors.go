@@ -3,6 +3,7 @@ package internalerror
 import (
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // Kind classifies an error so a transport can map it to a protocol-native code
@@ -90,6 +91,18 @@ func MessageOf(err error) string {
 		return classified.Message
 	}
 	return err.Error()
+}
+
+const excerptLimit = 120
+
+// Excerpt renders text so a message can carry it without putting control bytes
+// or an unbounded value on a terminal; a []byte is bounded before conversion,
+// so quoting a frame does not copy it.
+func Excerpt[T ~string | ~[]byte](text T) string {
+	if len(text) > excerptLimit {
+		return strconv.Quote(string(text[:excerptLimit])) + "…"
+	}
+	return strconv.Quote(string(text))
 }
 
 func IsBadRequest(err error) bool {

@@ -40,8 +40,7 @@ func checkInstanceID(in Instance) error {
 		return nil
 	}
 	return internalerror.NewBadRequestError(fmt.Sprintf(
-		"%s has id %q; an instance id becomes the prefix of every document identity it produces, so it must start with a letter or digit and hold only letters, digits, - and _",
-		in.Field, id), nil)
+		"%s has id %q; %s", in.Field, id, InstanceIDRule), nil)
 }
 
 func checkKeys(manifest lore.Manifest, in Instance) error {

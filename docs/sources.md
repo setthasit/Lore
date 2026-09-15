@@ -60,7 +60,7 @@ Rules that hold for all four:
   before it issues a request (`internal/registry/build.go:517-550`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
   silently ignored setting: `invalid configuration at ./lore.yaml: …` for a key
-  the engine does not have (`internal/config/config.go:211-222`), and
+  the engine does not have (`internal/config/config.go:223-226`), and
   `sources[github].with.reposs is not a key plugin "github" accepts; it accepts
   repos, token_env` for one the plugin does not
   (`internal/registry/build.go:378-391`).

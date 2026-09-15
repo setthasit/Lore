@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
@@ -20,12 +21,16 @@ sources:
       token_env: LORE_FORGE_TOKEN
 `
 
+// Every byte of an excerpt can escape to \xNN, so the widest quoted detail is what an all-NUL excerpt renders to.
+var maxExcerpt = len(internalerror.Excerpt(strings.Repeat("\x00", 1<<10)))
+
 func TestReadFileClassifiesEveryRefusal(t *testing.T) {
 	cases := []struct {
-		name  string
-		stage func(t *testing.T, path string)
-		kind  internalerror.Kind
-		want  func(path string) string
+		name   string
+		stage  func(t *testing.T, path string)
+		kind   internalerror.Kind
+		want   func(path string) string
+		detail []string
 	}{{
 		name:  "missing",
 		stage: func(*testing.T, string) {},
@@ -50,8 +55,9 @@ func TestReadFileClassifiesEveryRefusal(t *testing.T) {
 				t.Fatalf("stage an unparseable configuration: %v", err)
 			}
 		},
-		kind: internalerror.KindBadRequest,
-		want: func(path string) string { return "cannot parse " + path },
+		kind:   internalerror.KindBadRequest,
+		want:   func(path string) string { return "cannot parse " + path },
+		detail: []string{"line 1"},
 	}, {
 		name: "unknown key",
 		stage: func(t *testing.T, path string) {
@@ -59,8 +65,31 @@ func TestReadFileClassifiesEveryRefusal(t *testing.T) {
 				t.Fatalf("stage a configuration with an unknown key: %v", err)
 			}
 		},
-		kind: internalerror.KindBadRequest,
-		want: func(path string) string { return "cannot parse " + path },
+		kind:   internalerror.KindBadRequest,
+		want:   func(path string) string { return "cannot parse " + path },
+		detail: []string{"line 2", "nosuch"},
+	}, {
+		name: "control bytes in a key",
+		stage: func(t *testing.T, path string) {
+			body := "workspace: myproject\n\"\\e]0;pwned\\a" + strings.Repeat("x", 200) + "\": 1\n"
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("stage a configuration whose key carries control bytes: %v", err)
+			}
+		},
+		kind:   internalerror.KindBadRequest,
+		want:   func(path string) string { return "cannot parse " + path },
+		detail: []string{"line 2", `\x1b]0;pwned\a`},
+	}, {
+		name: "a key of control bytes reaches the widest escape",
+		stage: func(t *testing.T, path string) {
+			body := "workspace: myproject\n\"" + strings.Repeat(`\0`, 200) + "\": 1\n"
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("stage a configuration whose key is all control bytes: %v", err)
+			}
+		},
+		kind:   internalerror.KindBadRequest,
+		want:   func(path string) string { return "cannot parse " + path },
+		detail: []string{"line 2", `\x00`},
 	}}
 
 	for _, tc := range cases {
@@ -76,8 +105,25 @@ func TestReadFileClassifiesEveryRefusal(t *testing.T) {
 			if classified.Kind != tc.kind {
 				t.Errorf("kind = %v, want %v", classified.Kind, tc.kind)
 			}
-			if want := tc.want(path); classified.Message != want {
-				t.Errorf("message = %q, want %q", classified.Message, want)
+			if i := strings.IndexFunc(classified.Message, unicode.IsControl); i >= 0 {
+				t.Errorf("message = %q carries a control byte at %d", classified.Message, i)
+			}
+			if bound := len(tc.want(path)) + len(": ") + maxExcerpt; len(classified.Message) > bound {
+				t.Errorf("message is %d bytes, want at most %d", len(classified.Message), bound)
+			}
+			if len(tc.detail) == 0 {
+				if want := tc.want(path); classified.Message != want {
+					t.Errorf("message = %q, want %q", classified.Message, want)
+				}
+				return
+			}
+			if want := tc.want(path) + ": "; !strings.HasPrefix(classified.Message, want) {
+				t.Errorf("message = %q, want it to start with %q", classified.Message, want)
+			}
+			for _, detail := range tc.detail {
+				if !strings.Contains(classified.Message, detail) {
+					t.Errorf("message = %q, want it to carry %q", classified.Message, detail)
+				}
 			}
 		})
 	}

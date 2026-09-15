@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/wire"
 )
@@ -115,7 +116,7 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 	if manifest.APIVersion != lore.APIVersion {
 		s.abort()
 		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
-			"plugin %s speaks api_version %d, host speaks %d", Excerpt(manifest.Name), manifest.APIVersion, lore.APIVersion)
+			"plugin %s speaks api_version %d, host speaks %d", internalerror.Excerpt(manifest.Name), manifest.APIVersion, lore.APIVersion)
 	}
 	if manifest.Name == "" {
 		s.abort()
@@ -127,7 +128,7 @@ func handshake(ctx context.Context, binary, instance string, host lore.Host, tun
 		s.abort()
 		return nil, lore.Manifest{}, protocolError(instance, wire.OpManifest, nil,
 			"plugin %s declares kind %s, which is none of %q, %q, %q",
-			Excerpt(manifest.Name), Excerpt(string(manifest.Kind)), lore.KindSource, lore.KindProvider, lore.KindCode)
+			internalerror.Excerpt(manifest.Name), internalerror.Excerpt(manifest.Kind), lore.KindSource, lore.KindProvider, lore.KindCode)
 	}
 	return s, manifest, nil
 }
@@ -179,7 +180,7 @@ func (s *session) await(ctx context.Context, env wire.Envelope, timeout time.Dur
 	if f.ID != env.ID {
 		s.abort()
 		return nil, protocolError(s.instance, env.Op, nil,
-			"answered %s with id %s, host sent id %q, so no frame can be correlated any more", env.Op, Excerpt(f.ID), env.ID)
+			"answered %s with id %s, host sent id %q, so no frame can be correlated any more", env.Op, internalerror.Excerpt(f.ID), env.ID)
 	}
 	// Checked before the version below, so a plugin's own rejection message is not replaced by ours.
 	if f.Error != nil {
@@ -231,12 +232,12 @@ func (s *session) read(ctx context.Context, op string, timeout time.Duration) (*
 		var f wire.Frame
 		if err := json.Unmarshal(r.line, &f); err != nil {
 			s.abort()
-			shown := Excerpt(string(r.line[:min(len(r.line), excerptLimit+1)]))
+			shown := internalerror.Excerpt(r.line)
 			var typeErr *json.UnmarshalTypeError
 			if errors.As(err, &typeErr) && typeErr.Field != "" {
 				return nil, protocolError(s.instance, op, err,
 					"answered %s with a frame whose %s field holds a JSON %s where the host expects %s: %s", op,
-					Excerpt(typeErr.Field), Excerpt(typeErr.Value), wireShape(typeErr.Type), shown)
+					internalerror.Excerpt(typeErr.Field), internalerror.Excerpt(typeErr.Value), wireShape(typeErr.Type), shown)
 			}
 			return nil, protocolError(s.instance, op, err,
 				"wrote a line on stdout that is not a protocol frame during %s: %s", op, shown)

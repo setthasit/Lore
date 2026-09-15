@@ -84,10 +84,11 @@ embedder:
 
 func TestLoad(t *testing.T) {
 	tests := []struct {
-		name    string
-		yaml    string
-		wantErr []string
-		check   func(*testing.T, *Config)
+		name        string
+		yaml        string
+		wantErr     []string
+		wantMessage []string
+		check       func(*testing.T, *Config)
 	}{
 		{
 			name: "the documented example loads whole",
@@ -360,6 +361,17 @@ embedder: { provider: ollama, model: nomic-embed-text, dimensions: -1 }
 			yaml:    minimal + "repos:\n  - remote: github:acme/myproject\n",
 			wantErr: []string{"every entry in repos must have a path"},
 		},
+		{
+			name: "a repeated instance key reaches the operator by line and name",
+			yaml: `
+workspace: myproject
+sources:
+  - use: forge
+    use: gitlab
+embedder: { provider: openai, model: text-embedding-3-small }
+`,
+			wantMessage: []string{"line 5: field use is declared more than once in an instance"},
+		},
 	}
 
 	for _, test := range tests {
@@ -371,7 +383,7 @@ embedder: { provider: ollama, model: nomic-embed-text, dimensions: -1 }
 
 			cfg, err := Load(writeConfig(t, body))
 
-			if len(test.wantErr) > 0 {
+			if len(test.wantErr) > 0 || len(test.wantMessage) > 0 {
 				if err == nil {
 					t.Fatalf("Load() = %+v, want error containing %q", cfg, test.wantErr)
 				}
@@ -381,6 +393,11 @@ embedder: { provider: ollama, model: nomic-embed-text, dimensions: -1 }
 				for _, want := range test.wantErr {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("Load() error = %q, want it to contain %q", err, want)
+					}
+				}
+				for _, want := range test.wantMessage {
+					if message := internalerror.MessageOf(err); !strings.Contains(message, want) {
+						t.Errorf("Load() message = %q, want it to contain %q", message, want)
 					}
 				}
 				return
