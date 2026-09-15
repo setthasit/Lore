@@ -154,15 +154,26 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 func TestSourceAddRefusesAnIDAlreadyInUse(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runOn(t, sourceRegistry(t), nil, "forge\n"+forgeAnswers, "source", "add", "forge", "--config", path)
-	if res.exitCode != exitBadRequest {
-		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	res := runOn(t, sourceRegistry(t), nil, "forge\nforge-infra\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitOK, res.stderr)
 	}
-	if !strings.Contains(res.stderr, "already has an instance called forge") {
-		t.Errorf("stderr = %q, want it to name the identity that is taken", res.stderr)
+	const question = "sources already has an instance called forge," +
+		" so this one needs its own id, for example forge-2: "
+	const transcript = question +
+		"sources already has an instance called forge; every id in sources must be unique\n" +
+		question
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want the taken id refused and the question asked again\n%q", res.stdout, transcript)
 	}
-	if after := readConfigFile(t, path); after != seeded {
-		t.Errorf("file = %q, want it untouched after the refusal", after)
+
+	after := readConfigFile(t, path)
+	if !strings.Contains(after, "  - id: forge-infra\n") {
+		t.Errorf("file =\n%s\nwant the id given after the refusal appended", after)
+	}
+	cfg := decodeConfigFile(t, after)
+	if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "forge-infra" {
+		t.Errorf("sources = %+v, want exactly the re-asked id appended", cfg.Sources)
 	}
 }
 

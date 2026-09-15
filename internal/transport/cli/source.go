@@ -20,6 +20,8 @@ import (
 
 const sourcesKey = "sources"
 
+const missingInstanceID = "sources[].id must be set"
+
 const externalPromptNotice = "the questions below are the ones this plugin's own manifest declares;" +
 	" answer each one with configuration, and a secret with the NAME of an environment variable, never the value"
 
@@ -228,16 +230,30 @@ func promptInstanceID(p *prompter, plugin string, existing []config.Instance) (s
 		return "", nil
 	}
 
-	id, err := p.required("sources[].id", "sources already has an instance called "+plugin+
-		", so this one needs its own id, for example "+plugin+"-2")
-	if err != nil {
-		return "", err
+	question := "sources already has an instance called " + plugin +
+		", so this one needs its own id, for example " + plugin + "-2"
+	for {
+		id, atEOF, err := p.read(question, "")
+		if err != nil {
+			return "", err
+		}
+		if id == "" {
+			if atEOF {
+				return "", internalerror.NewBadRequestError(missingInstanceID, nil)
+			}
+			printfln(p.out, "%s", missingInstanceID)
+			continue
+		}
+		if !registry.ValidInstanceID(id) {
+			printfln(p.out, "%q cannot be an instance id: %s", id, registry.InstanceIDRule)
+			continue
+		}
+		if taken(id) {
+			printfln(p.out, "sources already has an instance called %s; every id in sources must be unique", id)
+			continue
+		}
+		return id, nil
 	}
-	if taken(id) {
-		return "", internalerror.NewBadRequestError("sources already has an instance called "+id+
-			"; every id in sources must be unique", nil)
-	}
-	return id, nil
 }
 
 func secretHolds(m lore.Manifest, secret lore.Secret) string {
@@ -305,6 +321,17 @@ type prompter struct {
 }
 
 func (p *prompter) ask(question, fallback string) (string, error) {
+	answer, _, err := p.read(question, fallback)
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return fallback, nil
+	}
+	return answer, nil
+}
+
+func (p *prompter) read(question, fallback string) (answer string, atEOF bool, err error) {
 	if fallback == "" {
 		_, _ = fmt.Fprintf(p.out, "%s: ", question)
 	} else {
@@ -313,12 +340,9 @@ func (p *prompter) ask(question, fallback string) (string, error) {
 
 	line, err := p.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", internalerror.NewInternalError("cannot read the answer to "+question, err)
+		return "", false, internalerror.NewInternalError("cannot read the answer to "+question, err)
 	}
-	if answer := strings.TrimSpace(line); answer != "" {
-		return answer, nil
-	}
-	return fallback, nil
+	return strings.TrimSpace(line), errors.Is(err, io.EOF), nil
 }
 
 func (p *prompter) envName(field, holds, fallback string) (string, error) {

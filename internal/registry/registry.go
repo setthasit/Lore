@@ -30,8 +30,10 @@ var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 const EnvNameRule = "upper-case letters, digits and underscores, not starting with a digit"
 
-// An instance id becomes the DocID prefix, so a colon would make document identities unparseable.
 var instancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+const InstanceIDRule = "an instance id becomes the prefix of every document identity it produces," +
+	" so it must start with a letter or digit and hold only letters, digits, - and _"
 
 func ValidPluginName(name string) bool {
 	return namePattern.MatchString(name)
@@ -39,6 +41,10 @@ func ValidPluginName(name string) bool {
 
 func ValidEnvName(name string) bool {
 	return envPattern.MatchString(name)
+}
+
+func ValidInstanceID(id string) bool {
+	return instancePattern.MatchString(id)
 }
 
 type Entry struct {
