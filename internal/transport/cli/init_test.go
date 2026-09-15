@@ -108,6 +108,12 @@ func chatterPlugin() lore.Plugin {
 	}}
 }
 
+func chatterReading(variable string) lore.Plugin {
+	p := chatterPlugin().(stubProvider)
+	p.manifest.Secrets = []lore.Secret{{Key: "api_key", ConfigField: "api_key_env", DefaultEnv: variable}}
+	return p
+}
+
 func stubRegistry(t *testing.T, pluginSet ...lore.Plugin) *registry.Registry {
 	t.Helper()
 
@@ -285,6 +291,46 @@ func TestInitRefusesToOverwrite(t *testing.T) {
 	}
 }
 
+func TestInitNamesAVariableTheEmbedderAlreadyNamedOnlyOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+	reg := stubRegistry(t, forgePlugin(), vectorsPlugin(), chatterReading("VECTORS_API_KEY"))
+
+	res := runOn(t, reg, nil, "", "init", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	const guidance = "export LORE_FORGE_TOKEN and VECTORS_API_KEY, then run"
+	if !strings.Contains(res.stdout, guidance) {
+		t.Errorf("stdout = %q, want it to name the shared variable once, as %q", res.stdout, guidance)
+	}
+
+	scaffold := readConfigFile(t, path)
+	if got := strings.Count(scaffold, "credentials come from VECTORS_API_KEY"); got != 1 {
+		t.Errorf("notes naming VECTORS_API_KEY = %d, want 1\n--- scaffold ---\n%s", got, scaffold)
+	}
+	if !strings.Contains(scaffold, "#   provider: chatter\n") {
+		t.Errorf("scaffold repeats a note already written above\n--- scaffold ---\n%s", scaffold)
+	}
+}
+
+func TestInitKeepsTheLanguageModelNoteForAVariableOnlyTheSourceNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+	reg := stubRegistry(t, forgePlugin(), vectorsPlugin(), chatterReading("LORE_FORGE_TOKEN"))
+
+	res := runOn(t, reg, nil, "", "init", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	scaffold := readConfigFile(t, path)
+	if got := strings.Count(scaffold, "credentials come from LORE_FORGE_TOKEN"); got != 1 {
+		t.Errorf("notes naming LORE_FORGE_TOKEN = %d, want 1\n--- scaffold ---\n%s", got, scaffold)
+	}
+	if !strings.Contains(scaffold, "# credentials come from LORE_FORGE_TOKEN\n") {
+		t.Errorf("scaffold drops the note for a variable no earlier note named\n--- scaffold ---\n%s", scaffold)
+	}
+}
+
 func assertNoSecretValues(t *testing.T, content string) {
 	t.Helper()
 
@@ -311,9 +357,10 @@ func manifestWithSecrets(envs ...string) lore.Manifest {
 
 func TestCredentialNoteNamesEverySecretsDefaultVariable(t *testing.T) {
 	tests := []struct {
-		name string
-		envs []string
-		want string
+		name         string
+		envs         []string
+		alreadyNamed []string
+		want         string
 	}{
 		{name: "no secrets", want: ""},
 		{name: "no secret suggests a variable", envs: []string{"", ""}, want: ""},
@@ -333,12 +380,24 @@ func TestCredentialNoteNamesEverySecretsDefaultVariable(t *testing.T) {
 			envs: []string{"", "LORE_A_TOKEN"},
 			want: "credentials come from LORE_A_TOKEN",
 		},
+		{
+			name:         "the only variable already named above",
+			envs:         []string{"LORE_A_TOKEN"},
+			alreadyNamed: []string{"LORE_A_TOKEN"},
+			want:         "",
+		},
+		{
+			name:         "one fresh variable beside one already named above",
+			envs:         []string{"LORE_A_EMAIL", "LORE_A_TOKEN"},
+			alreadyNamed: []string{"LORE_A_TOKEN"},
+			want:         "credentials come from LORE_A_EMAIL",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := credentialNote(manifestWithSecrets(tt.envs...)); got != tt.want {
-				t.Errorf("credentialNote(%v) = %q, want %q", tt.envs, got, tt.want)
+			if got := credentialNote(manifestWithSecrets(tt.envs...), tt.alreadyNamed...); got != tt.want {
+				t.Errorf("credentialNote(%v, %v) = %q, want %q", tt.envs, tt.alreadyNamed, got, tt.want)
 			}
 		})
 	}
@@ -349,6 +408,7 @@ func TestScaffoldVariablesDedupesInDeclarationOrder(t *testing.T) {
 		name     string
 		source   []string
 		embedder []string
+		llm      []string
 		want     []string
 	}{
 		{name: "no secrets"},
@@ -377,6 +437,13 @@ func TestScaffoldVariablesDedupesInDeclarationOrder(t *testing.T) {
 			embedder: []string{"LORE_SHARED_TOKEN"},
 			want:     []string{"LORE_SHARED_TOKEN"},
 		},
+		{
+			name:     "a language model sharing the source's variable and adding its own",
+			source:   []string{"LORE_SHARED_TOKEN"},
+			embedder: []string{"VECTORS_API_KEY"},
+			llm:      []string{"LORE_SHARED_TOKEN", "CHATTER_API_KEY"},
+			want:     []string{"LORE_SHARED_TOKEN", "VECTORS_API_KEY", "CHATTER_API_KEY"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -384,6 +451,7 @@ func TestScaffoldVariablesDedupesInDeclarationOrder(t *testing.T) {
 			plan := &scaffold{
 				source:   manifestWithSecrets(tt.source...),
 				embedder: manifestWithSecrets(tt.embedder...),
+				llm:      manifestWithSecrets(tt.llm...),
 			}
 			if got := plan.variables(); !slices.Equal(got, tt.want) {
 				t.Errorf("variables() = %v, want %v", got, tt.want)

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,6 +179,60 @@ func TestSourceAddRefusesAnIDAlreadyInUse(t *testing.T) {
 	}
 }
 
+func TestSourceAddReAsksUntilTheInstanceIDIsUsable(t *testing.T) {
+	tests := []struct {
+		name    string
+		answer  string
+		refusal string
+	}{
+		{
+			name:   "an id the runtime would reject",
+			answer: "forge infra\x1b]0;pwned\x07",
+			refusal: `"forge infra\x1b]0;pwned\a" cannot be an instance id: an instance id becomes` +
+				" the prefix of every document identity it produces, so it must start with a letter" +
+				" or digit and hold only letters, digits, - and _",
+		},
+		{
+			name:    "an empty answer",
+			answer:  "",
+			refusal: "sources[].id must be set",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfigFile(t, seeded)
+
+			res := runOn(t, sourceRegistry(t), nil, test.answer+"\nforge-infra\n"+forgeAnswers,
+				"source", "add", "forge", "--config", path)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitOK, res.stderr)
+			}
+			const question = "sources already has an instance called forge," +
+				" so this one needs its own id, for example forge-2: "
+			transcript := question + test.refusal + "\n" + question
+			if !strings.HasPrefix(res.stdout, transcript) {
+				t.Errorf("stdout = %q, want the answer refused and the question asked again\n%q",
+					res.stdout, transcript)
+			}
+			for name, stream := range map[string]string{"stdout": res.stdout, "stderr": res.stderr} {
+				if strings.Contains(stream, "\x1b]") {
+					t.Errorf("%s = %q, want a refused answer quoted, never replayed to the terminal", name, stream)
+				}
+			}
+
+			after := readConfigFile(t, path)
+			if !strings.Contains(after, "  - id: forge-infra\n") {
+				t.Errorf("file =\n%s\nwant the id given after the refusal appended", after)
+			}
+			cfg := decodeConfigFile(t, after)
+			if len(cfg.Sources) != 2 || cfg.Sources[1].Ident() != "forge-infra" {
+				t.Errorf("sources = %+v, want exactly the re-asked id appended", cfg.Sources)
+			}
+		})
+	}
+}
+
 func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
@@ -314,6 +370,12 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			wantErr: "sources[tracker].with.token_env must be an environment variable name like LORE_TRACKER_TOKEN",
 		},
 		{
+			name:    "an instance id the runtime would reject, never replaced",
+			plugin:  "forge",
+			answers: "forge 2\n",
+			wantErr: "sources[].id must be set",
+		},
+		{
 			name:    "no plugin at all",
 			answers: "",
 			wantErr: "name the source plugin to add",
@@ -340,6 +402,54 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 				t.Errorf("file = %q, want it untouched after the refusal", after)
 			}
 		})
+	}
+}
+
+type answersEditingTheFile struct {
+	t       *testing.T
+	answers *strings.Reader
+	path    string
+	body    string
+	edited  bool
+}
+
+func (a *answersEditingTheFile) Read(p []byte) (int, error) {
+	if !a.edited {
+		a.edited = true
+		if err := os.WriteFile(a.path, []byte(a.body), 0o600); err != nil {
+			a.t.Fatalf("edit the file while the prompt waits: %v", err)
+		}
+	}
+	return a.answers.Read(p)
+}
+
+func TestSourceAddRefusesToOverwriteAnEditMadeWhileItAsked(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+	const edited = seeded + "\n# a second operator appended this while the prompt waited.\n"
+
+	var out, errOut bytes.Buffer
+	root := newRootCommand(nil, sourceRegistry(t))
+	root.SetIn(&answersEditingTheFile{t: t, answers: strings.NewReader(trackerAnswers), path: path, body: edited})
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"source", "add", "tracker", "--config", path})
+
+	exitCode := exitOK
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		exitCode = Report(&errOut, err)
+	}
+	if exitCode != exitPrecondition {
+		t.Fatalf("exit = %d, want %d (stderr %q)", exitCode, exitPrecondition, errOut.String())
+	}
+	refusal := path + " changed since it was read — re-run the command; the newer file is unchanged"
+	if !strings.Contains(errOut.String(), refusal) {
+		t.Errorf("stderr = %q, want it to refuse with %q", errOut.String(), refusal)
+	}
+	if after := readConfigFile(t, path); after != edited {
+		t.Errorf("file =\n%s\nwant the newer bytes left intact:\n%s", after, edited)
+	}
+	if strings.Contains(out.String(), "added sources[") {
+		t.Errorf("stdout = %q, want nothing reported as written", out.String())
 	}
 }
 
