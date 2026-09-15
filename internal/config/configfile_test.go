@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -140,6 +142,134 @@ func TestWriteFileKeepsTheFileMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o640 {
 		t.Errorf("mode = %v, want the mode the file already carried", info.Mode().Perm())
+	}
+}
+
+func TestWriteFileRefusesAFileThatChangedSinceItWasRead(t *testing.T) {
+	cases := []struct {
+		name    string
+		current string
+	}{{
+		name:    "the file was edited in place",
+		current: strings.Replace(editable, "myproject", "myproj3ct", 1),
+	}, {
+		name:    "the file grew past what was read",
+		current: editable + "repos: []\n",
+	}}
+
+	const draft = editable + "query:\n  top_k: 5\n"
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeEditable(t, tc.current)
+
+			err := WriteFile(path, Splice{From: editable, To: draft}, "unused")
+			var classified *internalerror.Error
+			if !errors.As(err, &classified) {
+				t.Fatalf("error = %v, want a classified refusal", err)
+			}
+			if classified.Kind != internalerror.KindPrecondition {
+				t.Errorf("kind = %v, want %v", classified.Kind, internalerror.KindPrecondition)
+			}
+			want := path + " changed since it was read — re-run the command; the newer file is unchanged"
+			if classified.Message != want {
+				t.Errorf("message = %q, want %q", classified.Message, want)
+			}
+			if after := readEditable(t, path); after != tc.current {
+				t.Errorf("file =\n%s\nwant the newer file, untouched\n%s", after, tc.current)
+			}
+		})
+	}
+}
+
+func TestWriteFileRefusesAPathThatIsNoLongerARegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("stage a path that is not a regular file: %v", err)
+	}
+
+	err := WriteFile(path, Splice{From: editable, To: editable + "repos: []\n"}, "unused")
+	var classified *internalerror.Error
+	if !errors.As(err, &classified) {
+		t.Fatalf("error = %v, want a classified refusal", err)
+	}
+	if classified.Kind != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want %v", classified.Kind, internalerror.KindPrecondition)
+	}
+	want := path + " is not a regular file — re-run the command; nothing was written"
+	if classified.Message != want {
+		t.Errorf("message = %q, want %q", classified.Message, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		t.Errorf("path = %v (error %v), want the directory left in place", info, err)
+	}
+}
+
+func TestWriteFileReportsAFileThatVanished(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+
+	err := WriteFile(path, Splice{From: editable, To: editable + "repos: []\n"}, "unused")
+	var classified *internalerror.Error
+	if !errors.As(err, &classified) {
+		t.Fatalf("error = %v, want a classified refusal", err)
+	}
+	if classified.Kind != internalerror.KindNotFound {
+		t.Errorf("kind = %v, want %v", classified.Kind, internalerror.KindNotFound)
+	}
+	want := "no configuration at " + path + " — run `lore init` to create one"
+	if classified.Message != want {
+		t.Errorf("message = %q, want %q", classified.Message, want)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stat = %v, want the file still absent", err)
+	}
+}
+
+func TestWriteFileRefusesAConfigurationItCannotReRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+	if err := os.Symlink(path, path); err != nil {
+		t.Fatalf("stage a configuration that cannot be opened: %v", err)
+	}
+
+	err := WriteFile(path, Splice{From: editable, To: editable + "repos: []\n"}, "unused")
+	var classified *internalerror.Error
+	if !errors.As(err, &classified) {
+		t.Fatalf("error = %v, want a classified refusal", err)
+	}
+	if classified.Kind != internalerror.KindPrecondition {
+		t.Errorf("kind = %v, want %v", classified.Kind, internalerror.KindPrecondition)
+	}
+	want := "cannot re-read the configuration to confirm it is unchanged: open " + path + ": " +
+		syscall.ELOOP.Error() + " — re-run the command; nothing was written"
+	if classified.Message != want {
+		t.Errorf("message = %q, want %q", classified.Message, want)
+	}
+}
+
+func TestWriteFileReplacesASymlinkWithARegularFile(t *testing.T) {
+	target := writeEditable(t, editable)
+	link := filepath.Join(filepath.Dir(target), "linked.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("stage a symlinked configuration: %v", err)
+	}
+
+	updated := editable + "repos: []\n"
+	if err := WriteFile(link, Splice{From: editable, To: updated}, "unused"); err != nil {
+		t.Fatalf("write a configuration reached through a symlink: %v", err)
+	}
+	if after := readEditable(t, link); after != updated {
+		t.Errorf("file =\n%s\nwant\n%s", after, updated)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("stat the written path: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("mode = %v, want the link replaced by a regular file", info.Mode())
+	}
+	if after := readEditable(t, target); after != editable {
+		t.Errorf("target =\n%s\nwant the file the link pointed at, untouched\n%s", after, editable)
 	}
 }
 

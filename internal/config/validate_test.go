@@ -489,6 +489,55 @@ func TestDecode(t *testing.T) {
 	})
 }
 
+func TestDecodeRefusesARepeatedInstanceKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "use in a source",
+			yaml:    "sources:\n  - use: github\n    use: gitlab\n",
+			wantErr: "line 3: field use is declared more than once in an instance",
+		},
+		{
+			name:    "id in a source",
+			yaml:    "sources:\n  - use: github\n    id: a\n    id: b\n",
+			wantErr: "line 4: field id is declared more than once in an instance",
+		},
+		{
+			name:    "with in a source",
+			yaml:    "sources:\n  - use: github\n    with: { x: 1 }\n    with: { y: 2 }\n",
+			wantErr: "line 4: field with is declared more than once in an instance",
+		},
+		{
+			name:    "use in a provider",
+			yaml:    "providers:\n  - use: openai\n    use: local\n",
+			wantErr: "line 3: field use is declared more than once in an instance",
+		},
+		{
+			name:    "a key declared three times names the first repeat",
+			yaml:    "sources:\n  - use: github\n    use: gitlab\n    use: gitea\n",
+			wantErr: "line 3: field use is declared more than once in an instance",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Decode(strings.NewReader(test.yaml))
+			if err == nil {
+				t.Fatalf("Decode() = %+v, want the repeated key refused", cfg)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("Decode() error kind = %s, want bad request", internalerror.KindOf(err))
+			}
+			if want := "invalid configuration: " + test.wantErr; err.Error() != want {
+				t.Errorf("Decode() error = %q, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestInstanceIdent(t *testing.T) {
 	tests := []struct {
 		instance Instance

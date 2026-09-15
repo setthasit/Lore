@@ -147,6 +147,21 @@ func appendCases(k keySpec) []appendCase {
 		content: k.key + ":\n" + k.bare + "repos: []\n",
 		want:    k.key + ":\n" + k.bare + k.item("  ") + "repos: []\n",
 		items:   2,
+	}, {
+		name:    "the file separates lines with a paragraph separator",
+		content: paragraphs(k.key + ":\n" + k.existing("  ") + "repos: []\n"),
+		want:    paragraphs(k.key + ":\n" + k.existing("  ") + k.item("  ") + "repos: []\n"),
+		items:   2,
+	}, {
+		name:    "the document root is indented",
+		content: "   workspace: x\n",
+		want:    "   workspace: x\n   " + k.key + ":\n" + k.item("     "),
+		items:   1,
+	}, {
+		name:    "an indented document root behind a byte order mark",
+		content: "\ufeff   workspace: x\n",
+		want:    "\ufeff   workspace: x\n   " + k.key + ":\n" + k.item("     "),
+		items:   1,
 	}}
 
 	for _, shape := range k.multiline {
@@ -320,6 +335,15 @@ func TestSetField(t *testing.T) {
 	}, {
 		name:    "the field is absent",
 		content: "plugins:\n  - name: linear\n",
+	}, {
+		name:    "the value is a literal block scalar",
+		content: "plugins:\n  - name: linear\n    from: |\n      o@v1\n",
+	}, {
+		name:    "the value is nothing but a key",
+		content: "plugins:\n  - name: linear\n    from:\n",
+	}, {
+		name:    "the item is a flow mapping",
+		content: "plugins:\n  - {name: linear, from: o@v1}\n",
 	}}
 
 	for _, tc := range tests {
@@ -378,8 +402,49 @@ func TestAppendItemRendersNestedFields(t *testing.T) {
 	assertItemCount(t, sourcesSpec, got, 1)
 }
 
+func TestAnInlineMappingDocumentIsRefused(t *testing.T) {
+	const want = "the configuration is written as one inline mapping no edit can splice" +
+		" — rewrite it as a block mapping with one key per line"
+
+	tests := []struct {
+		name               string
+		content            string
+		refusedByFindingIt bool
+	}{{
+		name:               "the key is declared",
+		content:            "{workspace: x, plugins: []}\n",
+		refusedByFindingIt: true,
+	}, {
+		name:    "the key is absent",
+		content: "{workspace: x}\n",
+	}}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			block, err := FindBlock(tc.content, "plugins")
+			if !tc.refusedByFindingIt {
+				if err != nil {
+					t.Fatalf("find the block: %v", err)
+				}
+				_, err = block.AppendItem(pluginsSpec.fields)
+			}
+			if !internalerror.IsPrecondition(err) {
+				t.Fatalf("kind = %v (error %v), want %v",
+					internalerror.KindOf(err), err, internalerror.KindPrecondition)
+			}
+			if got := internalerror.MessageOf(err); got != want {
+				t.Errorf("message = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func crlf(text string) string {
 	return strings.ReplaceAll(text, "\n", "\r\n")
+}
+
+func paragraphs(text string) string {
+	return strings.ReplaceAll(text, "\n", "\u2029")
 }
 
 func assertRefusedAsInline(t *testing.T, err error) {
