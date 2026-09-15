@@ -140,7 +140,7 @@ func appendCases(k keySpec) []appendCase {
 	}, {
 		name:    "the file uses CRLF",
 		content: crlf(k.key + ":\n" + k.existing("  ") + "repos: []\n"),
-		want:    crlf(k.key+":\n"+k.existing("  ")) + k.item("  ") + crlf("repos: []\n"),
+		want:    crlf(k.key + ":\n" + k.existing("  ") + k.item("  ") + "repos: []\n"),
 		items:   2,
 	}, {
 		name:    "an item whose dash sits on its own line",
