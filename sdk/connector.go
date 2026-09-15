@@ -12,6 +12,8 @@ type Connector interface {
 	Name() string
 
 	// Batches carry documents modified since cursor, oldest-first; a nil cursor
-	// streams everything. Must be resumable and idempotent.
+	// streams everything. Must be resumable and idempotent. An error ends the
+	// stream: its batch is not committed and the cursor stays where the last
+	// committed batch left it.
 	Changes(ctx context.Context, cursor Cursor) iter.Seq2[Batch, error]
 }
