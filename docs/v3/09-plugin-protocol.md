@@ -250,6 +250,12 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
   strategy, and ranked as ordinary evidence.
 - `cursor` is a flat string→string map, opaque to the host, which stores and
   replays it without inspecting a key.
+- A field the protocol types as a list or a map travels as `[]` or `{}`, never
+  `null`, from the SDK — in the requests the host sends and in the frames a
+  plugin answers with alike. The rule binds the encoder: the host reads `null`
+  and an absent key as that same empty value, so a plugin writing its own JSON
+  is refused for neither — only where an op requires a non-empty value, as
+  `changes` does of `cursor` and `embed` of `vectors`.
 
 ## Errors
 
