@@ -91,8 +91,8 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	if err != nil {
 		return err
 	}
-	if err := config.WriteFile(configPath, updated, "the "+draft.ident()+" instance does not fit "+
-		configPath+", which is unchanged"); err != nil {
+	if err := config.WriteFile(configPath, config.Splice{From: original, To: updated},
+		"the "+draft.ident()+" instance does not fit "+configPath+", which is unchanged"); err != nil {
 		return err
 	}
 

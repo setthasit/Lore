@@ -101,7 +101,7 @@ func TestWriteFileRefusesADocumentThatNoLongerDecodes(t *testing.T) {
 	path := writeEditable(t, editable)
 	const refusal = "the forge instance does not fit the configuration, which is unchanged"
 
-	err := WriteFile(path, "workspace: myproject\nsources: [broken\n", refusal)
+	err := WriteFile(path, Splice{From: editable, To: "workspace: myproject\nsources: [broken\n"}, refusal)
 	if err == nil {
 		t.Fatal("a spliced document that does not decode was written")
 	}
@@ -127,7 +127,7 @@ func TestWriteFileKeepsTheFileMode(t *testing.T) {
 	}
 
 	updated := editable + "\n# a line the splice appended\n"
-	if err := WriteFile(path, updated, "unused"); err != nil {
+	if err := WriteFile(path, Splice{From: editable, To: updated}, "unused"); err != nil {
 		t.Fatalf("write a document that decodes: %v", err)
 	}
 

@@ -396,7 +396,7 @@ func (w *Workspace) commit(edits []configEdit, refusal string, lockChanged bool)
 			}
 			updated = applied
 		}
-		if err := config.WriteFile(w.path, updated, refusal); err != nil {
+		if err := config.WriteFile(w.path, config.Splice{From: w.content, To: updated}, refusal); err != nil {
 			return err
 		}
 		w.content = updated

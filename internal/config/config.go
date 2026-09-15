@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -237,8 +238,7 @@ func ReadFile(path string) (text string, cfg *Config, err error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil, internalerror.NewNotFoundError("no configuration at "+path+
-				" — run `lore init` to create one", err)
+			return "", nil, refuseMissing(path, err)
 		}
 		return "", nil, internalerror.NewInternalError("cannot read "+path, err)
 	}
@@ -250,14 +250,72 @@ func ReadFile(path string) (text string, cfg *Config, err error) {
 	return string(content), parsed, nil
 }
 
-func WriteFile(path, updated, refusal string) error {
-	if _, err := Decode(strings.NewReader(updated)); err != nil {
+func refuseMissing(path string, cause error) error {
+	return internalerror.NewNotFoundError("no configuration at "+path+
+		" — run `lore init` to create one", cause)
+}
+
+type Splice struct {
+	From string
+	To   string
+}
+
+func WriteFile(path string, splice Splice, refusal string) error {
+	if _, err := Decode(strings.NewReader(splice.To)); err != nil {
 		return internalerror.NewInternalError(refusal, err)
 	}
-	if err := fsx.WriteAtomic(path, []byte(updated), fsx.ModeOf(path, 0o644)); err != nil {
+	mode, err := ensureUnchanged(path, splice.From)
+	if err != nil {
+		return err
+	}
+	if err := fsx.WriteAtomic(path, []byte(splice.To), mode); err != nil {
 		return internalerror.NewInternalError("cannot write "+path, err)
 	}
 	return nil
+}
+
+func ensureUnchanged(path, read string) (fs.FileMode, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, refuseNotRegular(path)
+	}
+
+	oneByteBeyondRead := int64(len(read)) + 1
+	current, err := io.ReadAll(io.LimitReader(file, oneByteBeyondRead))
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	if string(current) != read {
+		return 0, refuseChanged(path)
+	}
+	return info.Mode().Perm(), nil
+}
+
+func refuseChanged(path string) error {
+	return internalerror.NewPreconditionError(path+" changed since it was read"+
+		" — re-run the command; the newer file is unchanged", nil)
+}
+
+func refuseNotRegular(path string) error {
+	return internalerror.NewPreconditionError(path+" is not a regular file"+
+		" — re-run the command; nothing was written", nil)
+}
+
+func refuseUnreadable(path string, cause error) error {
+	if errors.Is(cause, fs.ErrNotExist) {
+		return refuseMissing(path, cause)
+	}
+	return internalerror.NewPreconditionError("cannot re-read the configuration to confirm it is unchanged: "+
+		internalerror.MessageOf(cause)+" — re-run the command; nothing was written", cause)
 }
 
 func (c *Config) applyDefaults() error {
