@@ -23,11 +23,13 @@ import (
 )
 
 const (
-	pluginName    = "in-memory-notes"
-	instance      = "fixture"
-	secret        = "hunter2-7f3a1c"
-	repoRemote    = "github:example/notes"
-	answerTimeout = 5 * time.Second
+	pluginName         = "in-memory-notes"
+	instance           = "fixture"
+	secret             = "hunter2-7f3a1c"
+	repoRemote         = "github:example/notes"
+	unusableCause      = "the notebook id is not a number"
+	authoredAPIVersion = lore.APIVersion + 1
+	answerTimeout      = 5 * time.Second
 )
 
 type changesFunc func(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error]
@@ -93,6 +95,21 @@ type sourcelessPlugin struct{}
 func (sourcelessPlugin) Manifest() lore.Manifest {
 	manifest := plugin{}.Manifest()
 	manifest.Kind = lore.KindProvider
+	return manifest
+}
+
+type unusablePlugin struct{ plugin }
+
+func (unusablePlugin) NewSource(lore.SourceConfig) (lore.Connector, error) {
+	return nil, errors.New(unusableCause)
+}
+
+type authoredPlugin struct{ plugin }
+
+func (authoredPlugin) Manifest() lore.Manifest {
+	manifest := plugin{}.Manifest()
+	manifest.APIVersion = authoredAPIVersion
+	manifest.Capabilities = lore.Capabilities{RepoRemotes: true}
 	return manifest
 }
 
@@ -288,6 +305,24 @@ func assertError(t *testing.T, frame wire.Frame, wantKind string) *wire.Error {
 	return frame.Error
 }
 
+func TestAMismatchedAPIVersionIsRefusedBeforeDispatch(t *testing.T) {
+	const hostVersion = lore.APIVersion + 41
+	s := serve(t, plugin{changes: never})
+
+	s.send(wire.Envelope{V: hostVersion, ID: "v-1", Op: wire.OpManifest})
+
+	frame := s.next("v-1")
+	if frame.Manifest != nil {
+		t.Errorf("the refused request was dispatched anyway: %+v", frame.Manifest)
+	}
+
+	failure := assertError(t, frame, wire.KindInternal)
+	if !strings.Contains(failure.Message, fmt.Sprintf("api_version %d", lore.APIVersion)) ||
+		!strings.Contains(failure.Message, fmt.Sprintf("host speaks %d", hostVersion)) {
+		t.Errorf("refusal %q does not name the plugin's api_version and the host's %d", failure.Message, hostVersion)
+	}
+}
+
 func TestManifestIsAnsweredWithTheRequestID(t *testing.T) {
 	s := serve(t, plugin{changes: never})
 
@@ -300,6 +335,21 @@ func TestManifestIsAnsweredWithTheRequestID(t *testing.T) {
 	}
 	if frame.Manifest.Name != pluginName || frame.Manifest.Kind != lore.KindSource {
 		t.Errorf("manifest = %+v, want the plugin's own", frame.Manifest)
+	}
+}
+
+func TestTheManifestTravelsAsItsAuthorBuiltIt(t *testing.T) {
+	s := serve(t, authoredPlugin{})
+
+	frame := s.next(s.ask(wire.OpManifest))
+	if frame.Manifest == nil {
+		t.Fatalf("manifest frame carries no manifest: %+v", frame)
+	}
+	if frame.Manifest.APIVersion != authoredAPIVersion {
+		t.Errorf("manifest api_version = %d, want the author's %d", frame.Manifest.APIVersion, authoredAPIVersion)
+	}
+	if !frame.Manifest.Capabilities.RepoRemotes {
+		t.Errorf("manifest = %+v, want the author's capabilities", frame.Manifest)
 	}
 }
 
@@ -450,6 +500,25 @@ func TestAPluginThatOpensNoSourceServesOnlyManifestAndShutdown(t *testing.T) {
 	}
 	if err := s.eof(); err != nil {
 		t.Errorf("ServeStreams = %v, want nil after shutdown", err)
+	}
+}
+
+func TestASourceTheAuthorRefusesToOpenIsReportedAsInvalidConfig(t *testing.T) {
+	for _, asked := range []struct {
+		name string
+		ask  func(*session) string
+	}{
+		{name: wire.OpChanges, ask: func(s *session) string { return s.askChanges() }},
+		{name: wire.OpRemote, ask: func(s *session) string { return s.askRemote(repoRemote) }},
+	} {
+		t.Run(asked.name, func(t *testing.T) {
+			s := serve(t, unusablePlugin{})
+
+			failure := assertError(t, s.next(asked.ask(s)), wire.KindInvalidConfig)
+			if failure.Message != unusableCause {
+				t.Errorf("refusal = %q, want the author's own %q", failure.Message, unusableCause)
+			}
+		})
 	}
 }
 
