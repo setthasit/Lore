@@ -245,3 +245,43 @@ func TestRenderBundleMakesABlamedSHAInert(t *testing.T) {
 	}
 	assertInert(t, got)
 }
+
+func TestRenderBundleMakesTheCodeAnchorRepoAndFileInert(t *testing.T) {
+	const hostileRepo = "github:acme/" + clearScreen + "lore"
+	const hostileFile = "internal/\aauth/\u202eog.og.go"
+	const inertAnchor = "anchor: github:acme/" + clearScreenInert + `lore internal/\aauth/\u202eog.og.go`
+
+	tests := []struct {
+		name  string
+		start int
+		end   int
+		want  string
+	}{
+		{name: "a line span", start: 10, end: 13, want: inertAnchor + ":10-13"},
+		{name: "a whole file", want: inertAnchor},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bundle := timelineBundle("why " + whyFile)
+			bundle.Anchor = entities.Anchor{
+				Kind: entities.AnchorCodeSpan,
+				Code: &entities.CodeAnchor{
+					Repo:      hostileRepo,
+					File:      hostileFile,
+					LineStart: tt.start,
+					LineEnd:   tt.end,
+				},
+			}
+
+			var out bytes.Buffer
+			renderBundle(&out, bundle)
+
+			got := out.String()
+			if !strings.Contains(got, tt.want+"\n") {
+				t.Errorf("output is missing %q\n--- output ---\n%s", tt.want, got)
+			}
+			assertInert(t, got)
+		})
+	}
+}

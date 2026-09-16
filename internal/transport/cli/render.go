@@ -152,7 +152,7 @@ func emitProse(cmd *cobra.Command, synthesis services.SynthesisService, bundle *
 func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 	printfln(w, "%s", inertLine(bundle.Question))
 	if code := bundle.Anchor.Code; code != nil {
-		printfln(w, "anchor: %s %s", code.Repo, fileWithSpan(code))
+		printfln(w, "anchor: %s %s", inertLine(code.Repo), inertLine(fileWithSpan(code)))
 		if len(code.BlamedSHAs) > 0 {
 			printfln(w, "        blamed %s", inertLine(shortSHAs(code.BlamedSHAs)))
 		}
