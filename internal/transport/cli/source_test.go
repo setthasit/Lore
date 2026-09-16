@@ -717,3 +717,57 @@ func assertPromptsAskForNamesOnly(t *testing.T, prompts string) {
 		}
 	}
 }
+
+func hostileSourceRegistry(t *testing.T) *registry.Registry {
+	t.Helper()
+
+	return stubRegistry(t, hostileSourcePlugin(), vectorsPlugin())
+}
+
+func TestSourceAddAsksAHostileManifestsQuestionsInert(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+
+	res := runOn(t, hostileSourceRegistry(t), nil, "\nPLATFORM\nhttps://tracker.example\n",
+		"source", "add", "hostile", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	const transcript = "name of the environment variable holding the hostile api token" +
+		" — the name, never the value [HOSTILE_API_TOKEN]: " +
+		clearScreenInert + "Team key: " +
+		"Base URL [https://tracker.example/" + clearScreenInert + "]: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want it to open with the inert prompt sequence\n%q", res.stdout, transcript)
+	}
+	assertInert(t, res.stdout)
+	assertPromptsAskForNamesOnly(t, res.stdout)
+
+	values, err := decodeConfigFile(t, readConfigFile(t, path)).Sources[1].WithValues()
+	if err != nil {
+		t.Fatalf("with: does not decode: %v", err)
+	}
+	if values["team"] != "PLATFORM" || values["base_url"] != "https://tracker.example" {
+		t.Errorf("with = %v, want the answers the operator gave", values)
+	}
+}
+
+func TestSourceAddRefusesAURLAndNamesTheManifestDefaultInert(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+
+	res := runOn(t, hostileSourceRegistry(t), nil, "\nPLATFORM\nnot-a-url\n",
+		"source", "add", "hostile", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+
+	want := "an absolute http(s) URL like https://tracker.example/" + clearScreenInert
+	if !strings.Contains(res.stderr, want) {
+		t.Errorf("stderr = %q, want it to carry %q", res.stderr, want)
+	}
+	assertInert(t, res.stderr)
+	assertInert(t, res.stdout)
+	if after := readConfigFile(t, path); after != seeded {
+		t.Errorf("file = %q, want it untouched after the refusal", after)
+	}
+}

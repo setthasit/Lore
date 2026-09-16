@@ -114,6 +114,37 @@ func chatterReading(variable string) lore.Plugin {
 	return p
 }
 
+func hostileSourcePlugin() lore.Plugin {
+	return stubSource{lore.Manifest{
+		Name:       "hostile",
+		Kind:       lore.KindSource,
+		APIVersion: lore.APIVersion,
+		Summary:    "a stub source whose manifest fights the terminal",
+		Fields: []lore.Field{
+			{
+				Name:     "team",
+				Type:     lore.FieldString,
+				Required: true,
+				Prompt:   clearScreen + "Team key",
+				Doc:      "the team key\n      injected: true",
+			},
+			{
+				Name:    "base_url",
+				Type:    lore.FieldURL,
+				Prompt:  "Base URL",
+				Default: "https://tracker.example/" + clearScreen,
+				Doc:     "override to reach a self-managed instance",
+			},
+		},
+		Secrets: []lore.Secret{{
+			Key:         "api_token",
+			ConfigField: "token_env",
+			DefaultEnv:  "HOSTILE_API_TOKEN",
+			Doc:         "a read-only token\u2028      also_injected: true",
+		}},
+	}}
+}
+
 func stubRegistry(t *testing.T, pluginSet ...lore.Plugin) *registry.Registry {
 	t.Helper()
 
@@ -457,5 +488,54 @@ func TestScaffoldVariablesDedupesInDeclarationOrder(t *testing.T) {
 				t.Errorf("variables() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInitScaffoldsAHostileManifestAsOneCommentPerLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lore.yaml")
+	reg := stubRegistry(t, hostileSourcePlugin(), vectorsPlugin())
+
+	res := runOn(t, reg, nil, "", "init", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	scaffold := readConfigFile(t, path)
+	assertInert(t, scaffold)
+	for _, want := range []string{
+		`      team: ""`,
+		`# the team key\n      injected: true`,
+		`# a read-only token\u2028      also_injected: true`,
+		`      # base_url: https://tracker.example/` + clearScreenInert,
+	} {
+		if !strings.Contains(scaffold, want) {
+			t.Errorf("scaffold is missing %q\n--- scaffold ---\n%s", want, scaffold)
+		}
+	}
+	for _, line := range strings.Split(scaffold, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "injected:") ||
+			strings.HasPrefix(strings.TrimSpace(line), "also_injected:") {
+			t.Errorf("a manifest comment opened a line of its own: %q\n--- scaffold ---\n%s", line, scaffold)
+		}
+	}
+
+	cfg := decodeConfigFile(t, scaffold)
+	if len(cfg.Sources) != 1 || cfg.Sources[0].Use != "hostile" {
+		t.Fatalf("sources = %+v, want the one starter instance", cfg.Sources)
+	}
+	values, err := cfg.Sources[0].WithValues()
+	if err != nil {
+		t.Fatalf("with: does not decode: %v", err)
+	}
+	if values["token_env"] != "HOSTILE_API_TOKEN" || values["team"] != "" {
+		t.Errorf("with = %v, want the manifest's variable and an empty team placeholder", values)
+	}
+	for _, key := range []string{"injected", "also_injected", "base_url"} {
+		if _, present := values[key]; present {
+			t.Errorf("with = %v, want no %q key", values, key)
+		}
+	}
+	if cfg.Embedder.Provider != "vectors" {
+		t.Errorf("embedder = %+v, want the starter embedding provider", cfg.Embedder)
 	}
 }

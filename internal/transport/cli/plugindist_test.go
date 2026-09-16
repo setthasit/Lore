@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -15,8 +16,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/plugexec"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/conform"
 )
@@ -805,4 +808,152 @@ func TestPluginRemoveRefusesWhileAnInstanceUsesIt(t *testing.T) {
 	if config := readConfigFile(t, path); config != declared {
 		t.Fatalf("a refused removal rewrote the configuration:\n%s", config)
 	}
+}
+
+func TestRenderInstallMakesAPluginSuppliedStringInert(t *testing.T) {
+	tests := []struct {
+		name   string
+		result plugindist.Result
+		want   []string
+	}{
+		{
+			name: "a local plugin's path and warning",
+			result: plugindist.Result{Report: plugindist.Report{
+				Name:    "linear",
+				Origin:  plugindist.OriginLocal,
+				Binary:  "/opt/" + clearScreen + "lore-linear",
+				Warning: "unpinned" + clearScreen + " and undigested",
+			}},
+			want: []string{
+				"plugins[linear] runs /opt/" + clearScreenInert + "lore-linear in place\n",
+				"  warning: unpinned" + clearScreenInert + " and undigested\n",
+			},
+		},
+		{
+			name: "a release's version and binary",
+			result: plugindist.Result{Report: plugindist.Report{
+				Name:     "linear",
+				Origin:   plugindist.OriginGitHub,
+				Platform: "darwin/arm64",
+				Version:  "v0.3.1" + clearScreen,
+				Binary:   "/cache/" + clearScreen + "lore-linear",
+			}},
+			want: []string{
+				"installed plugins[linear] v0.3.1" + clearScreenInert + " for darwin/arm64\n",
+				"  binary:  /cache/" + clearScreenInert + "lore-linear\n",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			renderInstall(&out, tt.result)
+
+			got := out.String()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("output is missing %q\n--- output ---\n%s", want, got)
+				}
+			}
+			assertInert(t, got)
+		})
+	}
+}
+
+func TestRenderVerifyMakesAPluginSuppliedStringInert(t *testing.T) {
+	tests := []struct {
+		name   string
+		report plugindist.Report
+		want   []string
+	}{
+		{
+			name: "a local plugin's path and warning",
+			report: plugindist.Report{
+				Name:    "linear",
+				Origin:  plugindist.OriginLocal,
+				Binary:  "/opt/" + clearScreen + "lore-linear",
+				Warning: "unpinned" + clearScreen + " and undigested",
+			},
+			want: []string{
+				"plugins[linear] runs /opt/" + clearScreenInert +
+					"lore-linear in place — unpinned, unlocked, undigested\n",
+				"  warning: unpinned" + clearScreenInert + " and undigested\n",
+			},
+		},
+		{
+			name: "a release's version and binary",
+			report: plugindist.Report{
+				Name:     "linear",
+				Origin:   plugindist.OriginGitHub,
+				Platform: "darwin/arm64",
+				Version:  "v0.3.1" + clearScreen,
+				Binary:   "/cache/" + clearScreen + "lore-linear",
+			},
+			want: []string{
+				"plugins[linear] v0.3.1" + clearScreenInert + " for darwin/arm64\n",
+				"  binary:  /cache/" + clearScreenInert + "lore-linear\n",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			renderVerify(&out, tt.report)
+
+			got := out.String()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("output is missing %q\n--- output ---\n%s", want, got)
+				}
+			}
+			assertInert(t, got)
+		})
+	}
+}
+
+func TestRenderCertificationMakesAFindingsDocumentIDInert(t *testing.T) {
+	var out bytes.Buffer
+	refusal := renderCertification(&out, registry.Instance{Use: "linear"}, plugexec.Certification{
+		Kind: lore.KindSource,
+		Result: conform.Result{
+			Ran: []conform.CheckName{conform.CheckIdentity},
+			Findings: []conform.Finding{{
+				Check:  conform.CheckIdentity,
+				Detail: `document "linear:ticket:` + clearScreen + `PROJ-1" carries no url`,
+			}},
+		},
+	})
+	if refusal == nil {
+		t.Fatalf("renderCertification returned no refusal for a failing check\n--- output ---\n%s", out.String())
+	}
+
+	got := out.String()
+	want := "    " + string(conform.CheckIdentity) + `: document "linear:ticket:` +
+		clearScreenInert + `PROJ-1" carries no url` + "\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("output is missing %q\n--- output ---\n%s", want, got)
+	}
+	assertInert(t, got)
+}
+
+func TestPluginInstallReportsAnExecutedManifestSummaryInert(t *testing.T) {
+	fake := newFakeReleases(t)
+	const manifest = `{"name":"linear","kind":"source","api_version":1,` +
+		`"summary":"a scripted \u001b[2J external source",` +
+		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}`
+	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(manifest))
+	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
+
+	res := run(t, nil, "plugin", "install", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+
+	want := "  summary: a scripted " + clearScreenInert + " external source\n"
+	if !strings.Contains(res.stdout, want) {
+		t.Errorf("stdout is missing %q\n--- stdout ---\n%s", want, res.stdout)
+	}
+	assertInert(t, res.stdout)
 }

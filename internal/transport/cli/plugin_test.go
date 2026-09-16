@@ -29,6 +29,16 @@ func TestRenderPluginsOutput(t *testing.T) {
 		{Manifest: lore.Manifest{Name: "ünïcode-wïdest", Kind: lore.KindCode, Summary: "Widest is multibyte"}, Origin: "built-in"},
 		{Manifest: lore.Manifest{Name: "日本語", Kind: lore.KindCode, Summary: "Double-width runes count as one"}, Origin: "built-in"},
 	}
+	hostile := []registry.Entry{
+		{
+			Manifest: lore.Manifest{Name: "git", Kind: lore.KindCode, Summary: "Commits" + clearScreen + " and diffs"},
+			Origin:   "built-in",
+		},
+		{
+			Manifest: lore.Manifest{Name: "ünïcode-wïdest", Kind: lore.KindCode, Summary: "Widest is multibyte"},
+			Origin:   "built-in",
+		},
+	}
 
 	tests := []struct {
 		name      string
@@ -63,6 +73,28 @@ func TestRenderPluginsOutput(t *testing.T) {
 				"\n" +
 				"crm             declared from github.com/acme/lore-crm\n" +
 				"                not installed — run: lore plugin install crm\n",
+		},
+		{
+			name:    "a manifest summary cannot rewrite the table it sits in",
+			entries: hostile,
+			want: "NAME            KIND  ORIGIN    SUMMARY\n" +
+				"git             code  built-in  Commits" + clearScreenInert + " and diffs\n" +
+				"ünïcode-wïdest  code  built-in  Widest is multibyte\n",
+		},
+		{
+			name:    "a declared external's cells stay inert and still line up",
+			entries: hostile,
+			externals: []externalRow{{
+				name:  "crm\a",
+				from:  "github.com/acme/lore-crm" + clearScreen,
+				state: "not installed" + clearScreen,
+			}},
+			want: "NAME            KIND  ORIGIN    SUMMARY\n" +
+				"git             code  built-in  Commits" + clearScreenInert + " and diffs\n" +
+				"ünïcode-wïdest  code  built-in  Widest is multibyte\n" +
+				"\n" +
+				`crm\a` + "           declared from github.com/acme/lore-crm" + clearScreenInert + "\n" +
+				"                not installed" + clearScreenInert + "\n",
 		},
 	}
 
