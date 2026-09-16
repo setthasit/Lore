@@ -415,8 +415,54 @@ rather than a fallback.
 
 ## Reference implementation
 
-`sdk` ships the Go side of this protocol: an author writes a `lore.Connector`
-and a `main` handing it to the SDK's serve helper — no framing, no JSON, no
-signal handling. Nothing here requires the SDK: the protocol is small enough
-to implement in Python or TypeScript by reading lines from stdin and printing
-objects to stdout, and that portability is why NDJSON was chosen.
+`sdk/stdio` ships the Go side of this protocol. `Serve` takes one
+`lore.Plugin` value and answers the host on the process's own streams, so a
+source author writes two methods, `Manifest` and a `NewSource` returning a
+`lore.Connector` and an error, which together satisfy `lore.SourcePlugin`,
+plus a `main` that hands that value to `Serve`. `ServeStreams` is the same
+loop over streams the caller supplies. `Serve` returns nil once `shutdown` or
+stdin EOF ends the loop, and an error when the streams fail or a request line
+exceeds `wire.MaxLineBytes`. The SDK reports that over-cap line on stderr
+itself, so a `main` need only exit non-zero on it. A `main` reports every
+other error `Serve` returns before exiting. Both serve source operations
+only: a value that implements no `lore.SourcePlugin` serves `manifest` and
+`shutdown`, and refuses `changes` and `matches_remote` as `internal` naming
+its manifest kind.
+
+The SDK owns the frame layer. It decodes every request line, echoes the host's
+`id` and stamps its own `lore.APIVersion` as `v` on each frame it emits,
+refuses a request whose `v` is not `lore.APIVersion` with an error naming both
+numbers, serves `manifest`, `changes`, `matches_remote` and `shutdown`, and
+answers an operation it does not serve with an `internal` error frame that
+leaves the loop ready for the next request. A request carrying no `id` is
+reported on stderr and left unanswered, because no frame could name it.
+`matches_remote` reaches a connector that implements `lore.RemoteMatcher` and
+is refused as `internal` when the connector does not implement it. The
+`manifest` payload travels as the author built it, so the author's
+`lore.Manifest` sets `APIVersion: lore.APIVersion` itself.
+
+For `changes` the SDK turns each `lore.Batch` the author yields into one
+`batch` frame unless that frame would exceed `wire.MaxLineBytes`, which ends
+the stream with an `internal` error frame naming the size. It refuses a batch
+whose cursor is empty rather than checkpointing nothing, closes a clean
+stream with exactly one `done`, and hands the connector a nil `lore.Cursor`
+when the request's cursor is empty, so full backfill is the author's zero
+value. An error from `NewSource` refuses the request and falls back to
+`invalid_config` rather than `internal`. An error the author yields is the
+stream's terminal frame: the SDK reads `lore.Failure.Kind` through a wrapped
+chain and falls back to `internal`. A panic before the stream's terminal
+frame becomes an `internal` error frame reported on stderr instead of a dead
+process, and a panic after it is reported on stderr alone, because the
+request already has its answer. Cancellation and shutdown cost the author
+nothing: stdin EOF cancels the `context.Context` the connector was given and
+the stream ends with that cancellation as its error, and a `shutdown` request
+is answered before the loop returns. `lore.SourceConfig`'s `Host.Log` is a
+logger the SDK points at stderr with the round's secret values redacted.
+
+Nothing here requires the SDK. `sdk/wire` publishes the frame types this
+document specifies, `Envelope`, `Frame`, `Batch`, `Error`, the operation
+constants, the error kinds and `MaxLineBytes`, so an author in another
+language reads the frame grammar from one package, with the payload types it
+carries in `sdk` beside it. The protocol is small enough to implement in
+Python or TypeScript by reading lines from stdin and printing objects to
+stdout, and that portability is why NDJSON was chosen.
