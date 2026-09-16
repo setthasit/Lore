@@ -7,16 +7,17 @@ The wire protocol it speaks once it is running is
 coordinates, resolution, the lockfile, on-disk layout, the CLI, signatures —
 and states plainly what privilege an installed plugin holds.
 
-## Two ways to get a plugin
+## Three ways to get a plugin
 
-| | Compiled plugin | External plugin |
-|---|---|---|
-| Declared in | the composition root, `cmd/lore/main.go` | `plugins:` in `lore.yaml` |
-| Bound | at link time | at runtime — exec + NDJSON over stdio |
-| Language | Go | any |
-| Cost to adopt | rebuild `lore` | none |
-| Call shape | in-process, compile-time type safety | subprocess, framed JSON |
-| Misdeclaration surfaces | at registration, in `make test` | at the `manifest` handshake |
+| | Official compiled plugin | Third-party plugin compiled in | External plugin |
+|---|---|---|---|
+| Declared in | the composition root, `cmd/lore/main.go` | `--with` on one `lore build` run, which generates its own root (`Render`, `internal/plugbuild/generate.go`) | `plugins:` in `lore.yaml` |
+| Bound | at link time | at link time | at runtime, exec + NDJSON over stdio |
+| Language | Go | Go | any |
+| Registered through | `Register`, so origin `builtin` | `Register`, so origin `builtin` (`app.Run`, `app/app.go`) | `RegisterExternal`, so origin `external <path>` |
+| Cost to adopt | none, it ships in the binary | a Go toolchain and one rebuild | none |
+| Call shape | in-process, compile-time type safety | in-process, compile-time type safety | subprocess, framed JSON |
+| Misdeclaration surfaces | at registration, in `make test` | at registration, when `lore build` runs the binary it just wrote (`readBackPlugins`, `internal/plugbuild/plugbuild.go`) | at the `manifest` handshake |
 
 Go cannot dynamically load code — the `plugin` package is version-locked, has
 no Windows support, and breaks the pure-Go build
@@ -33,16 +34,31 @@ A plugin is declared once under `plugins:` with a short `name` — the token
 every `use:` refers to — and a `from` coordinate saying where the binary comes
 from. Dispatch is by the shape of `from`:
 
-| Shape of `from` | Resolves to | Digest |
+| Shape of `from` | Resolves to | What a digest constrains |
 |---|---|---|
-| `./x`, `../x`, `/x`, `~/x` | a local file, executed in place | not required; startup warns that the plugin is unpinned and for development only |
-| `github.com/owner/repo@vX.Y.Z` | the GitHub Releases asset published for that tag | required |
-| `https://…` | that artifact URL verbatim — private or self-hosted distribution | required |
+| `./x`, `../x`, `/x`, `~/x` | a local file, executed in place | nothing: no download, no digest and no `lore.lock` entry, and startup warns that the plugin is unpinned and for development only (`Coordinate.Warning`, `internal/plugindist/coordinate.go`) |
+| `github.com/owner/repo@vX.Y.Z` | the GitHub Releases asset published for that tag | the release's own `checksums.txt` on the first install, the `lore.lock` digest on every later install that is not a `lore plugin update` |
+| `https://…` | that artifact URL verbatim, for private or self-hosted distribution | nothing on the first install, and from then on the `lore.lock` digest it recorded, which a `lore plugin update` replaces rather than checks |
 
-A remote coordinate MUST pin an exact version in `lore.yaml`. `@latest` is
-accepted only as an argument to `lore plugin install`, which resolves it and
-writes the concrete version back into the file, because a floating version
-means two machines silently run different code against the same index.
+What each shape verifies, and what a `pubkey:` adds to it, is
+[What each install shape verifies](#what-each-install-shape-verifies).
+
+A `github.com/…` coordinate MUST pin an exact release tag, checked by
+`ExactVersion` (`internal/plugindist/coordinate.go`), because a floating
+version means two machines silently run different code against the same index.
+`@latest` on such a coordinate is accepted wherever `parseCoordinate` is
+reached through `ResolveInstall`, which is every `lore plugin install` that
+names its target and every `lore plugin update`, and what they resolve is
+written back into `lore.yaml`. Every other read of the declaration goes through
+`Resolve`, which refuses `@latest` left in the file: startup
+(`internal/di/external.go`, `newExternals`), an argument-free
+`lore plugin install` (`Workspace.requests`), `lore plugin list`
+(`Workspace.Installed`), `lore plugin verify` (`Workspace.Verify`) and every
+manifest read (`Workspace.Manifest`), which is how `lore source add` finds an
+installed plugin and how `lore plugin install` and `lore plugin update` print
+the manifest of what they installed. An `https://` coordinate carries its
+version in the URL's last path segment, which `parseURL` requires to be present
+and readable as one cache directory name and cannot check for exactness.
 
 ```yaml
 plugins:
@@ -63,9 +79,14 @@ sources:
 ```
 
 An external plugin's `sources:` entry is syntactically identical to a compiled
-one's ([08](08-extensibility.md#configuration)); `with:` names environment
-variables only, and the host resolves them and injects the values — a plugin
-never reads the environment.
+one's ([08](08-extensibility.md#configuration)). The `with:` keys the plugin's
+manifest declares as secrets name environment variables, and the host resolves
+each of those names (`resolveSecrets`, `internal/registry/secrets.go`) and
+sends the value as `Secrets` in the request payload (`connector.Changes`,
+`internal/plugexec/connector.go`). Every other `with:` key travels as `Config`,
+which `configJSON` (`internal/registry/with.go`) builds from the fields the
+manifest declares, and what the subprocess environment does hold is in
+[the trust model](#trust-model).
 
 ## Resolution and install
 
@@ -75,12 +96,18 @@ flowchart TB
     K -->|"local path"| L["execute in place — no download, no digest"]
     K -->|"github.com/owner/repo@vX.Y.Z"| G["GitHub Releases API<br/>pick the asset for this os/arch"]
     K -->|"https://…"| U["fetch the URL as given"]
-    G --> D["download archive + checksums.txt"]
-    U --> D
-    D --> V{"digest matches lore.lock?"}
-    V -->|no| X["refuse — install aborts, nothing written"]
-    V -->|yes| P["unpack into ~/.lore/plugins/name/version"]
-    L --> M
+    G --> GC["download the archive + checksums.txt<br/>checksums are skipped only when this os/arch<br/>is already pinned, the install is not an update,<br/>and no pubkey: is declared"]
+    U --> UA["download the archive<br/>no checksums file is looked for"]
+    GC --> S
+    UA --> S{"pubkey: declared?"}
+    S -->|"yes"| SV{"signature verifies?<br/>over checksums.txt for a release,<br/>over the artifact itself for a URL"}
+    S -->|"no"| V
+    SV -->|"no, or unsupported"| X
+    SV -->|"verified"| V{"compare against what constrains it:<br/>the checksums.txt digest, the lore.lock digest,<br/>both, or on a first install or a lore plugin update<br/>of an https:// coordinate, neither"}
+    V -->|"a comparison fails"| X["refuse, install aborts, nothing written"]
+    V -->|"nothing constrains it"| T["proceed and record the digest<br/>Result.Trust is set, signature verified or not"]
+    V -->|"every comparison matches"| P["unpack into ~/.lore/plugins/name/version"]
+    T --> P
     P --> M["exec the binary once: manifest handshake"]
     M --> J["cache manifest.json beside the binary"]
 ```
@@ -252,7 +279,7 @@ The two layers defend different things and neither substitutes for the other:
 
 | Layer | Defends against | Status |
 |---|---|---|
-| Lockfile digest | tampering after publication — a mutated release asset, a hostile mirror, a rewritten cached binary | mandatory for every remote coordinate |
+| Lockfile digest | tampering after publication — a mutated release asset, a hostile mirror, a rewritten cached binary | written by the first install of a remote coordinate, then enforced on every install that is not a `lore plugin update` and at every launch, so an unsigned `https://` coordinate is constrained by nothing on its first install and nothing again on a `lore plugin update` |
 | Signature | a compromised publisher account cutting a new release with internally valid checksums | opt-in, per plugin |
 
 ## Trust model
@@ -309,6 +336,38 @@ Least-privilege tokens remain the load-bearing control. The guidance in
 unchanged to plugins: scope the credential to the projects, teams or spaces the
 plugin must read, prefer read-only tokens, and never issue a plugin a token
 broader than the `with:` block it was given.
+
+### What each install shape verifies
+
+A first install of an unsigned `https://` coordinate verifies nothing about the
+bytes beyond the https transport they arrived over. `Installer.locate`
+(`internal/plugindist/install.go`) returns an empty checksums URL for
+`OriginURL`, so `Installer.expected` has nothing to compare the download
+against, and there is no lockfile digest to compare it with either, because
+`Install` reaches that comparison only when `hasLocked && !req.Rewrite` holds.
+What the install does instead is record the digest it computed, and every later
+install that is not a `lore plugin update`, and every launch, is checked
+against that record, as the digest-pinning mitigation above describes. A
+`lore plugin update` of that same coordinate is a second unconstrained fetch,
+and the more dangerous one, because a good digest was already recorded:
+`Workspace.Update` (`internal/plugindist/workspace.go`) sets `Rewrite`, which
+clears `pinned`, so nothing is compared and `lock.Set`
+(`internal/plugindist/lock.go`) re-pins whatever the URL served. A
+release-hosted coordinate is never in that position: `Installer.locate` fetches
+the release's `checksums.txt` whenever the artifact is not already pinned, a
+release that publishes no such asset fails to resolve rather than installing
+unchecked, and a download that does not match the digest recorded there, or a
+`checksums.txt` that records no digest for the asset name, aborts the install.
+First install means no `lore.lock` artifact for this os/arch, which `Install`
+reads as `lock.Artifact(coord.Name, platform)`, so the first install on a
+second platform is a first install again.
+
+| How the plugin arrives | First install verifies | Every later install verifies | A declared `pubkey:` adds |
+|---|---|---|---|
+| a local `from:` path | nothing, and nothing is fetched or hashed: `Install` returns on its `OriginLocal` branch once `Store.Locate` (`internal/plugindist/store.go`) finds a file rather than a directory at the resolved path | the same stat, and never a digest, because a local plugin gets no `lore.lock` entry | nothing, since that branch returns before `Installer.expected` runs |
+| `github.com/owner/repo@vX.Y.Z` | the archive against the release's own `checksums.txt`, whose digest is then written to `lore.lock` | the `lore.lock` digest, unless the install is a `lore plugin update`, which sets `Rewrite`, fetches `checksums.txt` again and rewrites the pin | the signature published beside `checksums.txt`, verified before any digest is compared, on a pinned install too, because `Installer.locate` fetches the checksums file whenever a signature is declared |
+| `https://…` | with no `pubkey:` declared, only the https transport the bytes arrived over. An artifact named `.tar.gz` or `.tgz` must still unpack and anything else is taken to be the binary itself (`unpack`, `internal/plugindist/archive.go`), and the binary must still answer the `manifest` handshake, but neither says where the bytes came from | the digest `lore.lock` recorded, except under `lore plugin update`, which fetches no checksums file for this shape and so verifies nothing before it re-pins. An install whose URL names a different version is refused before any download and sent to `lore plugin update` | the signature over the artifact's own bytes rather than over a checksums file. On a first install `Result.Trust` is set even so, because no published digest and no lock entry constrained the download |
+| `lore build --with <module>@vX.Y.Z` | whatever the Go toolchain verifies: `fetchRequirements` (`internal/plugbuild/plugbuild.go`) runs `go get <module>@<version>` in a scratch module, and Lore compares no digest of its own | nothing, because a compiled-in plugin gets no `lore.lock` entry and every build resolves the module again through the toolchain | nothing, because `pubkey:` belongs to a `plugins:` declaration and a compiled-in plugin has none |
 
 ### An enforcing sandbox is not built
 
