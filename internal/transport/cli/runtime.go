@@ -87,7 +87,7 @@ func withRuntime(
 		return err
 	}
 	for _, warning := range rt.Warnings {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+warning)
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+inertLine(warning))
 	}
 
 	if err := run(rt); err != nil {

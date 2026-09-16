@@ -32,6 +32,24 @@ func TestStartupWarningsReachStderrOnly(t *testing.T) {
 	}
 }
 
+func TestStartupWarningsReachStderrInert(t *testing.T) {
+	rt := mockStatus(t, entities.IndexStats{}, nil)
+	rt.Config = &config.Config{Workspace: "myproject"}
+	rt.Warnings = registry.Warnings{
+		"repos path /home/dev/myproject has remote github:acme/" + clearScreen + "lore, which names no configured source repo",
+	}
+
+	res := run(t, rt, "status")
+
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	assertInert(t, res.stderr)
+	if !strings.Contains(res.stderr, "github:acme/"+clearScreenInert+"lore") {
+		t.Errorf("stderr = %q, want the remote named with its escape shown", res.stderr)
+	}
+}
+
 func TestNoWarningsMeansASilentStderr(t *testing.T) {
 	rt := mockStatus(t, entities.IndexStats{}, nil)
 	rt.Config = &config.Config{Workspace: "myproject"}

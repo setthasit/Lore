@@ -96,13 +96,24 @@ func TestRenderPluginsOutput(t *testing.T) {
 				`crm\a` + "           declared from github.com/acme/lore-crm" + clearScreenInert + "\n" +
 				"                not installed" + clearScreenInert + "\n",
 		},
+		{
+			name: "a lock entry's origin cannot rewrite the table it sits in",
+			entries: []registry.Entry{{
+				Manifest: lore.Manifest{Name: "crm", Kind: lore.KindSource, Summary: "Accounts"},
+				Origin:   "external ./bin/lore-crm" + clearScreen,
+			}},
+			want: "NAME  KIND    ORIGIN                          SUMMARY\n" +
+				"crm   source  external ./bin/lore-crm" + clearScreenInert + "  Accounts\n",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var out bytes.Buffer
 			renderPlugins(&out, test.entries, test.externals)
-			if got := out.String(); got != test.want {
+			got := out.String()
+			assertInert(t, got)
+			if got != test.want {
 				t.Errorf("renderPlugins() =\n%q\nwant\n%q", got, test.want)
 			}
 		})

@@ -109,6 +109,26 @@ func TestSyncReportsATakeover(t *testing.T) {
 	}
 }
 
+func TestSyncRendersADeadLeaseHolderInert(t *testing.T) {
+	rt, orchestrator := mockSync(t)
+	orchestrator.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		TookOverFrom: &entities.LeaseState{
+			Holder:      "host-9/1234" + clearScreen,
+			AcquiredAt:  time.Now().Add(-5 * time.Minute),
+			HeartbeatAt: time.Now().Add(-3 * time.Minute),
+		},
+	}, nil)
+
+	res := run(t, rt, "sync")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	assertInert(t, res.stdout)
+	if !strings.Contains(res.stdout, "host-9/1234"+clearScreenInert) {
+		t.Errorf("stdout = %q, want the holder named with its escape shown", res.stdout)
+	}
+}
+
 func TestSyncStaysSilentWithoutATakeover(t *testing.T) {
 	rt, orchestrator := mockSync(t)
 	orchestrator.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{}, nil)
@@ -172,6 +192,30 @@ func TestSyncNamesEveryInstanceThatFailed(t *testing.T) {
 		"forge failed at its last checkpoint — read timed out",
 		"tracker failed at its last checkpoint — token expired",
 		"the remaining sources are committed",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+		}
+	}
+}
+
+func TestSyncRendersAFailureMessageInert(t *testing.T) {
+	rt, orchestrator := mockSync(t)
+	orchestrator.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: errors.New("could not resolve the commit touching docs/a.md" + clearScreen)},
+			{Instance: "tracker", Err: internalerror.NewPreconditionError("token expired"+clearScreen, nil)},
+		},
+	}, nil)
+
+	res := run(t, rt, "sync")
+	if res.exitCode != exitInternal {
+		t.Fatalf("exit = %d, want %d, stdout = %q", res.exitCode, exitInternal, res.stdout)
+	}
+	assertInert(t, res.stdout)
+	for _, want := range []string{
+		"forge failed at its last checkpoint — could not resolve the commit touching docs/a.md" + clearScreenInert,
+		"tracker failed at its last checkpoint — token expired" + clearScreenInert,
 	} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)

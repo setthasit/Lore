@@ -32,7 +32,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 				out := cmd.OutOrStdout()
 				if res.TookOverFrom != nil {
 					printfln(out, "took over a dead sync lease from %s, last heartbeat %s",
-						res.TookOverFrom.Holder, humanizeAge(time.Since(res.TookOverFrom.HeartbeatAt)))
+						inertLine(res.TookOverFrom.Holder), humanizeAge(time.Since(res.TookOverFrom.HeartbeatAt)))
 				}
 				if len(res.Failures) > 0 {
 					return partialSync(out, res.Failures)
@@ -52,7 +52,8 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 // A partial round exits non-zero so a script can tell.
 func partialSync(out io.Writer, failures []services.InstanceFailure) error {
 	for _, failure := range failures {
-		printfln(out, "%s failed at its last checkpoint — %s", failure.Instance, internalerror.MessageOf(failure.Err))
+		printfln(out, "%s failed at its last checkpoint — %s",
+			failure.Instance, inertLine(internalerror.MessageOf(failure.Err)))
 	}
 	printfln(out, "the remaining sources are committed; `lore status` for counts and cursor ages")
 
