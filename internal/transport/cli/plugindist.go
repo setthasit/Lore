@@ -212,11 +212,11 @@ func renderInstalls(ctx context.Context, out io.Writer, configPath string, resul
 			manifest, err = installedManifest(ctx, workspace, configPath, result.Name)
 		}
 		if err != nil {
-			printfln(out, "  manifest: unreadable — %s", internalerror.MessageOf(err))
+			printfln(out, "  manifest: unreadable — %s", inertLine(internalerror.MessageOf(err)))
 			continue
 		}
 		printfln(out, "  kind:    %s", kindLabel(manifest))
-		printfln(out, "  summary: %s", manifest.Summary)
+		printfln(out, "  summary: %s", inertLine(manifest.Summary))
 	}
 }
 
@@ -231,13 +231,13 @@ func installedManifest(ctx context.Context, workspace *plugindist.Workspace, con
 
 func renderInstall(out io.Writer, result plugindist.Result) {
 	if result.Origin == plugindist.OriginLocal {
-		printfln(out, "%s runs %s in place", plugindist.Label(result.Name), result.Binary)
-		printfln(out, "  warning: %s", result.Warning)
+		printfln(out, "%s runs %s in place", plugindist.Label(result.Name), inertLine(result.Binary))
+		printfln(out, "  warning: %s", inertLine(result.Warning))
 		return
 	}
 
-	printfln(out, "installed %s %s for %s", plugindist.Label(result.Name), result.Version, result.Platform)
-	printfln(out, "  binary:  %s", result.Binary)
+	printfln(out, "installed %s %s for %s", plugindist.Label(result.Name), inertLine(result.Version), result.Platform)
+	printfln(out, "  binary:  %s", inertLine(result.Binary))
 	printfln(out, "  digest:  %s", result.LockedDigest)
 	switch {
 	case result.Locked:
@@ -255,16 +255,16 @@ func renderInstall(out io.Writer, result plugindist.Result) {
 func renderVerify(out io.Writer, report plugindist.Report) {
 	if report.Origin == plugindist.OriginLocal {
 		printfln(out, "%s runs %s in place — unpinned, unlocked, undigested",
-			plugindist.Label(report.Name), report.Binary)
-		printfln(out, "  warning: %s", report.Warning)
+			plugindist.Label(report.Name), inertLine(report.Binary))
+		printfln(out, "  warning: %s", inertLine(report.Warning))
 		return
 	}
 
-	printfln(out, "%s %s for %s", plugindist.Label(report.Name), report.Version, report.Platform)
-	printfln(out, "  binary:  %s", report.Binary)
+	printfln(out, "%s %s for %s", plugindist.Label(report.Name), inertLine(report.Version), report.Platform)
+	printfln(out, "  binary:  %s", inertLine(report.Binary))
 	printfln(out, "  digest:  %s (re-checked now)", report.BinaryDigest)
 	printfln(out, "  locked:  %s", report.LockedDigest)
-	printfln(out, "  from:    %s", urlx.RedactIfUserinfo(report.LockedURL))
+	printfln(out, "  from:    %s", inertLine(urlx.RedactIfUserinfo(report.LockedURL)))
 }
 
 func renderCertification(out io.Writer, in registry.Instance, certification plugexec.Certification) error {
@@ -298,7 +298,7 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 		printfln(out, "  %s: %s%s", label,
 			plural(len(certification.Findings), "failure", "failures"), suffix)
 		for _, finding := range certification.Findings {
-			printfln(out, "    %s: %s", finding.Check, finding.Detail)
+			printfln(out, "    %s: %s", finding.Check, inertLine(finding.Detail))
 		}
 		refusal = internalerror.NewPreconditionError(plugindist.Label(in.Use)+
 			" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
@@ -317,6 +317,6 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 func renderSkipped(out io.Writer, skipped []conform.Skip) {
 	printfln(out, "    skipped:")
 	for _, skip := range skipped {
-		printfln(out, "      %s — %s", skip.Check, skip.Reason)
+		printfln(out, "      %s — %s", skip.Check, inertLine(skip.Reason))
 	}
 }
