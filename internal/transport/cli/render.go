@@ -154,7 +154,7 @@ func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 	if code := bundle.Anchor.Code; code != nil {
 		printfln(w, "anchor: %s %s", code.Repo, fileWithSpan(code))
 		if len(code.BlamedSHAs) > 0 {
-			printfln(w, "        blamed %s", shortSHAs(code.BlamedSHAs))
+			printfln(w, "        blamed %s", inertLine(shortSHAs(code.BlamedSHAs)))
 		}
 	}
 	if doc := bundle.Anchor.Doc; doc != nil {
