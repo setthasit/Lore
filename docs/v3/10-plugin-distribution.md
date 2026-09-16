@@ -55,10 +55,10 @@ written back into `lore.yaml`. Every other read of the declaration goes through
 `lore plugin install` (`Workspace.requests`), `lore plugin list`
 (`Workspace.Installed`), `lore plugin verify` (`Workspace.Verify`) and every
 manifest read (`Workspace.Manifest`), which is how `lore source add` finds an
-installed plugin and how `lore plugin install` and `lore plugin update` print
-the manifest of what they installed. An `https://` coordinate carries its
-version in the URL's last path segment, which `parseURL` requires to be present
-and readable as one cache directory name and cannot check for exactness.
+installed plugin and how `lore plugin install` prints the manifest of what it
+installed. An `https://` coordinate carries its version in the URL's last path
+segment, which `parseURL` requires to be present and readable as one cache
+directory name and cannot check for exactness.
 
 ```yaml
 plugins:
@@ -109,7 +109,7 @@ flowchart TB
     V -->|"every comparison matches"| P["unpack into ~/.lore/plugins/name/version"]
     T --> P
     P --> M["exec the binary once: manifest handshake"]
-    M --> J["cache manifest.json beside the binary"]
+    M --> J["cache .manifest.json beside the binary"]
 ```
 
 Plugin authors MUST publish under the goreleaser default naming, because the
@@ -127,7 +127,7 @@ resolve with the exact name that was looked for.
 
 The manifest is ALWAYS read from the binary through the `manifest` handshake,
 never from a file inside the archive, so a plugin cannot ship a manifest that
-disagrees with its behavior. The cached `manifest.json` is a cache: deleting it
+disagrees with its behavior. The cached `.manifest.json` is a cache: deleting it
 costs one exec, and a stale copy can never outvote the binary.
 
 ## lore.lock
@@ -173,24 +173,109 @@ Rules:
 
 ## On-disk layout
 
+An install of a remote coordinate leaves one directory per version, holding the
+binary and the two files the host writes beside it:
+
 ```
 ~/.lore/plugins/
 └── linear/
     ├── v0.3.0/
     │   ├── lore-linear
-    │   ├── manifest.json
-    │   └── .digest
+    │   ├── .manifest.json
+    │   └── .install.json
     └── v0.3.1/
         ├── lore-linear
-        ├── manifest.json
-        └── .digest
+        ├── .manifest.json
+        └── .install.json
 ```
+
+The binary is written executable, under the name the record's `binary` field
+holds. `.manifest.json` is the manifest the handshake answered with, re-encoded
+as JSON, and `.install.json` is the install record. Both come from
+`Store.recordInstall` (`internal/plugindist/store.go`), the record last, so a
+version directory a finished install left behind always holds one. A capture
+that fails takes the directory with it, because `Install`
+(`internal/plugindist/install.go`) removes it before returning the refusal. A
+local `from:` leaves none of this, since `Install` returns on its
+`OriginLocal` branch before the download, the write and the handshake.
+
+The record is not the lockfile. `lore.lock` is the workspace's pin, and the
+record is the cache's account of one installed version, which a launch compares
+against that pin. Its fields, in the order `installRecord`
+(`internal/plugindist/store.go`) declares them:
+
+| Field | What writes it |
+|---|---|
+| `binary` | `Store.write`, from the name `unpack` (`internal/plugindist/archive.go`) settled on: the archive member spelled the way `Coordinate.binaryName` spells it, or the archive's only executable member, or that same spelling given to an artifact that is not an archive |
+| `binary_digest` | `Store.write`, over the unpacked bytes it has just written |
+| `artifact_digest` | `Store.write`, from the digest `Install` took of the downloaded artifact, which is what a launch compares against the digest [`lore.lock`](#lorelock) records for this os/arch |
+| `from` | `Store.write`, from `Coordinate.SafeFrom`, so an `https://` coordinate is recorded with its userinfo and its query stripped (`urlx.Redact`, `internal/urlx/urlx.go`) |
+| `manifest` | `Store.recordInstall`, naming the file it has just written, and the only field set after the handshake |
+
+A launch resolves through `Store.Locate` (`internal/plugindist/store.go`),
+which for a remote coordinate refuses unless the name is usable and then, in
+this order, `lore.lock` holds an artifact for the running os/arch, the locked
+version is one cache directory name, `.install.json` reads back, its `binary`
+is one file name, the file it names hashes to `binary_digest`, `from` agrees
+with the entry's origin and `artifact_digest` with the digest recorded for this
+os/arch. A rewritten cached binary is refused as
+
+```
+plugins[linear]: digest mismatch for darwin/arm64 — the cached binary hashes to sha256:1d77…, not the recorded sha256:4e90… — run: lore plugin install linear
+```
+
+and a cache holding another install of the same version as
+
+```
+plugins[linear]: digest mismatch for darwin/arm64 — the cache holds the install of github.com/jdoe/lore-linear@v0.3.1 at artifact sha256:c410…, but lore.lock pins github.com/jdoe/lore-linear@v0.3.1 at sha256:9f2b41c0…d7e5 — run: lore plugin install linear
+```
+
+A version directory that is not there is reported as not installed rather than
+as unreadable provenance, and a local coordinate is stat'd and nothing more.
+The origin comparison is on the redacted spelling both sides recorded, so two
+URLs differing only in userinfo or query are the same origin to it.
 
 Versions are separated by directory, so several may coexist on one machine —
 different workspaces pin differently. The workspace's `lore.lock` decides which
-one runs; the cache never picks. `.digest` holds the verified digest of the
-unpacked binary and is re-checked at launch, so tampering with a cached binary
-after installation is caught too.
+one runs; the cache never picks.
+
+`Locate` never reads `.manifest.json`. One function does, `storedManifest`
+(`internal/plugindist/store.go`), reached only from `Workspace.Manifest`
+(`internal/plugindist/workspace.go`), which serves the stored copy only when
+the record names it, the name is a single file name, the path is a regular
+file, it decodes, and `describesPlugin` accepts its kind, its non-empty name
+and the host's `api_version`. Anything else falls through to a fresh handshake,
+a local `from:` among them, because it has no record to name a file, and a
+workspace opened with no handshake refuses instead of falling through. The
+stored copy is never served for a binary that has changed, because
+`Workspace.Manifest` goes through the same digest check first. Two commands
+reach it: `lore plugin install`, to print the kind and summary of what it
+installed (`runPluginInstall` through `renderInstalls` and `installedManifest`,
+`internal/transport/cli/plugindist.go`), and `lore source add`, to find the
+fields it prompts for when the name is not one this build compiled in
+(`runSourceAdd` through `sourceToAdd` or `addableSources` into
+`installedSource`, `internal/transport/cli/source.go`).
+
+Every other reader executes the binary. Every remote install and every
+`lore plugin update` captures a fresh reply through `Installer.captureManifest`
+(`internal/plugindist/install.go`), which calls the handshake the CLI supplies,
+`declaredManifest` (`internal/transport/cli/plugindist.go`), which is
+`plugexec.Open`. `lore plugin verify` opens the installed binary itself through
+`openDeclared` in that same file and certifies that process, never the stored
+copy, because `Workspace.Verify` stops at `Store.Locate`. `lore plugin list`
+resolves a declared external plugin through the record alone
+(`declaredExternals`, `internal/transport/cli/plugin.go`), reading no stored
+manifest and starting no process.
+
+A running workspace always uses the manifest the live process reports.
+`newExternals` (`internal/di/external.go`) resolves the binary through
+`plugindist.Binary` and hands it to `plugexec.Open`
+(`internal/plugexec/plugin.go`), which execs it for the handshake and registers
+that reply as the plugin's `Manifest`. `internal/plugexec` imports no part of
+`internal/plugindist`, so nothing on the run path can reach `.manifest.json` at
+all. Every session after registration execs again (`handshake` and `spawn`,
+`internal/plugexec/session.go`), and `external.dial` aborts one whose reply
+changes the name or the kind, the two fields it compares.
 
 `$LORE_HOME` relocates the plugin cache root: unset, it is `~/.lore`, and the
 `plugins/` tree sits directly under whichever root applies.
@@ -385,7 +470,8 @@ this system.
 
 | Condition | What the user sees | What the engine does |
 |---|---|---|
-| Digest mismatch | `plugins[linear]: digest mismatch for darwin/arm64 (expected sha256:9f2b…, got sha256:c410…)` | refuses to launch the plugin; startup fails; never downgrades to a warning |
+| Digest mismatch at install | `plugins[linear]: digest mismatch for darwin/arm64 (expected sha256:9f2b…, got sha256:c410…)` | install aborts before anything is unpacked or written; never downgrades to a warning |
+| Digest mismatch at launch | `plugins[linear]: digest mismatch for darwin/arm64 — the cached binary hashes to sha256:1d77…, not the recorded sha256:4e90… — run: lore plugin install linear` | refuses to launch the plugin; startup fails; never downgrades to a warning |
 | Missing binary | `plugins[linear] is not installed — run: lore plugin install linear` | startup fails before the scheduler starts; nothing is fetched |
 | Manifest `api_version` mismatch | `plugin "linear" speaks api_version 2, host speaks 1` | rejected at the handshake, both numbers named; startup fails rather than run a source over a contract neither side agrees on |
 | Plugin crashes mid-stream | the instance, the last op, and the process exit status | reports a plugin crash and fails that source's round; the last persisted cursor is authoritative ([09](09-plugin-protocol.md)), so unflushed frames are only work the next round redoes; other sources finish theirs |
