@@ -96,12 +96,12 @@ func runVersion(cmd *cobra.Command, resolve Resolver, configPath string) error {
 
 	rt, stop, err := resolve(cmd.Context(), configPath)
 	if err != nil {
-		printfln(out, "workspace: unavailable — %s", internalerror.MessageOf(err))
+		printfln(out, "workspace: unavailable — %s", inertLine(internalerror.MessageOf(err)))
 		return nil
 	}
 	defer func() { _ = stop() }()
 
-	printfln(out, "workspace: %s — %s", rt.Config.Workspace, rt.Config.IndexPath)
+	printfln(out, "workspace: %s — %s", inertLine(rt.Config.Workspace), inertLine(rt.Config.IndexPath))
 	identity, err := rt.Status.EmbedderIdentity(cmd.Context())
 	renderEmbedder(out, identity, err)
 	return nil
@@ -114,17 +114,17 @@ func renderStamp(w io.Writer, s buildStamp) {
 
 func renderEmbedder(w io.Writer, identity entities.EmbedderIdentity, err error) {
 	if err != nil {
-		printfln(w, "embedder:  unavailable — %s", internalerror.MessageOf(err))
+		printfln(w, "embedder:  unavailable — %s", inertLine(internalerror.MessageOf(err)))
 		return
 	}
 
-	printfln(w, "embedder:  %s", identity.Configured)
+	printfln(w, "embedder:  %s", inertLine(identity.Configured))
 	switch identity.Indexed {
 	case "":
 		printfln(w, "index:     no vectors yet — run `lore sync`")
 	case identity.Configured:
-		printfln(w, "index:     %s", identity.Indexed)
+		printfln(w, "index:     %s", inertLine(identity.Indexed))
 	default:
-		printfln(w, "index:     %s — mismatch; run `lore sync --reembed`", identity.Indexed)
+		printfln(w, "index:     %s — mismatch; run `lore sync --reembed`", inertLine(identity.Indexed))
 	}
 }
