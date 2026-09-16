@@ -18,9 +18,14 @@ has to argue with a row here first.
 | Private data → cloud embedder/LLM | privacy concern | pluggable providers; Ollama = fully local; documented loudly |
 | WASM SQLite slower than cgo | query latency | store benchmarks (`internal/repositories/sqlite/bench_test.go`) run against a realistic corpus; a cgo pairing is a drop-in behind `IndexStore` if the numbers ever demand it |
 | Embedding model change invalidates vectors | silent quality loss | embedder identity in `meta`; startup mismatch check; explicit `--reembed` |
-| Third-party plugin holds a source token | a compromised or malicious plugin exfiltrates data | per-plugin secret injection (an out-of-process plugin starts with an empty environment and receives only what its manifest declared), mandatory digest pinning, explicit installation, optional signatures, `lore plugin verify`; a WASM sandbox is the named enforcement tier for untrusted authors |
+| Third-party plugin holds a source token | a compromised or malicious plugin exfiltrates data | the plugin is a subprocess running with the operator's trust (`internal/plugexec/session.go`, `spawn`), so the controls are supply chain and scope rather than confinement: per-instance secret scoping (`internal/registry/secrets.go`, `resolveSecrets`), digest pinning (`internal/plugindist/install.go`, `Install`) and opt-in signature verification (`internal/plugindist/signature.go`, `verifier.verify`). What each one does and does not cover is in [10](10-plugin-distribution.md#trust-model) |
 | Plugin contract churn now that third parties exist | ecosystem breakage | `APIVersion` checked at registration and in the protocol handshake; the wire protocol ([09](09-plugin-protocol.md)) is frozen and evolves additively |
 | External plugin crashes mid-stream | partial sync | the last persisted cursor is authoritative, so a crash loses no committed work and the next round resumes from it |
+
+**Not built:** no runtime confinement for plugins. The source-token row names
+the controls that exist against this risk. Confining a plugin inside a
+WebAssembly runtime is an idea rather than a tier of this system
+([10](10-plugin-distribution.md#an-enforcing-sandbox-is-not-built)).
 
 ## Open questions
 

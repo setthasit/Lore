@@ -170,9 +170,11 @@ after installation is caught too.
 
 ## No network at sync time
 
-Installation is explicit and never implicit. Auto-install defaults to off
-because a background scheduler MUST NOT download and execute code on a timer;
-nothing inside a sync round ever fetches a plugin.
+Installation is explicit and never implicit. Only `lore plugin install` and
+`lore plugin update` download a plugin binary, and nothing inside a sync round
+fetches one, because a background scheduler MUST NOT download and execute code
+on a timer. `lore build --with` fetches plugin modules through the Go toolchain
+at build time (`internal/plugbuild/plugbuild.go`, `fetchRequirements`).
 
 A declared-but-uninstalled plugin fails at startup — before the scheduler
 starts, before any source is touched — with the exact command to run:
@@ -262,28 +264,63 @@ by the author, not something the engine enforces. Installing a plugin is
 running that author's code on your machine, and the CLI says so at install
 time.
 
-The mitigations that exist in the design:
+Three mitigations exist in the code:
 
-- **Per-plugin secret injection.** A plugin receives only the secrets its
-  manifest declared, resolved and injected by the host; it never sees the
-  ambient environment, so a Linear plugin cannot read `LORE_GITHUB_TOKEN`.
-- **Mandatory digest pinning.** Remote code is pinned by content, not by tag.
-- **Explicit installation.** No implicit download, no auto-install by default,
-  no fetch inside a sync round.
-- **`lore plugin verify`.** Conformance evidence on demand, against the exact
-  binary that will run.
-- **WASM via wazero** — already in the dependency tree as SQLite's runtime
-  ([02 — D6](02-architecture.md#key-design-decisions)) — is the only tier that
-  could *enforce* a sandbox rather than request one, and is the intended answer
-  for untrusted authors. The honest caveat: a connector needs the network, so a
-  WASM plugin needs an HTTP host function with a domain allowlist, and that
-  allowlist becomes the real security boundary.
+- **Per-instance secret scoping.** An external plugin's instance receives only
+  the secrets its manifest declared, each read by `resolveSecrets`
+  (`internal/registry/secrets.go`) from the environment variable the operator's
+  `with:` entry names: a plugin registered through `RegisterExternal`
+  (`internal/registry/registry.go`) cannot fall back to a default variable of
+  its own choosing, which a plugin compiled in through `Register`, including
+  one added by `lore build --with`, can. The host environment is not inherited
+  either: `minimalEnv` (`internal/plugexec/env.go`) hands the subprocess an
+  empty environment, and on Windows only the variables the Windows loader and
+  runtime need. So an external Linear plugin whose `with:` entry names
+  `LORE_LINEAR_TOKEN` receives that value and no secret the operator did not
+  name.
+- **Digest pinning.** Remote code is pinned by content, not by tag. The digest
+  is recorded on first install and enforced on every install that is not a
+  deliberate update, and on every launch: `Install`
+  (`internal/plugindist/install.go`) refuses an artifact whose digest differs
+  from the one `lore.lock` records, and `Store.Binary`
+  (`internal/plugindist/store.go`), reached through the `plugindist.Binary`
+  wrapper, re-hashes the binary on disk before the host resolves it for launch
+  (`internal/di/external.go`, `newExternals`). A GitHub release coordinate is
+  checked against the release's `checksums.txt` on that first install. For an
+  `https://` coordinate `Installer.locate` (`internal/plugindist/install.go`)
+  looks for no checksums file, so unless that coordinate declares `pubkey:` its
+  first download is compared with nothing. `Install` sets `Result.Trust`
+  whenever neither a published digest nor a lockfile entry constrained the
+  download, signature verified or not, and the CLI prints that.
+- **Signature verification.** When a remote coordinate declares `pubkey:`,
+  `Installer.expected` (`internal/plugindist/install.go`) fetches the signature
+  and verifies it through `verifier.verify`
+  (`internal/plugindist/signature.go`) before any digest is compared. A missing
+  or unsupported signature aborts the install. A `pubkey:` on a local `from:`
+  is never consulted, because `Install` returns on its local branch before
+  `Installer.expected` runs.
+
+Explicit installation ([No network at sync time](#no-network-at-sync-time)) and
+`lore plugin verify` keep the operator in the loop rather than confining the
+process.
 
 Least-privilege tokens remain the load-bearing control. The guidance in
 [06 — Security posture](06-interfaces-and-config.md#security-posture) extends
 unchanged to plugins: scope the credential to the projects, teams or spaces the
 plugin must read, prefer read-only tokens, and never issue a plugin a token
 broader than the `with:` block it was given.
+
+### An enforcing sandbox is not built
+
+Nothing in the engine confines a plugin. Every session it serves is dialled
+through `spawn` (`internal/plugexec/session.go`), which is `exec.Command` on
+the plugin binary, and `Open` (`internal/plugexec/plugin.go`) wraps that
+binary without applying any isolation to it. There is no runtime boundary and
+no host-function allowlist, so the ceiling of the controls above is a process
+that holds whatever the operator holds.
+
+Confining a plugin inside a WebAssembly runtime is an idea and not a tier of
+this system.
 
 ## Failure modes
 
