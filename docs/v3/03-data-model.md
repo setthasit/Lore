@@ -26,8 +26,10 @@ type DocType string
 //  default chunking strategy and rank as ordinary evidence)
 
 type RawRef struct {
-    Kind  RefKind // url | ticket_key | commit_sha | file_path | pr_number
-    Value string  // e.g. "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
+    Kind     RefKind // url | ticket_key | commit_sha | file_path | pr_number
+    Value    string  // e.g. "https://notion.so/…", "PROJ-123", "abc123", "internal/auth/auth.go"
+    Instance string  // optional: the source instance the target lives in.
+                     // Empty resolves against every instance
 }
 ```
 
@@ -79,7 +81,7 @@ behind the IndexStore interface; benchmark in M1 decides if it is ever needed.
 | `chunks_fts` | FTS5 virtual table over chunk text (BM25) |
 | `chunk_vectors` | sqlite-vec virtual table, rowid-aligned with `chunks` |
 | `edges` | Typed edge graph (src, dst, kind, confidence); indexed on both src and dst for direction-aware walks |
-| `pending_refs` | RawRefs that did not resolve yet (target not ingested) |
+| `pending_refs` | RawRefs that did not resolve yet (target not ingested), keyed by source document, kind, value and instance scope |
 | `cursors` | Per-connector incremental sync position |
 | `sync_lock` | Single-row lease: holder, acquired_at, heartbeat_at |
 | `meta` | Schema version, embedder identity (provider+model+dims) |
@@ -92,6 +94,12 @@ Notes:
 - Ref-lookup indexes: `documents.url`, ticket keys and SHA prefixes are
   resolvable via indexed columns (`external_key`, `sha_prefix`) populated at
   ingest — `ResolveRef` and the LinkResolver both use them; no table scans.
+- Keeping a ref's instance scope widened the `pending_refs` key, and the
+  recorded index generation moved with it
+  (`internal/repositories/sqlite/schema.go`, `schemaVersion`, now `4`). Opening
+  an index recorded under a different generation refuses, and the error names
+  the remedy: delete the index file and re-sync. Nothing is migrated
+  (`internal/repositories/sqlite/schema.go`, `ensureMeta`).
 
 ## Store portability (extending beyond SQLite)
 

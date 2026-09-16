@@ -204,8 +204,22 @@ plugin itself. Validation at load:
   unresolved one names what this build has.
 - Duplicate instance ids rejected; an id is required when one plugin is used
   twice.
-- Required manifest fields present; `*_env` variables exist when their instance
-  is configured.
+- Required manifest fields present, and a required list field declared as an
+  empty list refuses: an empty list selects nothing, so the instance would
+  ingest nothing (`internal/registry/with.go`, `checkType`).
+- A secret the manifest does not mark optional needs a named variable that
+  holds a value. An optional secret is skipped when nothing names its variable,
+  and, for a plugin compiled into this binary, when the only name came from the
+  plugin's default and that variable is unset. Once a `with:` entry names the
+  variable, that variable must be set
+  (`sdk/plugin.go`, `Secret.Optional`, and `internal/registry/secrets.go`,
+  `resolveSecrets`).
+- A plugin's declared default variable applies only to a plugin compiled into
+  this binary. For a plugin installed from outside the binary the declared
+  default is never used, because it would steer the host onto a variable the
+  operator never granted, so a required secret needs that plugin's `with:`
+  block to name the variable itself (`internal/registry/secrets.go`,
+  `resolveSecrets`).
 - At least one of `sources` / `repos` non-empty.
 - `embedder.provider` and `llm.provider` resolve to provider instances whose
   plugins declare the matching capability.

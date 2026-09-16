@@ -238,6 +238,27 @@ Second pass converting `RawRef`s into typed `edges`:
 | "supersedes" / "replaced by" phrase + resolved ref in ADR-style text | pattern + ref resolution | `supersedes` | 0.8 |
 | File path in text | path match against workspace repos | `mentions_path` | 0.7 |
 
+A ref may name the instance it resolves inside. `RawRef.Instance` holding a
+source instance id restricts the match to documents that instance ingested, and
+the id is matched exactly, case included (`sdk/document.go`, `RawRef`, and
+`internal/services/linkresolver.go`, `outOfScope`). An unscoped ref, `Instance`
+empty, still resolves against every ingested instance. Scoped or not, every kind
+but `file_path` resolves only when exactly one candidate survives, so a ticket
+key two Jira sites both use resolves for neither until a connector scopes it,
+and a scoped key its own instance answers with twice stays pending too
+(`internal/services/linkresolver.go`, `target`). A `file_path` ref is the
+exception: it yields an edge per in-scope indexed commit that touched the path,
+over the 50 most recent commits for that path in each workspace repo
+(`internal/services/linkresolver.go`, `pathCommits`, `commitsTouching` and
+`maxPathCommits`), and a scoped path no in-scope commit touched stays pending.
+A clone that no longer tracks the path at HEAD contributes nothing
+(`internal/services/linkresolver.go`, `commitsTouching`). A connector building
+its refs with `refs.Set` keeps the scoped claim when it emits the same kind and
+value both scoped and unscoped, whichever of the two comes first
+(`sdk/refs/refs.go`, `Set.AddScoped`). A plugin that skips the helper stores
+both rows, because `pending_refs` keys on the instance, which moved the index
+generation ([03](03-data-model.md)).
+
 Unresolved refs stay in `pending_refs` and are retried each round — a Notion
 page linked from a PR may be ingested *after* the PR; the edge appears once
 both sides exist. Resolution is idempotent, and an edge reached by two refs of
@@ -276,5 +297,7 @@ is the default answer for third-party sources.
 Trust: an external plugin runs with the user's privileges and holds its
 source's token, so "read-only" is a promise, not an enforcement. The
 mitigations that exist — per-plugin secret injection, mandatory digest
-pinning, explicit installation, `lore plugin verify` — and the WASM sandbox
-that would enforce it are in [10](10-plugin-distribution.md#trust-model).
+pinning, signature verification when a coordinate declares `pubkey:`, explicit
+installation, `lore plugin verify` — are in
+[10](10-plugin-distribution.md#trust-model), and nothing confines the process
+itself ([10](10-plugin-distribution.md#an-enforcing-sandbox-is-not-built)).
