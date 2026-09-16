@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -49,6 +50,42 @@ func indent(text, pad string) string {
 		lines[i] = pad + strings.TrimRight(line, " \t")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func inertText(text string) string {
+	next := strings.IndexFunc(text, escapable)
+	if next < 0 {
+		return text
+	}
+
+	var inert strings.Builder
+	inert.Grow(len(text))
+	rest := text
+	for next >= 0 {
+		inert.WriteString(rest[:next])
+		_, width := utf8.DecodeRuneInString(rest[next:])
+		inert.WriteString(escapedRune(rest[next : next+width]))
+		rest = rest[next+width:]
+		next = strings.IndexFunc(rest, escapable)
+	}
+	inert.WriteString(rest)
+	return inert.String()
+}
+
+func inertLine(text string) string {
+	inert := strings.ReplaceAll(inertText(text), "\n", `\n`)
+	return strings.ReplaceAll(inert, "\t", `\t`)
+}
+
+func escapable(r rune) bool {
+	return r != '\n' && r != '\t' &&
+		(unicode.IsControl(r) || r == utf8.RuneError ||
+			unicode.In(r, unicode.Zl, unicode.Zp, unicode.Bidi_Control))
+}
+
+func escapedRune(encoded string) string {
+	quoted := strconv.Quote(encoded)
+	return quoted[1 : len(quoted)-1]
 }
 
 func shortSHAs(shas []string) string {
@@ -113,7 +150,7 @@ func emitProse(cmd *cobra.Command, synthesis services.SynthesisService, bundle *
 }
 
 func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
-	printfln(w, "%s", bundle.Question)
+	printfln(w, "%s", inertLine(bundle.Question))
 	if code := bundle.Anchor.Code; code != nil {
 		printfln(w, "anchor: %s %s", code.Repo, fileWithSpan(code))
 		if len(code.BlamedSHAs) > 0 {
@@ -121,12 +158,12 @@ func renderBundle(w io.Writer, bundle *entities.EvidenceBundle) {
 		}
 	}
 	if doc := bundle.Anchor.Doc; doc != nil {
-		printfln(w, "anchor: %s", doc.Title)
-		printfln(w, "        %s", doc.URL)
+		printfln(w, "anchor: %s", inertLine(doc.Title))
+		printfln(w, "        %s", inertLine(doc.URL))
 	}
 	if window := bundle.Anchor.Window; window != nil {
 		printfln(w, "window: %s .. %s (%s)",
-			window.From.UTC().Format(dateLayout), window.To.UTC().Format(dateLayout), window.Derivation)
+			window.From.UTC().Format(dateLayout), window.To.UTC().Format(dateLayout), inertLine(window.Derivation))
 	}
 	printfln(w, "")
 
@@ -144,11 +181,11 @@ func renderNodes(w io.Writer, nodes []entities.EvidenceNode) {
 	printfln(w, "%s", plural(len(nodes), "document", "documents"))
 	for _, node := range nodes {
 		printfln(w, "")
-		printfln(w, "%s %s", entryLead(node), node.Doc.Title)
+		printfln(w, "%s %s", entryLead(node), inertLine(node.Doc.Title))
 		printfln(w, "   %s", metaLine(node))
-		printfln(w, "   %s", node.Doc.URL)
+		printfln(w, "   %s", inertLine(node.Doc.URL))
 		if excerpt := strings.TrimSpace(node.Excerpt); excerpt != "" {
-			printfln(w, "%s", indent(excerpt, "      "))
+			printfln(w, "%s", indent(inertText(excerpt), "      "))
 		}
 	}
 }
@@ -171,7 +208,7 @@ func metaLine(node entities.EvidenceNode) string {
 	if node.Role != "" && node.Role != entities.RoleSeed {
 		parts = append(parts, node.Role)
 	}
-	return strings.Join(parts, " · ")
+	return inertLine(strings.Join(parts, " · "))
 }
 
 func renderChains(w io.Writer, chains [][]lore.DocID) {
@@ -185,7 +222,7 @@ func renderChains(w io.Writer, chains [][]lore.DocID) {
 		for i, id := range chain {
 			ids[i] = string(id)
 		}
-		printfln(w, "  %s", strings.Join(ids, " → "))
+		printfln(w, "  %s", inertLine(strings.Join(ids, " → ")))
 	}
 }
 
@@ -196,7 +233,7 @@ func renderGaps(w io.Writer, gaps []string) {
 	printfln(w, "")
 	printfln(w, "gaps:")
 	for _, gap := range gaps {
-		printfln(w, "  %s", gap)
+		printfln(w, "  %s", inertLine(gap))
 	}
 }
 
