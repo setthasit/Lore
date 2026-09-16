@@ -10,6 +10,8 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +26,7 @@ const (
 	pluginName    = "in-memory-notes"
 	instance      = "fixture"
 	secret        = "hunter2-7f3a1c"
+	repoRemote    = "github:example/notes"
 	answerTimeout = 5 * time.Second
 )
 
@@ -63,6 +66,34 @@ func (c connector) Name() string { return c.name }
 
 func (c connector) Changes(ctx context.Context, cursor lore.Cursor) iter.Seq2[lore.Batch, error] {
 	return c.changes(ctx, cursor)
+}
+
+type remotePlugin struct {
+	plugin
+	remote string
+}
+
+func (p remotePlugin) NewSource(config lore.SourceConfig) (lore.Connector, error) {
+	source, err := p.plugin.NewSource(config)
+	if err != nil {
+		return nil, err
+	}
+	return remoteConnector{Connector: source, remote: p.remote}, nil
+}
+
+type remoteConnector struct {
+	lore.Connector
+	remote string
+}
+
+func (c remoteConnector) MatchesRemote(remote string) bool { return remote == c.remote }
+
+type sourcelessPlugin struct{}
+
+func (sourcelessPlugin) Manifest() lore.Manifest {
+	manifest := plugin{}.Manifest()
+	manifest.Kind = lore.KindProvider
+	return manifest
 }
 
 // A fully buffered input reaches EOF before the connector yields, which cancels
@@ -155,6 +186,14 @@ func (s *session) askChangesWithSecrets(secrets map[string]string) string {
 
 	env := s.envelope(wire.OpChanges)
 	s.send(wire.ChangesRequest{Envelope: env, Instance: instance, Secrets: secrets, Cursor: lore.Cursor{}})
+	return env.ID
+}
+
+func (s *session) askRemote(remote string) string {
+	s.t.Helper()
+
+	env := s.envelope(wire.OpRemote)
+	s.send(wire.RemoteRequest{Envelope: env, Instance: instance, Remote: remote})
 	return env.ID
 }
 
@@ -330,6 +369,90 @@ func TestACursorlessBatchIsRefusedAndStopsTheStream(t *testing.T) {
 	}
 }
 
+var reportedSize = regexp.MustCompile(`(\d+) bytes`)
+
+func TestAnOversizedBatchIsRefusedBySizeAndEndsTheStream(t *testing.T) {
+	s := serve(t, plugin{changes: func(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+		return func(yield func(lore.Batch, error) bool) {
+			yield(batch("1", lore.Document{ID: "fixture:note:1", Body: strings.Repeat("n", wire.MaxLineBytes)}), nil)
+		}
+	}})
+
+	failure := assertError(t, s.next(s.askChanges()), wire.KindInternal)
+	reported := reportedSize.FindStringSubmatch(failure.Message)
+	if reported == nil {
+		t.Fatalf("refusal %q does not report the answer's size", failure.Message)
+	}
+	if size, err := strconv.Atoi(reported[1]); err != nil || size <= wire.MaxLineBytes {
+		t.Errorf("refusal reports %s bytes, want a size above the cap", reported[1])
+	}
+	if !strings.Contains(failure.Message, fmt.Sprint(wire.MaxLineBytes)) {
+		t.Errorf("refusal %q does not name the protocol's cap", failure.Message)
+	}
+
+	if frame := s.next(s.ask(wire.OpShutdown)); !frame.OK {
+		t.Errorf("shutdown frame = %+v, want ok", frame)
+	}
+}
+
+func TestTheConnectorsRemoteVerdictReachesTheWire(t *testing.T) {
+	s := serve(t, remotePlugin{plugin: plugin{changes: never}, remote: repoRemote})
+
+	for _, asked := range []struct {
+		remote string
+		want   bool
+	}{
+		{remote: repoRemote, want: true},
+		{remote: "github:example/other-notes", want: false},
+	} {
+		frame := s.next(s.askRemote(asked.remote))
+		if !frame.OK || frame.Error != nil {
+			t.Fatalf("remote frame = %+v, want ok", frame)
+		}
+		if frame.Matches != asked.want {
+			t.Errorf("matches %q = %v, want %v", asked.remote, frame.Matches, asked.want)
+		}
+	}
+}
+
+func TestAConnectorThatMatchesNoRemoteIsRefusedByName(t *testing.T) {
+	s := serve(t, plugin{changes: never})
+
+	failure := assertError(t, s.next(s.askRemote(repoRemote)), wire.KindInternal)
+	if !strings.Contains(failure.Message, instance) {
+		t.Errorf("refusal %q does not name the connector that matches no remote", failure.Message)
+	}
+
+	if frame := s.next(s.ask(wire.OpShutdown)); !frame.OK {
+		t.Errorf("shutdown frame = %+v, want ok", frame)
+	}
+}
+
+func TestAPluginThatOpensNoSourceServesOnlyManifestAndShutdown(t *testing.T) {
+	s := serve(t, sourcelessPlugin{})
+
+	if frame := s.next(s.ask(wire.OpManifest)); !frame.OK {
+		t.Errorf("manifest frame = %+v, want ok", frame)
+	}
+
+	changes := assertError(t, s.next(s.askChanges()), wire.KindInternal)
+	if !strings.Contains(changes.Message, wire.OpChanges) || !strings.Contains(changes.Message, string(lore.KindProvider)) {
+		t.Errorf("refusal %q names neither the operation nor the plugin's kind", changes.Message)
+	}
+
+	remote := assertError(t, s.next(s.askRemote(repoRemote)), wire.KindInternal)
+	if !strings.Contains(remote.Message, wire.OpRemote) {
+		t.Errorf("refusal %q does not name the operation it refused", remote.Message)
+	}
+
+	if frame := s.next(s.ask(wire.OpShutdown)); !frame.OK {
+		t.Errorf("shutdown frame = %+v, want ok", frame)
+	}
+	if err := s.eof(); err != nil {
+		t.Errorf("ServeStreams = %v, want nil after shutdown", err)
+	}
+}
+
 func TestAnUnknownOperationIsAnsweredAndTheLoopKeepsServing(t *testing.T) {
 	s := serve(t, plugin{changes: never})
 
@@ -387,6 +510,48 @@ func TestEndOfInputCancelsTheOperationInFlight(t *testing.T) {
 	}
 	if err := s.eof(); err != nil {
 		t.Errorf("ServeStreams = %v, want nil after end of input", err)
+	}
+}
+
+var errBrokenStream = errors.New("the host's stream broke")
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, errBrokenStream }
+
+func TestARequestStreamThatFailsIsReportedAsTheReturn(t *testing.T) {
+	s := serve(t, plugin{changes: never})
+
+	if err := s.requests.CloseWithError(errBrokenStream); err != nil {
+		t.Fatalf("break the request stream: %v", err)
+	}
+	if err := s.eof(); !errors.Is(err, errBrokenStream) {
+		t.Errorf("ServeStreams = %v, want the request stream's own failure", err)
+	}
+}
+
+func TestAnAnswerStreamThatFailsIsReportedAsTheReturn(t *testing.T) {
+	request, err := json.Marshal(wire.Envelope{V: lore.APIVersion, ID: "r-1", Op: wire.OpManifest})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	served := stdio.ServeStreams(plugin{changes: never}, bytes.NewReader(append(request, '\n')), brokenWriter{}, io.Discard)
+	if !errors.Is(served, errBrokenStream) {
+		t.Errorf("ServeStreams = %v, want the answer stream's own failure", served)
+	}
+}
+
+func TestARequestLineOverTheCapIsReportedAsTheReturn(t *testing.T) {
+	overLong := append(bytes.Repeat([]byte("x"), wire.MaxLineBytes+1), '\n')
+	errOut := &syncBuffer{}
+
+	served := stdio.ServeStreams(plugin{changes: never}, bytes.NewReader(overLong), io.Discard, errOut)
+	if served == nil || !strings.Contains(served.Error(), fmt.Sprint(wire.MaxLineBytes)) {
+		t.Errorf("ServeStreams = %v, want an error naming the cap of %d bytes", served, wire.MaxLineBytes)
+	}
+	if !strings.Contains(errOut.String(), fmt.Sprint(wire.MaxLineBytes)) {
+		t.Errorf("the error stream does not report the over-long request line:\n%s", errOut)
 	}
 }
 
