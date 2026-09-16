@@ -66,7 +66,7 @@ func runBuild(cmd *cobra.Command, with []string, output, engine string) error {
 		printfln(out, "  %s", added)
 	}
 	printfln(out, "\nthe binary reports:")
-	_, _ = io.WriteString(out, result.Plugins)
+	_, _ = io.WriteString(out, inertText(result.Plugins))
 	return nil
 }
 
@@ -116,7 +116,7 @@ func runPluginSearch(cmd *cobra.Command, index plugbuild.Index, query string) er
 func renderSearchResults(out io.Writer, entries []plugbuild.Entry) {
 	rows := make([][]string, len(entries))
 	for i, e := range entries {
-		rows[i] = []string{e.Name, e.Kind, e.Coordinate, e.Summary}
+		rows[i] = []string{inertLine(e.Name), inertLine(e.Kind), inertLine(e.Coordinate), inertLine(e.Summary)}
 	}
 	renderTable(out, []string{"NAME", "KIND", "COORDINATE", "SUMMARY"}, rows)
 }

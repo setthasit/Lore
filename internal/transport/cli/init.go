@@ -149,7 +149,7 @@ func (s *scaffold) render() string {
 }
 
 func (s *scaffold) sourceItem() string {
-	item := "  - use: " + s.source.Name + "\n"
+	item := scaffoldLine("  - ", "use: "+s.source.Name, "")
 	if body := withBlock(s.source, "      "); body != "" {
 		item += "    with:\n" + body
 	}
@@ -162,7 +162,7 @@ func (s *scaffold) repoExample() string {
 	}
 	return "# repos:\n" +
 		"#   - path: ~/dev/" + s.workspace + "\n" +
-		"#     remote: " + s.source.Name + ":acme/" + s.workspace + "\n"
+		"#     remote: " + inertLine(s.source.Name) + ":acme/" + s.workspace + "\n"
 }
 
 func (s *scaffold) embedderBlock() string {
@@ -253,10 +253,10 @@ func uniqueVariables(manifests ...lore.Manifest) []string {
 }
 
 func scaffoldLine(prefix, body, comment string) string {
-	text := prefix + body
+	text := prefix + inertLine(body)
 	if comment == "" {
 		return text + "\n"
 	}
 	pad := max(commentColumn-utf8.RuneCountInString(text), 1)
-	return text + strings.Repeat(" ", pad) + "# " + comment + "\n"
+	return text + strings.Repeat(" ", pad) + "# " + inertLine(comment) + "\n"
 }

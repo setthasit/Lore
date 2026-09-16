@@ -100,14 +100,14 @@ func renderPlugins(out io.Writer, entries []registry.Entry, externals []external
 	header := []string{"NAME", "KIND", "ORIGIN", "SUMMARY"}
 	rows := make([][]string, len(entries))
 	for i, e := range entries {
-		rows[i] = []string{e.Manifest.Name, kindLabel(e.Manifest), e.Origin, e.Manifest.Summary}
+		rows[i] = []string{inertLine(e.Manifest.Name), kindLabel(e.Manifest), e.Origin, inertLine(e.Manifest.Summary)}
 	}
 	widths := renderTable(out, header, rows)
 
 	for _, row := range externals {
 		printfln(out, "")
-		printfln(out, "%s", tableLine([]string{row.name, "declared from " + row.from}, widths))
-		printfln(out, "%s", tableLine([]string{"", row.state}, widths))
+		printfln(out, "%s", tableLine([]string{inertLine(row.name), "declared from " + inertLine(row.from)}, widths))
+		printfln(out, "%s", tableLine([]string{"", inertLine(row.state)}, widths))
 	}
 }
 

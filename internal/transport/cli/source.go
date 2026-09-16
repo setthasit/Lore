@@ -286,7 +286,7 @@ func promptField(p *prompter, field string, declared lore.Field) (any, bool, err
 func parseField(field string, declared lore.Field, answer string) (any, error) {
 	switch declared.Type {
 	case lore.FieldURL:
-		if err := registry.CheckURL(field, answer, declared.Default); err != nil {
+		if err := registry.CheckURL(field, answer, inertLine(declared.Default)); err != nil {
 			return nil, err
 		}
 		return answer, nil
@@ -332,15 +332,16 @@ func (p *prompter) ask(question, fallback string) (string, error) {
 }
 
 func (p *prompter) read(question, fallback string) (answer string, atEOF bool, err error) {
+	asked := inertLine(question)
 	if fallback == "" {
-		_, _ = fmt.Fprintf(p.out, "%s: ", question)
+		_, _ = fmt.Fprintf(p.out, "%s: ", asked)
 	} else {
-		_, _ = fmt.Fprintf(p.out, "%s [%s]: ", question, fallback)
+		_, _ = fmt.Fprintf(p.out, "%s [%s]: ", asked, inertLine(fallback))
 	}
 
 	line, err := p.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", false, internalerror.NewInternalError("cannot read the answer to "+question, err)
+		return "", false, internalerror.NewInternalError("cannot read the answer to "+asked, err)
 	}
 	return strings.TrimSpace(line), errors.Is(err, io.EOF), nil
 }
