@@ -53,7 +53,9 @@ the system context through the plugin distribution and trust model.
 - Sources: **GitHub + GitLab + Notion + Jira** ship as official plugins; the contract
   keeps Confluence / ClickUp / Slack as drop-in additions that need not live in this
   repository. Every source — and the repository list itself — is optional per workspace,
-  and one plugin may be configured as several instances.
+  though not both at once: a workspace with neither is refused at load
+  (`internal/config/validate.go`, "at least one of sources or repos must be
+  configured"). One plugin may be configured as several instances.
 - Embeddings: provider plugin, **cloud default** (OpenAI), Ollama for fully-local operation.
 - LLM synthesis: provider plugin and **optional** — MCP responses return structured evidence
   and never require an LLM key on the server. OpenAI-compatible vendors are presets, not code.
@@ -66,4 +68,5 @@ the system context through the plugin distribution and trust model.
   registry and manifest; official plugins live in `plugins/` and hold no privilege a
   third party lacks; external plugins run out of process over NDJSON and are fetched
   by coordinate, a remote one recording its digest at the first install and being
-  checked against it from then on. The SQLite IndexStore stays built in.
+  checked against it at every launch and on every later install that is not a
+  `lore plugin update`. The SQLite IndexStore stays built in.

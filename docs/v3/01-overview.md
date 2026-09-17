@@ -39,10 +39,14 @@ made and what happened next* — whether or not the question touches code at all
 
 The pipeline is seeded four ways — a free-text question (`find_decision`), a code span
 (`why`, via `git blame`), a specific document (`trace`, `impact_of`), or a file
-history (`history_of`). Same walk, same ranking, same bundle shape.
+history (`history_of`). Same walk, same bundle shape. The ranking differs by
+tool, and [05](05-query-engine.md) says how.
 
-Honesty is a feature: when the trail ends, Lore says so
-("trail ends at PROJ-4521; no linked follow-up") instead of fabricating.
+Honesty is a feature: when the trail ends, Lore says so in the bundle's gaps
+rather than fabricating. A standalone seed is reported as title then DocID, so
+the strings it emits read "Move session auth to JWT (jira:ticket:PROJ-4521)
+stands alone; no linked discussion", "no follow-up evidence after 2025-03-12"
+and "trail ends at commit 4f2b91c0d3ae, not synced from a source".
 
 ## Two personas, one engine
 
@@ -89,15 +93,26 @@ covered by any of them.
   commit → PR → review → issue chains.
 - Be useful from an AI agent (MCP), a terminal (CLI), and programmatically
   (gRPC, future web UI).
-- Local-first: index lives in a single SQLite file; private credentials never
-  leave the machine; fully-local mode via Ollama embeddings.
-- Ship as a single **pure-Go** binary, with no cgo.
+- Local-first: the index is a single SQLite file, and a credential is read from
+  the local environment by name and handed only to the plugin whose manifest
+  declared it (`internal/registry/secrets.go`, `resolveSecrets`). Each
+  credential does reach the API it authenticates, so a Jira token goes to Jira,
+  and with a hosted embedder the chunk text being indexed goes to that vendor
+  too. Binding `embedder:` to Ollama keeps even that on the machine. The engine
+  sends nothing anywhere else, having no service of its own, but an installed
+  plugin is an unconfined process with its own network access
+  ([08](08-extensibility.md#invariants-a-plugin-must-not-break), invariant 5).
+- Ship as a single **pure-Go** binary, with no cgo. The release build sets
+  `CGO_ENABLED=0` in the `Makefile`, and no package imports `C`.
 
 ## Non-goals (v1)
 
 - Not a general codebase semantic-search tool (the saturated space).
 - Not an incident-management or ticketing tool: Lore reads the trail, it never
-  writes to any source.
+  writes to any source. The engine cannot: `lore.Connector` and `lore.CodeRepo`
+  expose no write operation, and the four official source plugins call read
+  endpoints only. A third-party plugin's own HTTP calls are its own
+  responsibility ([04](04-connectors-and-sync.md#connector-contract)).
 - No hosted multi-tenant service; server modes (HTTP/gRPC) are self-hosted.
 - No web UI in v1 — but the gRPC API is designed so a UI can be added without
   core changes.

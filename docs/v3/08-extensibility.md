@@ -344,10 +344,13 @@ func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
 
 The registry is host-side and holds no list of its own. Registration validates
 name shape and uniqueness, `APIVersion`, kind-versus-interface, and the field
-and secret declarations; a plugin that misdeclares itself fails at registration,
-not during a user's sync. Manifest-versus-built capabilities are checked where
-the value exists — when an instance is built — and a provider that declares a
-capability it does not implement fails the binding, naming the broken claim.
+and secret declarations (`internal/registry/registry.go`, `CheckManifest` and
+`validateImplements`, both reached from `Registry.Register` and
+`Registry.RegisterExternal`); a plugin that misdeclares itself fails at
+registration, not during a user's sync. Manifest-versus-built capabilities are
+checked where the value exists — when an instance is built — and a provider
+that declares a capability it does not implement fails the binding, naming the
+broken claim (`internal/registry/build.go`, `assertCapability`).
 
 `cmd/lore/main.go` is where a distribution names its plugin set — this binary
 passes `plugins.Official()`, the package that imports the nine official plugins,
@@ -392,7 +395,9 @@ A plugin is a type; configuration creates **instances** of it.
 - `--source` / `sync_now(source:)` accept instance ids. The valid set is built
   from the live registry, exactly as it is built from live connectors today.
 - The orchestrator asserts `doc.Source == instance` and that `doc.ID` carries
-  the instance prefix, and fails the batch otherwise. Nothing in the schema
+  the instance prefix, and fails the batch otherwise
+  (`internal/services/sync.go`, `assertInstanceIdentity`, called by
+  `commitBatch` before a document is stored). Nothing in the schema
   constrains the source column, so a mislabelling plugin would otherwise write
   into another instance's namespace silently.
 
@@ -471,7 +476,8 @@ plumbing.
 | `llm` | `lore.Completer` | no — synthesis is optional; MCP never needs it |
 
 Binding a role to a provider that lacks the capability is a configuration
-error at load, naming what the provider can do instead.
+error at load, naming what the provider can do instead
+(`internal/registry/build.go`, `Registry.BuildProvider`).
 
 Most vendors speak the OpenAI chat-completions protocol, so they are **presets
 of one driver**, not packages:
@@ -495,7 +501,9 @@ providers:
 
 Model-to-dimensions knowledge belongs to the driver that knows it, never to the
 engine. The engine enforces one rule: the resolved embedder must report a
-positive width before the index opens.
+positive width before the index opens (`internal/di/modules.go`,
+`newIndexStore`, which refuses the workspace rather than creating a vector
+column of width zero).
 
 ## Invariants a plugin must not break
 
@@ -504,8 +512,7 @@ first four, less any the stream gave no material to check, and the
 stream-error rule of the `Changes` contract ([04](04-connectors-and-sync.md)),
 which a stream that never failed passes rather than leaves unreached and which
 bites on an in-process connector, the host shim enforcing it at the boundary
-for a subprocess plugin ([09](09-plugin-protocol.md#conformance)); the engine
-enforces the rest at runtime.
+for a subprocess plugin ([09](09-plugin-protocol.md#conformance)).
 
 1. **Resumable and idempotent.** `Changes` from a mid-stream cursor yields the
    remainder, and re-running a stream re-yields identical `DocID`s. Upserts are
@@ -514,7 +521,9 @@ enforces the rest at runtime.
    becomes durable once its documents are committed.
 3. **Both timestamps.** `CreatedAt` is event time, `UpdatedAt` is edit time. A
    source without a true creation time sets them equal and says so in its
-   manifest summary.
+   manifest summary. Certification is the only check on this one: ingest
+   accepts a zero timestamp and the document then reads as undated
+   ([09](09-plugin-protocol.md#data-encoding)).
 4. **Full identity.** Every document carries `ID`, `Source`, `Type`, `URL`.
 5. **Read-only.** No plugin writes to its source, ever.
 6. **Known `RefKind` values only.** The vocabulary is closed (`url`,
@@ -525,6 +534,18 @@ enforces the rest at runtime.
    ordinary evidence.
 7. **No store access, no service access, no cross-plugin calls.** A plugin
    returns data; the engine decides what to do with it.
+
+Of the rest, only 6 is enforced. Every ingested reference passes
+`assertKnownRefKind` (`internal/services/linkresolver.go`), reached from
+`assertDocumentRefKinds` in `commitBatch` and again from
+`linkResolver.resolve`, so an unknown kind fails the batch. 7 holds because
+the contract hands a plugin nothing to reach upward with: `SourceConfig`
+carries a logger, config bytes and its own secrets, and the wire protocol has
+no operation a plugin can initiate ([09](09-plugin-protocol.md#non-goals)).
+Nothing enforces 5. A plugin runs with the operator's privileges and holds a
+token scoped by whoever issued it, so a plugin that writes to its source
+succeeds, and the operator learns of it from the source rather than from Lore.
+Scope the credential as [10](10-plugin-distribution.md#trust-model) describes.
 
 One workspace has exactly **one** embedding binding, permanently. The vector
 column's width is baked into the index at creation and frozen in `meta`

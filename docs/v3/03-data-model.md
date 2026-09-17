@@ -33,6 +33,10 @@ type RawRef struct {
 }
 ```
 
+How `Instance` narrows a match, and what an empty one resolves against, is the
+LinkResolver's rule ([04](04-connectors-and-sync.md#link-resolver),
+`internal/services/linkresolver.go`, `outOfScope`).
+
 `CreatedAt` vs `UpdatedAt` matters: a postmortem edited yesterday still
 *belongs to* last year's incident. Event resolution, impact filtering, and
 timeline ordering key on `CreatedAt`; sync watermarks and freshness use
@@ -71,30 +75,39 @@ single-file portability, offline queries after sync, trivial integration tests.
 Driver: **ncruces/go-sqlite3 (WASM build)** with sqlite-vec embedded via the
 official [sqlite-vec-go-bindings](https://github.com/asg017/sqlite-vec-go-bindings/)
 `ncruces` package — pure Go, no cgo, clean cross-compilation. No cgo driver
-ships. Store benchmarks live at
+ships, and `make build.matrix` proves it by building every shipped
+platform with `CGO_ENABLED=0` (`Makefile`, `PLATFORMS`). Store benchmarks live at
 `internal/repositories/sqlite/bench_test.go`, and a second implementation
 would be one package behind the `IndexStore` interface.
 
 | Table | Purpose |
 |---|---|
-| `documents` | Normalized documents (incl. `created_at`, `updated_at`); full body retained for excerpt extraction |
+| `documents` | Normalized documents (incl. `created_at`, `updated_at`); the full body is retained and read back by `DocumentsWithBody` (`internal/repositories/sqlite/documents.go`), which `documentBody` (`internal/services/ref.go`) calls for `trace`'s whole body and `impact_of`'s anchor excerpt |
 | `chunks` | Embedding-sized slices of document bodies, FK → documents |
 | `chunks_fts` | FTS5 virtual table over chunk text (BM25) |
-| `chunk_vectors` | sqlite-vec virtual table, rowid-aligned with `chunks` |
-| `edges` | Typed edge graph (src, dst, kind, confidence); indexed on both src and dst for direction-aware walks |
+| `chunk_vectors` | sqlite-vec virtual table, rowid-aligned with `chunks`. The chunk's `id` is an explicit rowid alias, and both derived rows are written with it (`internal/repositories/sqlite/documents.go`, `ReplaceChunks`) |
+| `edges` | Typed edge graph (src, dst, kind, confidence). `PRIMARY KEY (src, dst, kind)` covers the outward direction and `edges_dst_idx` the inward one, so a direction-aware walk is indexed either way (`internal/repositories/sqlite/schema.go`, `schemaDDL`) |
 | `pending_refs` | RawRefs that did not resolve yet (target not ingested), keyed by source document, kind, value and instance scope |
 | `cursors` | Per-connector incremental sync position |
 | `sync_lock` | Single-row lease: holder, acquired_at, heartbeat_at |
-| `meta` | Schema version, embedder identity (provider+model+dims) |
+| `meta` | Schema version, vector width, embedder identity (provider+model+dims). The store owns the first two and refuses to overwrite them through `SetMeta` (`internal/repositories/sqlite/sync.go`, `Store.SetMeta`) |
 
 Notes:
 
 - `meta` stores the embedding model identity; changing embedder invalidates
-  vectors and forces re-embedding (detected at startup, surfaced as an explicit
-  error with a `lore sync --reembed` remedy, never silent).
+  vectors and forces re-embedding. The next sync round detects it and refuses
+  with a `lore sync --reembed` remedy
+  (`internal/services/sync.go`, `reconcileIdentity`). Nothing detects it at
+  startup or at query time, so queries before that round answer against the
+  old vectors.
 - Ref-lookup indexes: `documents.url`, ticket keys and SHA prefixes are
   resolvable via indexed columns (`external_key`, `sha_prefix`) populated at
   ingest — `ResolveRef` and the LinkResolver both use them; no table scans.
+  One ref shape is the exception: a bare PR or issue number names no
+  repository, so it compiles to `external_key LIKE '%/pull/' || ?` over the two
+  document types and scans
+  (`internal/repositories/sqlite/resolve.go`, `numberRefClause`). A number
+  qualified with its slug takes the indexed `IN` branch instead.
 - Keeping a ref's instance scope widened the `pending_refs` key, and the
   recorded index generation moved with it
   (`internal/repositories/sqlite/schema.go`, `schemaVersion`, now `4`). Opening
@@ -114,7 +127,7 @@ behind one repository interface, selected by an FX provider; a second backend
 // Errors come back raw with context, and classifying them is the service
 // layer's job.
 type IndexStore interface {
-    // Documents & chunks — batch upserts are atomic internally;
+    // Documents & chunks: one call is one transaction,
     // no transaction type leaks out of the store.
     UpsertDocuments(ctx context.Context, docs []Document) error
     DocumentsByID(ctx context.Context, ids []DocID) ([]DocumentMeta, error)
@@ -144,7 +157,8 @@ type IndexStore interface {
     Cursor(ctx context.Context, instance string) (Cursor, error)
     SetCursor(ctx context.Context, instance string, c Cursor) error
 
-    // Lease lock — SQLite: lease row; Postgres: advisory lock. Same semantics.
+    // Lease lock: one row, CHECK (id = 1) in schemaDDL, taken by the single
+    // conditional statement acquireLeaseSQL (sqlite/sync.go).
     TryAcquireLease(ctx context.Context, holder string) (bool, error)
     HeartbeatLease(ctx context.Context, holder string) error
     ReleaseLease(ctx context.Context, holder string) error
@@ -168,8 +182,13 @@ Portability rules baked into the design:
 - **The index is derived data.** Sources are ground truth; the index is a
   rebuildable cache. Switching backends = re-sync + re-embed against a fresh
   store — no data-migration tooling, ever.
-- **No leaked SQL types.** Batch methods are atomic internally; callers never
-  see transactions, rowids, or virtual-table details.
+- **No leaked SQL types.** Callers never see transactions, rowids, or
+  virtual-table details. Atomicity holds per method, not per batch:
+  `UpsertDocuments`, `ReplaceChunks` and `UpsertEdges` each run in one
+  transaction (`internal/repositories/sqlite/documents.go` and `edges.go`), and
+  a sync batch spans several such calls. See
+  [04](04-connectors-and-sync.md#sync-round) for what a crash mid-batch leaves
+  behind.
 - Config gains a `store:` key (`sqlite` default) when a second backend lands —
   not before (YAGNI).
 
@@ -184,13 +203,29 @@ type-aware, with a defined default for types the table does not name:
 
 | DocType | Strategy |
 |---|---|
-| commit | Whole message = one chunk (subject weighted into title field) |
-| pr / issue / ticket / page | Split on markdown headings / paragraph groups, target ~300–500 tokens, small overlap |
-| review_comment / issue_comment / ticket_comment | One comment = one chunk; thread id kept in metadata so retrieval can rehydrate the thread |
+| commit | Whole message = one chunk |
+| pr / issue / ticket / page | Split on markdown headings / paragraph groups, target ~300–500 tokens, small overlap (`minChunkTokens`, `maxChunkTokens`, `overlapTokens`) |
+| review_comment / issue_comment / ticket_comment | One comment = one chunk, carrying the thread id its `DocID` prefix names (`threadID`) |
 | *(any other / future type)* | Default: heading/paragraph split, ~300–500 tokens, small overlap |
 
-Every chunk carries: `doc_id`, `source`, `repo_ref`, `doc_type`, `author`,
-`created_at`, `updated_at` — all filterable at query time.
+Strategy selection is the type switch in `internal/services/chunker.go`,
+`chunker.Chunk`, and an unnamed type falls through to the default branch.
+
+A chunk is body text only. There is no title field to weight a commit subject
+into: `entities.Chunk` carries no title, and `chunks_fts` is declared
+`fts5(text)` over that one column
+(`internal/repositories/sqlite/schema.go`, `schemaDDL`). The document's title
+lives in `documents.title`, which no search reads, so a decision whose title
+names the thing and whose body does not is unreachable lexically.
+
+Every chunk carries `doc_id`, `source`, `repo_ref`, `doc_type`, `author`,
+`created_at`, `updated_at` and `thread_id` (`chunkOf`). Four of those are
+filterable: `entities.Filters` exposes `source`, `repo_ref`, `doc_type` and a
+`created_at` range, and nothing else reaches SQL
+(`internal/repositories/sqlite/search.go`, `filterClause`). The chunk's
+`author`, `updated_at` and `thread_id` come back on a `ChunkHit` and no query
+path reads them: a bundle's author and timestamps come from `documents` through
+`DocumentMeta`, and nothing rehydrates a comment thread from `thread_id` today.
 
 ## Hybrid retrieval
 
@@ -199,10 +234,14 @@ Every chunk carries: `doc_id`, `source`, `repo_ref`, `doc_type`, `author`,
 2. **Vector KNN** over `chunk_vectors` (semantic paraphrase: "why Postgres"
    matches "database selection rationale").
 3. **Reciprocal Rank Fusion** in Go merges both rankings:
-   `score(d) = Σ 1/(k + rank_i(d))`, k = 60.
+   `score(d) = Σ 1/(k + rank_i(d))`, k = 60 (`internal/services/rrf.go`,
+   `rrfK`, `fuse`).
 4. Optional metadata filters pushed into SQL: `source`, `repo_ref`,
    `doc_type`, `created_at` range — the time filter is what event anchoring
-   compiles down to ([05](05-query-engine.md#event-resolution)).
+   compiles down to ([05](05-query-engine.md#event-resolution)). The lexical
+   query filters in the outer statement and the vector query as a rowid
+   candidate set, because a filter outside a KNN would return fewer than `k`
+   hits (`internal/repositories/sqlite/search.go`, `searchVectorSQL`).
 
 Retrieval returns *chunks*; the query engine immediately lifts them to their
 parent documents and hands them to the shared walk/rank machinery — see

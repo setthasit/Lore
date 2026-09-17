@@ -16,7 +16,14 @@ Rules (no exceptions):
 
 - Transport calls **only** services. No transport ever touches the store or a
   connector directly — including the MCP path. The harness AI "drives the tool
-  loop", but every tool call still goes through the service layer.
+  loop", but every tool call still goes through the service layer. The two
+  halves of that rule are backed differently. A transport importing anything
+  under `plugins/` fails `make lint`: the depguard `engine` rule in
+  `.golangci.yml` denies that module to every file under `internal/**`
+  ([08](08-extensibility.md)). A transport importing
+  `internal/repositories` is denied by no rule, and holds only because no
+  non-test file under `internal/transport/` does. The `sdk` types a transport
+  does import are the contract, not an implementation.
 - Services orchestrate repositories and connectors; they carry all business
   logic and validation.
 - The repository (IndexStore) talks only to SQLite. Plugins talk only to their
@@ -25,8 +32,11 @@ Rules (no exceptions):
   its manifest declared, and a `lore.Host` carrying one logger already tagged
   with the instance id (`sdk/host.go`, `Host`, and
   `internal/registry/build.go`, `Registry.Host`). It returns data and never
-  touches the store, a service, or another plugin. See
-  [08](08-extensibility.md).
+  touches the store, a service, or another plugin. `Host` offers no handle that
+  would let it, and the import edge is lint-denied as well: the depguard `sdk`
+  and `plugins` rules in `.golangci.yml` allow those trees only the standard
+  library and `sdk` (plus `plugins` itself), so importing `internal/**` fails
+  `make lint`. See [08](08-extensibility.md).
 
 ## Topology
 
@@ -111,18 +121,21 @@ Every query tool is the same pipeline with a different **seed**:
 | `trace` / `impact_of` | a specific document (ref) | the resolved document |
 | `history_of` | file path | `git log --follow` commit sequence |
 
-After seeding, the machinery is shared: graph walk (depth-capped,
-confidence-pruned, direction-aware), semantic expansion, ranking, chain
-assembly, gap reporting. **Every query tool returns `Chains` and `Gaps`** — the
-ask-only path gets the full engine, not a stripped-down retrieval endpoint.
-Algorithms in [05](05-query-engine.md).
+After seeding, the graph walk (direction-aware, confidence-pruned), chain
+assembly and gap reporting are shared by all five tools. Two things are not:
+semantic expansion runs for `why` and `impact_of` only, and the time-prior
+ranking formula runs for `find_decision` only. **Every query tool returns
+`Chains` and `Gaps`**, so the ask-only path gets the full engine and not a
+stripped-down retrieval endpoint. Which tool reaches which symbol is in
+[05](05-query-engine.md).
 
 ### D4 — Code is optional; anchors are a union
 
 `repos:` in `lore.yaml` is optional. A workspace with zero repositories
-supports `find_decision`, `trace`, `impact_of`, and sync tools fully; `why` and
-`history_of` fail fast with a clear "no repositories registered — code
-anchoring disabled" error. `EvidenceBundle.Anchor` is a typed union
+supports `find_decision`, `trace`, `impact_of`, and sync tools fully. `why` and
+`history_of` fail fast with the precondition error `askOnlyRefusal`, whose text
+is "no repositories registered — code anchoring disabled for this workspace"
+(`internal/services/coderepo.go`). `EvidenceBundle.Anchor` is a typed union
 (query / code span / document / time window), not a code-shaped struct.
 
 ### D5 — gRPC is the programmatic API, not an MCP transport
@@ -149,21 +162,25 @@ holds no source or provider name. See [08](08-extensibility.md).
 
 ### D8 — Connectors stream checkpointable batches
 
-`Changes` yields `Batch{Docs, Cursor}` values; the orchestrator durably
-commits a batch **then** persists that batch's cursor. Interrupted backfills
-resume mid-source with no re-work and no duplicate writes (upserts are
-idempotent by `DocID`). This replaces the v1 signature, which returned the
-final cursor before the stream was consumed and made per-batch checkpointing
-unimplementable. See [04](04-connectors-and-sync.md).
+`Changes` yields `Batch{Docs, Cursor}` values, and the orchestrator commits a batch
+**then** persists that batch's cursor (`internal/services/sync.go`,
+`syncConnector`, whose `SetCursor` call follows `commitBatch`). Interrupted
+backfills resume at the last checkpointed batch with no duplicate writes, since
+upserts are idempotent by `DocID`. The replayed batch is re-done rather than
+skipped, because a batch is several transactions and not one
+([04](04-connectors-and-sync.md#sync-round)). This replaces the v1 signature,
+which returned the final cursor before the stream was consumed and made
+per-batch checkpointing unimplementable.
 
 ### D9 — The bundle is the contract; tools are disposable verbs
 
 `EvidenceBundle` is the stability boundary: every surface (MCP, CLI, gRPC,
 future web UI) consumes it, so its shape changes only additively. Tools are
-thin verbs over it and stay cheap to add, rename, or retire. MCP deprecation
-is in-place: the old tool stays registered with a "deprecated — use X"
-description for one release, then disappears; host models follow the
-description automatically.
+thin verbs over it and stay cheap to add, rename, or retire. Both are review
+rules for changes to this repository, not anything the code checks. The
+deprecation convention is the same kind of rule: an MCP tool being retired stays
+registered with a "deprecated, use X" description for one release and then
+disappears, so host models follow the description. No tool is deprecated today.
 
 ### D10 — Connectors and providers are plugins; SQLite is not
 
@@ -198,7 +215,7 @@ sequenceDiagram
 
 ### AI path (MCP) — code-anchored
 
-Identical, except the tool is `why(repo, file, 40, 55)` and the seed step calls
+Identical, except the tool is `why(file, 40, 55)` and the seed step calls
 the code plugin for blame before walking.
 
 ### Non-AI path (CLI / gRPC)
@@ -229,9 +246,13 @@ Central `internalerror`-style package: typed constructors
   classification.
 - Services: classify into internal error types. Notable precondition errors:
   "no repositories registered" (`why`/`history_of` on ask-only workspace),
-  "embedder identity mismatch — run `lore sync --reembed`".
-- Transports: map to protocol-native codes — MCP tool error results, gRPC
-  status codes, CLI exit codes + stderr.
+  "embedder identity mismatch — run `lore sync --reembed`" (a sync round, which
+  is the only caller that compares the two).
+- Transports: map to protocol-native codes. gRPC reads the kind off the
+  internal error (`internal/transport/grpc/errors.go`, `rpcCodes`), MCP returns
+  a tool error result (`internal/transport/mcp/server.go`, `toolError`), and the
+  CLI returns the error from `RunE` for cobra to print on stderr with a
+  non-zero exit.
 
 ## Testing strategy
 
@@ -245,9 +266,11 @@ Central `internalerror`-style package: typed constructors
   `sdk/conform`, the shared conformance suite that every source plugin passes
   and that third parties run as certification
   ([08](08-extensibility.md#invariants-a-plugin-must-not-break)).
-- **Registry** — a manifest whose declared capabilities disagree with the built
-  value's interfaces fails at registration, so a misdeclared plugin breaks the
-  test suite rather than a user's sync.
+- **Registry** — registration validates the manifest and that the plugin
+  implements what it declares (`internal/registry/registry.go`,
+  `validateManifest`), and binding a provider role checks the built value for
+  the capability (`internal/registry/build.go`, `assertCapability`), so a
+  misdeclared plugin breaks the test suite rather than a user's sync.
 - **Transports** — mocked services; assert request parsing and error mapping.
 - **End-to-end smoke, ask-only** — fixture Jira + Notion API servers, zero
   repos; run `sync` then `find_decision`/`impact_of`, assert the citation chain and the
@@ -285,7 +308,7 @@ internal/
 ├── entities/               # Edge, Anchor, EvidenceBundle, IndexStats, SyncEvent, …
 ├── errors/internalerror/
 ├── fsx/                    # filesystem helpers shared across layers
-├── urlx/                   # URL redaction — strips userinfo and query before a URL is logged or reported
+├── urlx/                   # `Redact` strips userinfo and the query string, and the distribution and build paths call it before printing a URL
 ├── mocks/                  # gomock doubles, generated
 └── config/                 # lore.yaml loading + validation
 api/proto/lore/v1/          # gRPC contract

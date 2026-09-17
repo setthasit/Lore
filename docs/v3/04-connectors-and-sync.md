@@ -34,12 +34,21 @@ Contract rules:
   instances. Jira-only, Notion-only, GitHub-only, GitLab-only — any subset is
   supported, and two instances of one plugin (two Jira sites) are as well.
 - **Instance-scoped identity.** `Name()` is the instance id, which is also the
-  cursor key, `Document.Source`, and the `DocID` prefix. The orchestrator
-  rejects a batch whose documents disagree with the instance that produced
-  them.
+  cursor key, `Document.Source`, and the `DocID` prefix. The registry refuses a
+  connector that renames itself at construction
+  (`internal/registry/build.go`), and the orchestrator rejects a batch whose
+  documents disagree with the instance that produced them
+  (`internal/services/sync.go`, `assertInstanceIdentity`, called from
+  `commitBatch` before the upsert).
 - **No business logic.** Connectors fetch, paginate, retry, and normalize to
   `Document` + `RawRef`s. Ref *resolution* is the LinkResolver's job.
-- **Read-only.** No connector ever writes to its source.
+- **Read-only by contract, not by enforcement.** `Connector` exposes no write
+  method and `CodeRepo` none either, so nothing in the engine can ask a source
+  to change. What a plugin's own HTTP client does is its own business: the four
+  official source plugins call read endpoints only (the sole `POST`s are
+  Notion's `/v1/search` and GitHub's GraphQL query endpoint), and for a
+  third-party plugin read-only is a promise. The trust paragraph under
+  [Plugins](#plugins) says what backs it.
 - Credentials are named in config as environment variable names, resolved by
   the host, and injected. A connector receives only the secrets its manifest
   declared. For an external connector the host also withholds its own
@@ -54,11 +63,13 @@ Contract rules:
   after it, and nothing beside it: the batch in that yield is dropped with the
   error, so documents or a cursor riding there are lost rather than committed.
   The orchestrator stops at the first error and leaves the cursor where the
-  last committed batch left it.
-- **Conformance-tested.** Every connector passes `sdk/conform` — resumability,
-  idempotency, batch-cursor honesty, timestamps, full identity, a stream that
-  reaches its end, and an error that ends the stream — which is also the
-  third-party certification suite ([08](08-extensibility.md)).
+  last committed batch left it (`internal/services/sync.go`, `syncConnector`).
+- **Conformance-tested.** Every source plugin runs `sdk/conform` from its own
+  test (`plugins/sources/{github,gitlab,notion,jira}/connector_test.go`), which
+  checks batch-cursor honesty, timestamps, full identity, idempotency,
+  resumability, a stream that reaches its end, and an error that ends the stream
+  (`sdk/conform/conform.go`, `Run`). The same suite is the third-party
+  certification suite ([08](08-extensibility.md)).
 
 ### GitHubConnector (v1)
 
@@ -144,7 +155,10 @@ Contract rules:
 
 A separate plugin kind (`KindCode`) over **local clones** registered in the
 workspace. Entirely optional: absent `repos:` config means no code plugin is
-constructed, and `why`/`history_of` return a precondition error.
+constructed, and `why`/`history_of` refuse on their first statement, before
+they touch the store. The refusal is `askOnlyRefusal`, raised by
+`whyService.Why` (`internal/services/why.go`) and `historyService.HistoryOf`
+(`internal/services/history.go`).
 
 ```go
 type CodeRepo interface {
@@ -157,8 +171,9 @@ type CodeRepo interface {
 Local git is the ground truth for `why`/`history_of` line attribution; the
 GitHub/GitLab connectors *enrich* those commits with PR/review/issue layers
 (matched via the `remote:` mapping in config). Implementation: shell out to
-`git` (blame with `--porcelain`) — robust, zero-dependency, already installed
-everywhere Lore runs.
+`git`, using `blame --porcelain` and `log --follow`
+(`plugins/code/git/blame.go`, `plugins/code/git/log.go`). Robust,
+zero-dependency, already installed everywhere Lore runs.
 
 ### Model providers
 
@@ -177,13 +192,17 @@ type Completer interface { // used ONLY by SynthesisService (non-AI surfaces)
 ```
 
 `embedder:` and `llm:` in `lore.yaml` are role bindings naming a provider
-instance and a model; binding a role to a provider lacking the capability is a
-load-time error. The host — not the plugin — composes the vector-space
-identity `<plugin>/<model>/<dims>` stored in `meta`, so no plugin can claim
-another's identity. Embedder default: OpenAI; Ollama for fully-local. Vendors
-speaking the OpenAI protocol (Z.AI, OpenRouter, Moonshot, DeepSeek, Groq, …)
-are presets of one driver rather than packages. Synthesis is never required
-for MCP usage. See [08](08-extensibility.md#provider-roles-and-drivers).
+instance and a model. Binding a role to a provider lacking the capability fails
+while the container is being built, before any transport serves
+(`internal/registry/build.go`, `assertCapability`). The host composes the
+vector-space identity `<plugin>/<model>/<dims>` stored in `meta`, not the
+plugin: it is built from the plugin name, the configured model and the built
+embedder's own `Dimensions()` (`internal/di/modules.go` and
+`internal/services/vectorspace.go`, `NewVectorSpace`), so no plugin can claim
+another's identity. Embedder default: OpenAI, with Ollama for fully-local.
+Vendors speaking the OpenAI protocol (Z.AI, OpenRouter, Moonshot, DeepSeek,
+Groq, …) are presets of one driver rather than packages. Synthesis is never
+required for MCP usage. See [08](08-extensibility.md#provider-roles-and-drivers).
 
 ### Future sources (same contract)
 
@@ -202,7 +221,7 @@ Mechanism — single-row lease in SQLite (`sync_lock`):
 
 ```mermaid
 flowchart LR
-    MT[Manual trigger<br/>CLI / MCP sync_now / gRPC] -->|Acquire - blocks or errors verbosely| RUN[Run sync]
+    MT[Manual trigger<br/>CLI / MCP sync_now / gRPC] -->|TryAcquire - never blocks| RUN[Run sync]
     SCH[Scheduler tick<br/>every interval] -->|TryAcquire| HELD{held?}
     HELD -->|yes| SKIP[Skip round, log skip]
     HELD -->|no| RUN
@@ -210,33 +229,70 @@ flowchart LR
     RUN --> REL[Release on finish]
 ```
 
-- Lease carries `holder`, `acquired_at`, `heartbeat_at`. A lease whose
-  heartbeat is older than TTL (60s) is considered dead and may be taken over —
-  a crashed sync never wedges the scheduler.
+- Lease carries `holder`, `acquired_at`, `heartbeat_at`, and is taken by one
+  conditional `INSERT … ON CONFLICT` so two processes cannot both win
+  (`internal/repositories/sqlite/sync.go`, `acquireLeaseSQL`,
+  `Store.TryAcquireLease`). A lease whose heartbeat is older than
+  `repositories.LeaseTTL` (60s) may be taken over, so a crashed sync never
+  wedges the scheduler.
+- **Nothing waits for the lease.** `TryAcquireLease` never blocks, so a manual
+  run that finds the lease held fails immediately with a precondition error
+  naming the holder and the TTL (`internal/services/sync.go`,
+  `syncOrchestrator.Sync`, `leaseHeldError`). The scheduler treats the same
+  refusal as a skip and logs it (`internal/services/scheduler.go`,
+  `Scheduler.round`, matching `ErrSyncLocked`).
+- The holder heartbeats every 15s while the round runs (`heartbeatInterval`,
+  `heartbeatLease`). A heartbeat the store rejects because another process took
+  the lease cancels the round rather than letting it keep writing.
 - Same lock covers scheduler-vs-scheduler (long round overlapping the next
   tick) and multiple processes sharing one workspace file (e.g. `lore serve`
   daemon + ad-hoc CLI).
 
 ### Sync round
 
-For each configured source instance:
+Once per round, before any instance is touched, `reconcileIdentity`
+(`internal/services/sync.go`, first statement of `runRound`) compares the
+configured vector-space identity with the one `meta` records. A first sync
+adopts it, a match proceeds, a mismatch refuses the whole round with the
+`lore sync --reembed` remedy, and `--reembed` rewinds every cursor and wipes the
+chunk layer instead of comparing (`reembed`). This is the only place the two
+identities are compared.
 
-1. Load cursor from `cursors`, keyed by instance id.
-2. Stream `Changes(cursor)`; for each `Batch`:
-   a. Upsert documents (idempotent by `DocID`), rejecting any document whose
-      `Source` or `DocID` prefix disagrees with the instance.
-   b. Chunk changed documents; embed new/changed chunks (batched); update
-      FTS + vectors.
-   c. Store emitted `RawRef`s, rejecting unknown `RefKind` values.
-   d. Commit durably, **then** persist `batch.Cursor` — crash-safe resume at
-      batch granularity.
-3. After all instances: run the LinkResolver pass.
+Then, for each configured source instance:
+
+1. Load cursor from `cursors`, keyed by instance id (`syncConnector`).
+2. Stream `Changes(cursor)` and, for each `Batch` (`commitBatch`):
+   a. Reject the batch whole if any document's `Source` or `DocID` prefix
+      disagrees with the instance (`assertInstanceIdentity`) or carries an
+      unknown `RefKind` (`assertDocumentRefKinds`). Both run before anything is
+      written.
+   b. Upsert documents, idempotent by `DocID` (`UpsertDocuments`).
+   c. Chunk each document, embed its chunks in one call, and replace its chunk,
+      FTS and vector rows (`indexDocument`, `ReplaceChunks`). A document that
+      chunks to nothing still calls `ReplaceChunks`, so a shortened edit cannot
+      leave the old chunks retrievable.
+   d. Hand the batch to the LinkResolver, which stores unresolved `RawRef`s in
+      `pending_refs` and writes the edges it can resolve now (`LinkResolver.Link`).
+   e. **Then** persist `batch.Cursor` (`SetCursor`).
+3. After all instances: run the LinkResolver pass over `pending_refs`
+   (`LinkPending`).
+
+The cursor is the only durability boundary. A batch is not one transaction,
+because step 2b, each document in 2c, and 2d are separate ones. A crash inside
+a batch can therefore leave documents stored with no chunks for the ones it had
+not reached. The cursor still points at the previous batch, so the next round
+replays the whole batch and the upserts overwrite what survived. Nothing is
+lost, and a reader should not expect a half-finished batch to be invisible in
+the meantime: a query between the crash and the next round can retrieve a
+document whose chunks are stale.
 
 **Instances fail independently.** A failing instance ends its own stream at the
-last committed cursor; the remaining instances still run, the LinkResolver pass
-still runs over what was ingested, and the round reports partial failure with
-the per-instance errors. One broken third-party plugin must not be able to
-stop a workspace from syncing.
+last committed cursor, the remaining instances still run, the LinkResolver pass
+still runs over what was ingested, and the round returns partial failure with
+the per-instance errors (`runRound`, `SyncResult.Failures`). One broken
+third-party plugin must not be able to stop a workspace from syncing. A lost
+lease is the exception: it cancels the round instead of being collected as one
+instance's failure.
 
 ### Link resolver
 
@@ -250,6 +306,11 @@ Second pass converting `RawRef`s into typed `edges`:
 | Ticket key `PROJ-123` | key match against ingested tickets/issues | `references_doc` | 0.9 |
 | "supersedes" / "replaced by" phrase + resolved ref in ADR-style text | pattern + ref resolution | `supersedes` | 0.8 |
 | File path in text | path match against workspace repos | `mentions_path` | 0.7 |
+
+Those kinds and confidences live in `internal/services/linkresolver.go`:
+`refKindRules` for a plain text match, `explicitRelation` for a commit/PR/issue
+pair the API already related, and `textRule` for the supersede phrase, with
+`ruleFor` picking between them.
 
 A ref may name the instance it resolves inside. `RawRef.Instance` holding a
 source instance id restricts the match to documents that instance ingested, and
@@ -276,7 +337,8 @@ Unresolved refs stay in `pending_refs` and are retried each round — a Notion
 page linked from a PR may be ingested *after* the PR; the edge appears once
 both sides exist. Resolution is idempotent, and an edge reached by two refs of
 different confidence keeps the highest, so the stored graph does not depend on
-which ref the resolver happened to reach first.
+which ref the resolver happened to reach first
+(`internal/repositories/sqlite/edges.go`, `upsertEdgeSQL`).
 
 Edge direction convention: `Src` = the document whose body contains the
 reference; `Dst` = the referenced document. The resolver never guesses
@@ -286,8 +348,19 @@ direction — it always knows which body the ref came from.
 
 First sync of a large source is the stress case. Mitigations: GraphQL batching
 (GitHub), batch-level cursor checkpoints (interruptible/resumable everywhere),
-respect `Retry-After`/secondary-limit headers with exponential backoff,
-per-connector concurrency of 1 in v1 (simple, sufficient).
+exponential backoff with a bounded attempt budget (`sdk/httpx/httpx.go`,
+`MaxAttempts`, `backoff`), and per-connector concurrency of 1 in v1. One round
+walks its instances one at a time and each connector's stream is consumed
+sequentially (`internal/services/sync.go`, `runRound`, `syncConnector`).
+
+`Retry-After` is honoured by all four source plugins and by `httpx`. Beyond it
+the plugins differ, because the vendors do: GitHub also treats
+`X-RateLimit-Remaining: 0`, a secondary-rate-limit message and an abuse-detection
+message as retryable and waits until `X-RateLimit-Reset`
+(`plugins/sources/github/client.go`, `retryableStatus`, `retryDelay`), while
+GitLab, Jira and Notion read `Retry-After` only and fall back to exponential
+backoff, their own code noting that `RateLimit-*` is absent or inconsistent on
+those APIs.
 
 ## Plugins
 
@@ -298,7 +371,9 @@ same interfaces to the orchestrator:
 
 - **Compiled** — registered in a binary's composition root. Official plugins
   are compiled into `lore`; a third party either upstreams a plugin or builds
-  its own binary, because Go cannot load code dynamically.
+  its own binary, because this build loads no code at runtime: Go's `plugin`
+  package needs cgo and a byte-identical toolchain, and the release is
+  `CGO_ENABLED=0` ([01](01-overview.md#goals)).
 - **External** — a separate process speaking NDJSON over stdio
   ([09](09-plugin-protocol.md)), declared in `plugins:` and fetched by
   coordinate ([10](10-plugin-distribution.md)). Any language, no rebuild.

@@ -8,8 +8,11 @@ Every query tool returns structured `EvidenceBundle` JSON, never synthesized
 prose ([02 — D1](02-architecture.md#key-design-decisions)). The two sync tools
 answer their own shapes: `sync_now` a round acknowledgment, `sync_status` an
 index status (`internal/transport/mcp/sync.go`, `syncAcknowledgment` and
-`indexStatus`). Every tool but `sync_now` carries `readOnlyHint`, and only
-`sync_now` mutates local state, which is the index and never a source.
+`indexStatus`). Every tool but `sync_now` carries `readOnlyHint` on its
+registration: `registerSyncStatus` sets it and `registerSyncNow` does not
+(`internal/transport/mcp/sync.go`), and each query tool sets it in its own
+file. Only `sync_now` mutates local state, which is the index and never a
+source.
 
 | Tool | Input | Returns |
 |---|---|---|
@@ -27,8 +30,9 @@ models route well: *breadth* → `find_decision`/`why`; *depth on one node* → 
 
 Tool-surface policy: `EvidenceBundle` is the stable contract
 ([02 — D9](02-architecture.md#key-design-decisions)); tools are cheap verbs.
-Deprecation happens in place — a deprecated tool keeps its registration with
-a "deprecated — use X" description for one release before removal.
+The deprecation convention lives there too, and it is a rule for changes to
+this repository rather than anything the code checks. No tool is deprecated
+today and no registration carries such a description.
 
 Transports:
 
@@ -174,10 +178,10 @@ repos: []                                   # OPTIONAL — local clones, blame/l
 #     use: git                              # other tools fully functional.
 #     remote: github:acme/myproject         # `use` defaults to the git plugin.
 
-query:                                      # optional tuning (server-capped)
+query:                                      # optional tuning, operator values used as given
   event_window: 30d                         # ± window for event resolution
-  walk_depth: 3
-  top_k: 12
+  walk_depth: 3                             # default when unset or zero, negative refused at load, no upper bound
+  top_k: 12                                 # default when unset or zero, negative refused at load, no upper bound
 
 providers:                                  # OPTIONAL — a provider id that names a
   - id: openrouter                          # registered plugin and needs no options
@@ -211,12 +215,16 @@ Loading is two-stage: the skeleton above decodes strictly, then each `with:`
 block is validated against its plugin's manifest and decoded strictly by the
 plugin itself. Validation at load:
 
-- Unknown keys rejected — at the top level by the schema, inside `with:` by the
-  plugin's own decoder.
-- Every `use:` resolves to a compiled plugin or a `plugins:` declaration; an
-  unresolved one names what this build has.
-- Duplicate instance ids rejected; an id is required when one plugin is used
-  twice.
+- Unknown keys rejected at three points: the top level by the schema
+  (`internal/config/config.go`, `parse`, which sets `KnownFields(true)`),
+  inside `with:` first against the manifest (`internal/registry/with.go`,
+  `checkKeys`) and then by the plugin's own decoder (`sdk/host.go`,
+  `SourceConfig.Decode`).
+- Every `use:` resolves to a compiled plugin or a `plugins:` declaration, and
+  an unresolved one names what this build has (`internal/registry/build.go`,
+  `Registry.resolve` and `Registry.unresolved`).
+- Duplicate instance ids rejected, so an id is required when one plugin is
+  used twice (`internal/config/validate.go`, `validateInstances`).
 - Required manifest fields present, and a required list field declared as an
   empty list refuses: an empty list selects nothing, so the instance would
   ingest nothing (`internal/registry/with.go`, `checkType`).
@@ -233,17 +241,29 @@ plugin itself. Validation at load:
   operator never granted, so a required secret needs that plugin's `with:`
   block to name the variable itself (`internal/registry/secrets.go`,
   `resolveSecrets`).
-- At least one of `sources` / `repos` non-empty.
+- At least one of `sources` / `repos` non-empty
+  (`internal/config/validate.go`, `Config.Validate`).
 - `embedder.provider` and `llm.provider` resolve to provider instances whose
-  plugins declare the matching capability.
+  plugins declare the matching capability (`internal/registry/build.go`,
+  `Registry.BuildProvider`).
 - `repos[].remote` must name a configured source instance when enrichment
   mapping is intended; a clone without a matching source still blames, but
   chains stop at the commit layer (a startup warning, not an error). The
   warning applies to any source plugin declaring `RepoRemotes`.
-- Loopback/TLS rule enforced; embedder identity checked against the index
-  `meta`.
-- Declared external plugins are installed and digest-matched; nothing is
-  fetched at load or sync time ([10](10-plugin-distribution.md)).
+- The loopback/TLS rule is checked by `lore serve` alone. `Config.Validate`
+  (`internal/config/validate.go`) never reads a listen address, so a
+  `lore.yaml` naming `0.0.0.0:8080` loads without complaint for `lore sync`,
+  `lore ask` or `lore mcp`. `lore serve` refuses it before either listener
+  binds (`internal/transport/cli/serve.go`, `serve`, through
+  `Config.ValidateListenAddr`).
+- The embedder identity is not compared here: the index's recorded identity is
+  read by a sync round and by `lore --version`, never at load
+  ([03](03-data-model.md)).
+- Declared external plugins are resolved and digest-matched when the workspace
+  is constructed (`internal/di/external.go`, `newExternals`), which every
+  command that opens a workspace reaches, before the scheduler starts and
+  before any source is touched. Nothing is fetched there, and nothing is
+  fetched in a sync round ([10](10-plugin-distribution.md)).
 
 At startup, when the embedder is constructed: `embedder.dimensions` is required
 for the `ollama` provider — the width is configured, never probed, so the
@@ -253,11 +273,22 @@ engine's.
 
 ## Security posture
 
-- Read-only against all external sources; least-privilege tokens documented
-  (GitHub fine-grained PAT read scopes, GitLab token with `read_api`, Notion
-  integration scoped to subtree, Jira API token with read-only project access).
-- Secrets only via env vars; never written to `lore.yaml`, the index, or logs.
-  Config names the variables and nothing else carries a credential.
+- Read-only against all external sources by contract, not by enforcement.
+  `lore.Connector` and `lore.CodeRepo` expose no write method, so nothing in
+  the engine can ask a source or a clone to change, and what a plugin's own
+  client does is the plugin's own business
+  ([04](04-connectors-and-sync.md#connector-contract)). Least-privilege tokens
+  are the control that holds: GitHub fine-grained PAT read scopes, GitLab
+  token with `read_api`, Notion integration scoped to subtree, Jira API token
+  with read-only project access.
+- Secrets only via env vars, never written to `lore.yaml` or the index. Config
+  names the variables and nothing else carries a credential, and a refusal
+  names the variable rather than the value behind it
+  (`internal/registry/secrets.go`, `resolveSecrets`). An external plugin's own
+  diagnostics are redacted as they cross the pipe (`sdk/stdio`, `redacting`),
+  while a plugin compiled into this binary logs through a `Host.Log` that
+  redacts nothing (`internal/registry/build.go`, `Registry.Host`), so keeping
+  a token out of a log line is the author's discipline there.
 - The host resolves each named variable and injects the value, so a plugin
   receives only the secrets its manifest declared. For an external plugin the
   host also withholds its own environment, handing the subprocess an empty one

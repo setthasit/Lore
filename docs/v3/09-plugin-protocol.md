@@ -28,9 +28,12 @@ The host spawns the plugin binary as a child process: requests go to its
   or a stray `fmt.Println` there is malformed and fails — no resynchronization.
 - **stderr is free-form** and forwarded to the host logger at debug level,
   prefixed with the instance id; it is the only diagnostic channel.
-- **Line size cap: 8 MiB.** A longer line fails the operation, and a batch too
-  large to frame MUST be split into several `batch` frames — batches are the
-  checkpoint unit, so splitting is always legal.
+- **Line size cap: 8 MiB** (`wire.MaxLineBytes`). A longer line fails the
+  operation, and a batch too large to frame MUST be split into several `batch`
+  frames — batches are the checkpoint unit, so splitting is always legal. The
+  host counts the bytes as it reads (`internal/plugexec/session.go`,
+  `session.readLine`, reached from `session.read` on every op) and kills the
+  process rather than resynchronizing.
 - **Backpressure is the OS pipe.** The host reads the next frame only after
   committing the previous batch, so a fast plugin blocks on `write` instead of
   buffering a whole source; a plugin MUST NOT defeat this by buffering itself.
@@ -103,10 +106,18 @@ and resolves `secrets` before any other op.
 
 The host MUST reject a manifest whose `api_version` differs from its own with a
 message naming **both** numbers (`plugin "linear" speaks api_version 2, host
-speaks 1`), never a generic mismatch error. `capabilities` is an object of
-booleans, all false for `KindSource` and `KindCode` except `repo_remotes`; a
-`KindProvider` sets `embed`, `complete`, or both, and the host refuses a role
-binding to a capability the plugin did not declare.
+speaks 1`), never a generic mismatch error. It refuses at the handshake itself
+(`internal/plugexec/session.go`, `handshake`, which every session runs before
+its operation), and again at registration whichever way the plugin was
+registered (`internal/registry/registry.go`, `CheckManifest`, reached through
+`validateManifest` from `Register` and `RegisterExternal` alike).
+`capabilities` is an object of booleans, and each kind may set only its own. A
+`KindCode` plugin sets all three false: `repo_remotes` is a `KindSource`
+capability, and a plugin of any other kind that declares it is refused at
+registration (`internal/registry/registry.go`, `validateCapabilities`). A
+`KindProvider` sets `embed`, `complete`, or both, which are equally refused on
+any other kind, and the host refuses a role binding to a capability the plugin
+did not declare (`internal/registry/build.go`, `Registry.BuildProvider`).
 
 ### changes
 
@@ -128,6 +139,8 @@ connectors ([04](04-connectors-and-sync.md)). Two frame shapes are refused
 outright, aborting the stream: `done` carrying a batch, whatever cursor that
 batch holds, since neither its documents nor its cursor could be committed;
 and a frame carrying neither a batch nor `done`, which the host cannot act on.
+All three refusals are the frame loop in `internal/plugexec/connector.go`,
+`connector.Changes`, which the sync round drives one batch at a time.
 
 ### matches_remote
 
@@ -159,9 +172,13 @@ workspace fails to start.
 
 `vectors` MUST be positionally aligned with `texts` and of equal length; a
 short, reordered, or filtered result is a protocol error, never a partial
-success. The plugin reports `dimensions`, never an identity string — the host
-composes the vector-space identity as `<plugin>/<model>/<dims>`
-([08](08-extensibility.md)), so no plugin can claim another's identity.
+success. The host checks the count, the reported width and every row against
+that width (`internal/plugexec/provider.go`, `embedder.aligned`, on the return
+path of every `Embed`). The plugin reports `dimensions`, never an identity
+string — the host composes the vector-space identity as
+`<plugin>/<model>/<dims>` from the manifest name, the bound model and the width
+the provider reports (`internal/di/modules.go`, `newVectorSpace`), so no plugin
+can claim another's identity ([08](08-extensibility.md)).
 
 ### complete
 
@@ -185,15 +202,22 @@ completion is indistinguishable from a dropped request, reported as `internal`.
 ```
 
 Spans come in span order, `lines` holds one entry per line in the span, and
-`commits` is newest-first following renames. All three ops are read-only — a
-code plugin never writes to the clone.
+`commits` is newest-first following renames. All three ops only read, and that
+is a property of the protocol rather than a control: there is no operation by
+which the host asks a code plugin to change a clone. Nothing stops the process
+from writing to one anyway. It runs with the operator's privileges and the
+clone is an ordinary directory it can open, so a code plugin that writes to the
+working tree succeeds, exactly as a source plugin that writes to its source
+does ([10](10-plugin-distribution.md#trust-model)).
 
 `has_file` answers whether the path exists at the clone's current head. It is a
 separate op rather than an inference from an empty `log`, because a deleted file
-still has history: the query engine asks it before blaming so a mistyped path
-comes back as a `not_found` naming the repository instead of a raw tool failure.
-A directory, an untracked path, and a clone with no commits are all
-`"present": false`, not errors.
+still has history: the query engine asks it before blaming
+(`internal/services/coderepo.go`, `requireTrackedFile`, reached from
+`codeSpan.blame` for `why` and from `fileHistoryOf` for `history_of`) so a
+mistyped path comes back as a `not_found` naming the repository instead of a
+raw tool failure. A directory, an untracked path, and a clone with no commits
+are all `"present": false`, not errors.
 
 ### shutdown
 
@@ -236,16 +260,24 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
 
 - `id` is `"<source>:<type>:<external_id>"` and the host never rebuilds it;
   `source` MUST equal the request's `instance` and `id` MUST carry it as its
-  prefix, or the host fails the batch.
+  prefix, or the host fails the batch (`internal/services/sync.go`,
+  `assertInstanceIdentity`, which runs before any document of the batch is
+  stored).
 - `repo_ref` is `"github:owner/repo"` for repository-scoped documents, empty
   otherwise; the key is always present, the value may be empty.
 - Timestamps are RFC 3339 **with** a timezone offset. `created_at` and
   `updated_at` are both REQUIRED and non-zero; a source with no true creation
   time sets `created_at = updated_at` and says so in its manifest `summary`,
-  the rule in-process connectors follow in their package doc.
+  the rule in-process connectors follow in their package doc. Nothing at
+  ingest rejects a zero one. `sdk/conform` reports it as a finding
+  (`CheckTimestamps`), so `lore plugin verify` is where a plugin author hears
+  about it, and a document that reaches the index undated is ranked and
+  rendered as undated rather than refused.
 - `refs[].kind` MUST be one of `url`, `ticket_key`, `commit_sha`, `file_path`,
   `pr_number`; an unknown kind is rejected at ingest with the known list, never
-  dropped — a dropped ref is a missing edge and so a wrong answer.
+  dropped (`internal/services/linkresolver.go`, `assertKnownRefKind`, reached
+  from `assertDocumentRefKinds` on every batch) — a dropped ref is a missing
+  edge and so a wrong answer.
 - `refs[].instance` is optional and omitted when empty. It names the source
   instance the reference resolves inside, matched exactly with case, and an
   omitted one resolves against every ingested instance
@@ -317,6 +349,9 @@ work the next round redoes, and re-ingest is idempotent by `id`.
 | `complete` | 120s, matching the in-process `lore.CompleteTimeout` |
 | `changes` | none while frames keep arriving; 300s idle |
 | `shutdown` | 5s to take the request, 5s to answer it, then the escalation above |
+
+Every window above is `defaultTuning` (`internal/plugexec/session.go`), read by
+the session that runs the op.
 
 The `changes` timeout is idle-only — a long backfill is legitimate, a silent
 process is not. Teardown windows add up rather than overlap: after the request
