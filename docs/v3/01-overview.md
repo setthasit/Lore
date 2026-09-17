@@ -25,7 +25,8 @@ made and what happened next* — whether or not the question touches code at all
 
 **Lore** indexes the *decision trail*. It:
 
-1. Ingests documents from configured sources (GitHub, Notion, Jira in v1) into
+1. Ingests documents from configured sources (GitHub, GitLab, Notion and Jira
+   ship as official plugins, `plugins/plugins.go`, `Official`) into
    a normalized store. Sources are independent; **any subset works**, including
    workspaces with no repository at all.
 2. Resolves cross-source references (ticket keys, URLs, SHAs, file paths) into
@@ -90,7 +91,7 @@ covered by any of them.
   (gRPC, future web UI).
 - Local-first: index lives in a single SQLite file; private credentials never
   leave the machine; fully-local mode via Ollama embeddings.
-- Ship as a single **pure-Go** binary (no cgo in the default build).
+- Ship as a single **pure-Go** binary, with no cgo.
 
 ## Non-goals (v1)
 

@@ -4,15 +4,17 @@
 
 Implemented with the official Go MCP SDK
 ([modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)).
-All tools return structured `EvidenceBundle` JSON (never synthesized prose —
-[02 — D1](02-architecture.md#key-design-decisions)). All query tools carry
-`readOnlyHint`; only `sync_now` mutates local state (the index — never any
-source).
+Every query tool returns structured `EvidenceBundle` JSON, never synthesized
+prose ([02 — D1](02-architecture.md#key-design-decisions)). The two sync tools
+answer their own shapes: `sync_now` a round acknowledgment, `sync_status` an
+index status (`internal/transport/mcp/sync.go`, `syncAcknowledgment` and
+`indexStatus`). Every tool but `sync_now` carries `readOnlyHint`, and only
+`sync_now` mutates local state, which is the index and never a source.
 
 | Tool | Input | Returns |
 |---|---|---|
 | `find_decision` | `question`, optional `around` (event text or date), `source`, `repo`, `doc_type`, `since`, `until` | EvidenceBundle seeded by retrieval; works with zero repos |
-| `why` | `repo`, `file`, `line_start`, `line_end`, optional `question` | EvidenceBundle anchored on blame; precondition error if no repos registered |
+| `why` | `file`, `line_start`, optional `repo`, `line_end`, `question` | EvidenceBundle anchored on blame, precondition error if no repos registered. Omitting `line_end` blames `line_start` alone, and omitting `repo` works when one clone is registered |
 | `trace` | `ref` (SHA / PR# / ticket key / URL / DocID), optional `direction`, `depth` | full provenance neighborhood + body, chronological |
 | `impact_of` | `ref_or_query`, optional `question` | chronological impact timeline after the anchor decision |
 | `history_of` | `path`, optional `repo`, `limit`, `before` | chronological file timeline; precondition error if no repos registered |
@@ -46,11 +48,11 @@ lore plugin search <query>         # query the plugin index
 lore build --with <coordinate>     # build a custom lore binary with a plugin compiled in
 lore sync [--source=jira-acme] [--reembed]
 lore status                        # sync state, doc/edge counts, lock state
-lore ask "<question>" [--around="incident X"] [--since --until] [--source --repo --type]   # → find_decision
+lore ask "<question>" [--around="incident X"] [--since --until] [--source --repo --doc-type]   # → find_decision
 lore impact <ref | "query"> [--question="…"]
 lore why <file>:<L1>-<L2> ["question"] [--repo=…]
 lore trace <ref> [--direction=in|out|both]
-lore history <path>
+lore history <path> [--repo=…] [--limit=N] [--before=<sha>]
 lore mcp                           # MCP stdio server
 lore serve [--http=:8080] [--grpc=:9090] [--mtls]
 ```
@@ -81,21 +83,32 @@ service SyncService {
 }                                                          // phase, counts, errors
 ```
 
-- Every query request has `bool synthesize` (default true on this surface);
-  responses carry the raw `EvidenceBundle` **and** optional `synthesis` text —
+- Every query request has `optional bool synthesize`, and an absent value reads
+  as true on this surface (`internal/transport/grpc/query.go`, `synthesize`).
+  Responses carry the raw `EvidenceBundle` **and** optional `synthesis` text —
   the web UI renders the provenance graph from the bundle and prose from the
   synthesis.
 - `SyncService.Watch` streams sync progress — needed for a UI progress view.
 
 ### mTLS
 
-- `lore serve --mtls`: TLS listener with **required client-certificate
-  verification** against a configured client CA (`tls.RequireAndVerifyClientCert`).
+- Mutual TLS on the gRPC listener, with **required client-certificate
+  verification** against a configured client CA
+  (`tls.RequireAndVerifyClientCert`). Two things turn it on: `lore serve
+  --mtls`, or `server.mtls.client_ca` alone in `lore.yaml`. Either way all three
+  of `cert`, `key` and `client_ca` must be set, and the two refusals differ.
+  `serverTLS` runs first and refuses exactly one case as a bad request, a
+  `cert` without its `key` or a `key` without its `cert`. Every other
+  incomplete shape reaches `grpcTransportTLS`, which refuses it as a
+  precondition error naming every setting still missing
+  (`internal/transport/cli/serve.go`, `serverTLS` and `grpcTransportTLS`).
 - Config: server cert/key + client CA bundle paths in `lore.yaml`; a
   `make certs.dev` target generates a local CA + server/client certs for
   development.
-- Plain-TCP gRPC allowed only on loopback; non-loopback binds without TLS are
-  rejected at startup.
+- Neither listener may bind a non-loopback address in the clear. An address that
+  is not provably a loopback IP is refused at startup unless `server.mtls.cert`
+  and `server.mtls.key` are both set (`internal/config/validate.go`,
+  `Config.ValidateListenAddr`).
 
 ## Web UI (later — designed for, not built)
 
@@ -244,11 +257,24 @@ engine's.
   (GitHub fine-grained PAT read scopes, GitLab token with `read_api`, Notion
   integration scoped to subtree, Jira API token with read-only project access).
 - Secrets only via env vars; never written to `lore.yaml`, the index, or logs.
-  Config names variables; the host resolves and injects them, and a plugin sees
-  only the secrets its manifest declared — never the ambient environment.
+  Config names the variables and nothing else carries a credential.
+- The host resolves each named variable and injects the value, so a plugin
+  receives only the secrets its manifest declared. For an external plugin the
+  host also withholds its own environment, handing the subprocess an empty one
+  and, on Windows, the variables the loader and runtime need
+  (`internal/plugexec/env.go`, `minimalEnv`). A plugin compiled into this
+  binary shares the host process, so there the rule is a contract it keeps
+  rather than a boundary the host draws.
 - Private data leaves the machine only toward the configured embedder/LLM —
   documented loudly; Ollama provider = fully local pipeline.
 - gRPC/HTTP off-loopback requires TLS; gRPC additionally supports mTLS.
 - An external plugin executes with the user's privileges: installation is
-  explicit, digests are pinned in `lore.lock`, and a mismatch refuses to launch
-  ([10](10-plugin-distribution.md#trust-model)).
+  explicit, the digest recorded by the first install of a remote coordinate is
+  enforced from then on at every launch and on every later install that is not
+  an update, and a mismatch refuses to launch
+  ([10](10-plugin-distribution.md#trust-model)). An unsigned
+  `https://` coordinate is the one shape nothing constrains, on its first
+  install and again on every `lore plugin update`, because `Install` compares a
+  digest only when `hasLocked && !req.Rewrite`
+  (`internal/plugindist/install.go`, `Install`, and
+  [10](10-plugin-distribution.md#what-each-install-shape-verifies)).

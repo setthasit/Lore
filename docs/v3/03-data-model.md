@@ -70,9 +70,10 @@ single-file portability, offline queries after sync, trivial integration tests.
 
 Driver: **ncruces/go-sqlite3 (WASM build)** with sqlite-vec embedded via the
 official [sqlite-vec-go-bindings](https://github.com/asg017/sqlite-vec-go-bindings/)
-`ncruces` package — pure Go, no cgo, clean cross-compilation. The cgo pairing
-(mattn/go-sqlite3 + sqlite-vec cgo bindings) remains a drop-in alternative
-behind the IndexStore interface; benchmark in M1 decides if it is ever needed.
+`ncruces` package — pure Go, no cgo, clean cross-compilation. No cgo driver
+ships. Store benchmarks live at
+`internal/repositories/sqlite/bench_test.go`, and a second implementation
+would be one package behind the `IndexStore` interface.
 
 | Table | Purpose |
 |---|---|
@@ -108,11 +109,18 @@ behind one repository interface, selected by an FX provider; a second backend
 (e.g. Postgres + pgvector) is one new package implementing it.
 
 ```go
+// internal/repositories/indexstore.go, with package qualifiers elided:
+// Document, DocID and Cursor come from sdk, the rest from internal/entities.
+// Errors come back raw with context, and classifying them is the service
+// layer's job.
 type IndexStore interface {
     // Documents & chunks — batch upserts are atomic internally;
     // no transaction type leaks out of the store.
     UpsertDocuments(ctx context.Context, docs []Document) error
+    DocumentsByID(ctx context.Context, ids []DocID) ([]DocumentMeta, error)
+    DocumentsWithBody(ctx context.Context, ids []DocID) ([]Document, error)
     ReplaceChunks(ctx context.Context, docID DocID, chunks []Chunk) error
+    WipeChunks(ctx context.Context) error // clears the chunk layer for --reembed
 
     // Retrieval — two independently ranked lists. RRF fusion happens in the
     // service layer, so the contract never assumes SQL-side fusion.
@@ -124,22 +132,29 @@ type IndexStore interface {
     // Returns all candidates; disambiguation is service-layer policy.
     ResolveRef(ctx context.Context, ref string) ([]DocumentMeta, error)
 
-    // Graph — direction-aware traversal.
+    // Graph — direction-aware traversal. A re-upserted edge keeps the highest
+    // confidence seen, so the graph never depends on resolution order.
     UpsertEdges(ctx context.Context, edges []Edge) error
     Neighbors(ctx context.Context, ids []DocID, kinds []EdgeKind, dir Direction) ([]Edge, error)
 
-    // Sync bookkeeping
-    Cursor(ctx context.Context, connector string) (Cursor, error)
-    SetCursor(ctx context.Context, connector string, c Cursor) error
+    // Sync bookkeeping. Cursors are keyed by instance id.
     PendingRefs(ctx context.Context) ([]PendingRef, error)
+    UpsertPendingRefs(ctx context.Context, refs []PendingRef) error
+    DeletePendingRefs(ctx context.Context, refs []PendingRef) error
+    Cursor(ctx context.Context, instance string) (Cursor, error)
+    SetCursor(ctx context.Context, instance string, c Cursor) error
 
     // Lease lock — SQLite: lease row; Postgres: advisory lock. Same semantics.
     TryAcquireLease(ctx context.Context, holder string) (bool, error)
     HeartbeatLease(ctx context.Context, holder string) error
     ReleaseLease(ctx context.Context, holder string) error
+    Lease(ctx context.Context) (*LeaseState, error) // nil means free
 
     Meta(ctx context.Context, key string) (string, error)
     SetMeta(ctx context.Context, key, value string) error
+
+    Stats(ctx context.Context) (IndexStats, error)
+    Close() error
 }
 
 type Direction int // DirOut (src→dst), DirIn (dst→src), DirBoth

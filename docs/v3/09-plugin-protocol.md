@@ -208,8 +208,8 @@ The plugin answers, flushes stdout, and exits `0`; it MUST NOT start new work.
 
 Field names are snake_case, one-to-one with the entity fields: `Document` →
 `id`, `source`, `type`, `repo_ref`, `title`, `body`, `author`, `url`,
-`created_at`, `updated_at`, `refs`; `RawRef` → `kind`, `value`; `Batch` →
-`docs`, `cursor`.
+`created_at`, `updated_at`, `refs`; `RawRef` → `kind`, `value`, `instance`;
+`Batch` → `docs`, `cursor`.
 
 ```json
 {
@@ -246,6 +246,11 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
 - `refs[].kind` MUST be one of `url`, `ticket_key`, `commit_sha`, `file_path`,
   `pr_number`; an unknown kind is rejected at ingest with the known list, never
   dropped — a dropped ref is a missing edge and so a wrong answer.
+- `refs[].instance` is optional and omitted when empty. It names the source
+  instance the reference resolves inside, matched exactly with case, and an
+  omitted one resolves against every ingested instance
+  (`sdk/document.go`, `RawRef`, and
+  [04](04-connectors-and-sync.md#link-resolver)).
 - `type` is an open set: an unknown value is accepted, chunked with the default
   strategy, and ranked as ordinary evidence.
 - `cursor` is a flat string→string map, opaque to the host, which stores and

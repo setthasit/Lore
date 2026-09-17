@@ -2,7 +2,7 @@
 
 ## One pipeline, four seed modes
 
-Every tool runs the same pipeline; only the **seed** differs
+Every query tool runs the same pipeline; only the **seed** differs
 ([02 — D3](02-architecture.md#key-design-decisions)):
 
 ```
@@ -23,12 +23,15 @@ Shared machinery:
   cycle-guarded; confidence multiplies along the path; tails below the
   confidence floor (start: 0.3) are pruned.
 - **Ranking**: `score = graph proximity (fewer hops = higher) × path confidence
-  × retrieval relevance (when a question exists) × time prior`.
-  Time prior: **unanchored** → mild recency boost; **time-anchored** →
-  proximity to the anchor window (recency would be actively wrong for
-  "at the moment of X" questions).
-- **Chains**: assembled from walk paths for every tool.
-- **Gaps**: explicit honesty for every tool — dead-end seeds, unresolved
+  × retrieval relevance (when a question exists) × time prior`
+  (`internal/services/rank.go`, `rank`).
+  Time prior (`timePrior.of`): **unanchored** → an age penalty of at most
+  `RecencyPenalty` (0.2) across a `RecencyHorizon` of one year, so a newer
+  document keeps a neutral 1 and an older one is discounted toward 0.8.
+  **Time-anchored** → proximity to the centre of the resolved window, because
+  recency would be actively wrong for "at the moment of X" questions.
+- **Chains**: assembled from walk paths for every query tool.
+- **Gaps**: explicit honesty for every query tool — dead-end seeds, unresolved
   events, empty impact windows.
 
 ## EvidenceBundle — the one result shape
@@ -64,7 +67,7 @@ Invariants:
 
 - **Every node carries a real URL.** No URL → not evidence → not returned.
 - **Gaps are explicit.** A dead-end trail is reported, never papered over.
-- **Every tool fills `Chains` and `Gaps`** — the ask-only path is not a
+- **Every query tool fills `Chains` and `Gaps`** — the ask-only path is not a
   second-class citizen.
 - Excerpts are extracted spans; full bodies are available via `trace` on the
   node's ID, keeping default responses token-cheap for MCP clients.
@@ -111,7 +114,7 @@ chains: incident ticket → decision page → implementing PR. Retrieval also
 surfaces documents discussing the *rejected* alternative A — reachable only
 lexically/semantically, exactly what pure graph tools miss.
 
-### `why(repo, file, line_start, line_end, question?)`
+### `why(file, line_start, repo?, line_end?, question?)`
 
 Code-anchored variant; requires a registered local clone.
 
@@ -156,7 +159,7 @@ Answers "what happened because of this decision?".
    anchor → follow-up paths; `Gaps` when nothing exists after `T`
    ("no follow-up evidence after 2025-03-12") — itself a useful answer.
 
-### `history_of(path)`
+### `history_of(path, repo?, limit?, before?)`
 
 1. `git log --follow` on the path (rename-aware) → commit sequence. Requires a
    registered local clone.

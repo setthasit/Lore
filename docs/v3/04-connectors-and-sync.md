@@ -41,8 +41,12 @@ Contract rules:
   `Document` + `RawRef`s. Ref *resolution* is the LinkResolver's job.
 - **Read-only.** No connector ever writes to its source.
 - Credentials are named in config as environment variable names, resolved by
-  the host, and injected. A connector never reads the environment, and sees
-  only the secrets its manifest declared.
+  the host, and injected. A connector receives only the secrets its manifest
+  declared. For an external connector the host also withholds its own
+  environment, handing the subprocess an empty one and, on Windows, the
+  variables the loader and runtime need (`internal/plugexec/env.go`,
+  `minimalEnv`). A connector compiled into this binary shares the host process,
+  so there not reading the environment is a rule the connector keeps.
 - Both timestamps populated: `CreatedAt` (event time) and `UpdatedAt`
   (edit time / watermark). A source without true creation time sets
   `CreatedAt = UpdatedAt` and says so in its manifest summary.
@@ -59,8 +63,9 @@ Contract rules:
 ### GitHubConnector (v1)
 
 - Auth: PAT (`LORE_GITHUB_TOKEN`); public and private repos.
-- Ingest scope: `sources.github.repos` in config — **independent of local
-  clones**; a workspace can index GitHub PRs/issues without any repository on
+- Ingest scope: the instance's own `with.repos`, a required string list
+  (`plugins/sources/github/plugin.go`, `Manifest`). It is independent of local
+  clones, so a workspace can index GitHub PRs and issues with no repository on
   disk.
 - Ingests per configured repo: commits (message + metadata), PRs (body),
   PR reviews and review comments, issues and issue comments.
@@ -77,8 +82,9 @@ Contract rules:
 - Auth: personal or project access token with `read_api` (`LORE_GITLAB_TOKEN`),
   sent as the `PRIVATE-TOKEN` header; `base_url` is optional and defaults to
   `https://gitlab.com`, so a self-managed instance only passes its root.
-- Ingest scope: `sources.gitlab.projects`, namespaced paths
-  (`group/project`, `group/subgroup/project`).
+- Ingest scope: the instance's own `with.projects`, a required list of
+  namespaced paths such as `group/project` or `group/subgroup/project`
+  (`plugins/sources/gitlab/plugin.go`, `Manifest`).
 - Ingests per project: commits (message + changed paths from the commit diff),
   merge requests (description), discussion notes, issues and issue notes.
 - REST v4 (`/api/v4/projects/<url-encoded path>/…`) with page pagination.
@@ -99,8 +105,10 @@ Contract rules:
 
 ### NotionConnector (v1)
 
-- Auth: integration token (`LORE_NOTION_TOKEN`); scope limited to configured
-  `root_pages` subtrees.
+- Auth: integration token (`LORE_NOTION_TOKEN`). `with.root_pages` scopes the
+  sync to the named pages and their descendants, and an empty list syncs every
+  page shared with the integration (`plugins/sources/notion/plugin.go`,
+  `Manifest`).
 - Ingests pages + their block content flattened to markdown-ish text.
 - `CreatedAt` = Notion `created_time`; cursor: `last_edited_time` search
   watermark.
@@ -115,10 +123,14 @@ Contract rules:
   `base_url` per site (`https://<org>.atlassian.net`).
 - Endpoint: the **new** `/rest/api/3/search/jql` (the legacy `/rest/api/3/search`
   is deprecated) with `nextPageToken` pagination.
-- Cursor: JQL watermark —
-  `project IN (<configured>) AND updated >= "<watermark>" ORDER BY updated ASC`.
-  Comment edits bump the issue's `updated`, so comment changes re-enter the
-  stream automatically; re-ingest is idempotent by `DocID`.
+- Cursor: a JQL watermark built by `Connector.jql`
+  (`plugins/sources/jira/connector.go`). It always orders by `updated ASC`, it
+  adds `project IN (<configured>)` only when the instance names projects, and
+  it spells a resumed watermark as `updated >= "<watermark less jqlSlack>"` at
+  minute granularity. The day of `jqlSlack` covers the zone-free literal Jira
+  compares against. Comment edits bump the issue's `updated`, so comment
+  changes re-enter the stream automatically, and re-ingest is idempotent by
+  `DocID`.
 - Ingests: issues → `ticket` (summary + description), comments →
   `ticket_comment`. Description/comments arrive as ADF (Atlassian Document
   Format) and are flattened to plain text, same approach as Notion blocks.
@@ -138,6 +150,7 @@ constructed, and `why`/`history_of` return a precondition error.
 type CodeRepo interface {
     Blame(ctx context.Context, path string, startLine, endLine int) ([]BlameSpan, error)
     Log(ctx context.Context, path string) ([]CommitRef, error)
+    HasFileAtHEAD(ctx context.Context, path string) (bool, error)
 }
 ```
 
@@ -296,8 +309,10 @@ is the default answer for third-party sources.
 
 Trust: an external plugin runs with the user's privileges and holds its
 source's token, so "read-only" is a promise, not an enforcement. The
-mitigations that exist — per-plugin secret injection, mandatory digest
-pinning, signature verification when a coordinate declares `pubkey:`, explicit
+mitigations that exist — per-plugin secret injection, a digest recorded by the
+first install of a remote coordinate and enforced from then on at every launch
+and on every later install that is not a `lore plugin update`, signature
+verification when a coordinate declares `pubkey:`, explicit
 installation, `lore plugin verify` — are in
 [10](10-plugin-distribution.md#trust-model), and nothing confines the process
 itself ([10](10-plugin-distribution.md#an-enforcing-sandbox-is-not-built)).

@@ -28,7 +28,7 @@ Measured against that test:
 | Sources (GitHub, GitLab, Notion, Jira, …) | **Plugin** — `KindSource` | Passes all three; the `Connector` contract was already data-in/data-out |
 | Model providers (embedding, completion) | **Plugin** — `KindProvider` | Passes all three; the OpenAI-compatible driver already proved one package can serve many vendors |
 | Code access (blame, log) | **Plugin** — `KindCode` | `Blame`, `Log` and `HasFileAtHEAD` over a local clone; Mercurial, Jujutsu and remote forges are real alternative implementations |
-| Secret resolution | **Deferred** — no kind of its own | Passes the test (1Password, Vault, keychain) but has no second implementation yet. The seam is already forced: a plugin declares what it needs in `Manifest.Secrets`, never reads the environment, and the host injects |
+| Secret resolution | **Deferred** — no kind of its own | Passes the test (1Password, Vault, keychain) but has no second implementation yet. The seam is already forced: a plugin declares what it needs in `Manifest.Secrets` and the host resolves and injects the value, so a plugin has no reason to read the environment, and a subprocess plugin is handed none to read (`internal/plugexec/env.go`, `minimalEnv`) |
 | Chunking strategy | **Not a plugin** | Fails (3) softly — chunking decides index quality and interacts with ranking. A per-source hint on `KindSource` is the cheaper answer if it is ever needed |
 | IndexStore (SQLite) | **Not a plugin** | Passes (1) and (3), fails (2): one implementation, and an alternative must also reproduce lease semantics and the fixed vector width. Revisit only with a second real candidate |
 | Query engine, graph walk, ranking, RRF, LinkResolver | **Never a plugin** | Fails (3) hard — this *is* the engine, and it is the differentiator. Extensibility here freezes everything and buys nothing |
@@ -52,9 +52,11 @@ sdk/                  # package lore — the public contract. stdlib only.
 ├── plugin.go         #   Plugin, Source/Provider/CodePlugin, Manifest, Field, Secret
 ├── host.go           #   Host, SourceConfig, ProviderConfig, CodeConfig
 ├── duration.go       #   ParseDuration — the duration spelling host and plugin share
+├── stdio/            #   Serve, ServeStreams — the Go side of the wire protocol (see 09)
+├── wire/             #   Envelope, Frame, op and error-kind constants, MaxLineBytes
 ├── httpx/            #   retrying HTTP client (Retry-After aware)
 ├── refs/             #   reference scanning helpers (URLs, ticket keys, SHAs, paths)
-└── conform/          #   connector conformance suite = plugin certification suite
+└── conform/          #   Run (connectors), Provider (capabilities) = certification suite
 plugins/              # OFFICIAL PLUGINS — no privileges a third party lacks
 ├── plugins.go        #   package plugins — Official() []lore.Plugin
 ├── sources/{github,gitlab,notion,jira}/
@@ -65,7 +67,7 @@ internal/             # the engine — knows no source or provider name
 ├── plugexec/         #   external-plugin host (see 09)
 ├── plugindist/       #   coordinates, lockfile, install (see 10)
 ├── plugbuild/        #   `lore build` — custom binaries with plugins compiled in
-├── config/ di/ entities/ errors/ repositories/ services/ transport/ mocks/
+├── config/ di/ entities/ errors/ repositories/ services/ transport/ mocks/ fsx/ urlx/
 test/e2e/             # composes the real binary, so it lives outside internal/
 ```
 
@@ -113,7 +115,8 @@ type DocID string
 type DocType string   // open set: a plugin may introduce a type
 type RefKind string   // closed vocabulary: an unknown kind is rejected at ingest
 
-type RawRef   struct { Kind RefKind; Value string }
+// Instance scopes a reference to one source instance; empty resolves anywhere.
+type RawRef   struct { Kind RefKind; Value string; Instance string }
 type Document struct { ID DocID; Source string; Type DocType; RepoRef, Title,
                        Body, Author, URL string; CreatedAt, UpdatedAt time.Time
                        Refs []RawRef }
@@ -234,6 +237,7 @@ type Field struct {
 type Secret struct {
     Key         string // "token" — how the plugin asks for it
     ConfigField string // "token_env" — the config key naming the env var
+    Optional    bool   // the host skips it when nothing names its variable
     DefaultEnv  string // "LORE_GITHUB_TOKEN"
     Doc         string
 }
@@ -289,10 +293,14 @@ func (c SourceConfig) Secret(key string) string              // declared secrets
 func (c SourceConfig) DocID(t DocType, external string) DocID
 ```
 
-A plugin **never** reads the environment. The host resolves the env var named
-by each secret's `ConfigField` and injects the value. That single discipline is
-what makes a per-plugin secret allowlist possible for out-of-process plugins,
-and it is what keeps one plugin from reading another's token.
+A plugin has no reason to read the environment. The host resolves the env var
+named by each secret's `ConfigField` and injects the value, which is what makes
+a per-plugin secret allowlist possible and what keeps one plugin from reading
+another's token. For an out-of-process plugin the discipline is also enforced:
+`minimalEnv` (`internal/plugexec/env.go`) hands the subprocess an empty
+environment, and on Windows only the variables the loader and runtime need. A
+plugin compiled into this binary shares the host process, so there the rule is
+a contract the author keeps.
 
 An official plugin in full:
 
@@ -303,16 +311,19 @@ func Plugin() lore.SourcePlugin { return plugin{} }
 func (plugin) Manifest() lore.Manifest {
     return lore.Manifest{
         Name: "jira", Kind: lore.KindSource, APIVersion: lore.APIVersion,
-        Summary: "Jira Cloud issues and comments (read-only)",
+        Summary: "Jira Cloud issues and their comments (read-only)",
         Fields: []lore.Field{
             {Name: "base_url", Type: lore.FieldURL, Required: true,
              Prompt: "Jira site URL", Doc: "https://<org>.atlassian.net"},
-            {Name: "projects", Type: lore.FieldStringList, Required: true,
-             Prompt: "Project keys to ingest"},
+            {Name: "projects", Type: lore.FieldStringList,
+             Prompt: "Project keys to ingest (empty syncs everything)",
+             Doc: "Project keys such as PROJ. An empty list syncs every project the credentials can browse."},
         },
         Secrets: []lore.Secret{
-            {Key: "email", ConfigField: "email_env", DefaultEnv: "LORE_JIRA_EMAIL"},
-            {Key: "token", ConfigField: "token_env", DefaultEnv: "LORE_JIRA_TOKEN"},
+            {Key: "email", ConfigField: "email_env", DefaultEnv: "LORE_JIRA_EMAIL",
+             Doc: "Atlassian account email the API token belongs to; Jira Cloud authenticates the pair, not the token alone."},
+            {Key: "token", ConfigField: "token_env", DefaultEnv: "LORE_JIRA_TOKEN",
+             Doc: "Atlassian API token for that account."},
         },
     }
 }
@@ -325,7 +336,7 @@ func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
     if err := c.Decode(&cfg); err != nil {
         return nil, err
     }
-    return newConnector(c, cfg.BaseURL, cfg.Projects), nil
+    return NewConnector(c.Instance, cfg.BaseURL, c.Secret("email"), c.Secret("token"), cfg.Projects), nil
 }
 ```
 

@@ -21,9 +21,12 @@ Rules (no exceptions):
   logic and validation.
 - The repository (IndexStore) talks only to SQLite. Plugins talk only to their
   external API or local clone. Neither contains business logic.
-- Plugins never reach upward. A plugin receives configuration, secrets and a
-  small host (HTTP client, logger, clock) and returns data; it never touches
-  the store, a service, or another plugin. See [08](08-extensibility.md).
+- Plugins never reach upward. A plugin receives its configuration, the secrets
+  its manifest declared, and a `lore.Host` carrying one logger already tagged
+  with the instance id (`sdk/host.go`, `Host`, and
+  `internal/registry/build.go`, `Registry.Host`). It returns data and never
+  touches the store, a service, or another plugin. See
+  [08](08-extensibility.md).
 
 ## Topology
 
@@ -110,7 +113,7 @@ Every query tool is the same pipeline with a different **seed**:
 
 After seeding, the machinery is shared: graph walk (depth-capped,
 confidence-pruned, direction-aware), semantic expansion, ranking, chain
-assembly, gap reporting. **Every tool returns `Chains` and `Gaps`** — the
+assembly, gap reporting. **Every query tool returns `Chains` and `Gaps`** — the
 ask-only path gets the full engine, not a stripped-down retrieval endpoint.
 Algorithms in [05](05-query-engine.md).
 
@@ -131,10 +134,10 @@ server-streaming sync progress. See [06](06-interfaces-and-config.md).
 ### D6 — Single SQLite file per workspace, pure-Go build
 
 FTS5 (BM25) + sqlite-vec (vectors) + RRF fusion in Go. Zero external infra;
-works offline after sync. Default driver: **ncruces/go-sqlite3 (WASM)** with
-sqlite-vec embedded — no cgo, clean cross-compilation. The cgo variant
-(mattn + sqlite-vec cgo bindings) stays available behind the same IndexStore
-interface if benchmarks demand it. See [03](03-data-model.md).
+works offline after sync. The driver is **ncruces/go-sqlite3 (WASM)** with
+sqlite-vec embedded — no cgo, clean cross-compilation. No cgo driver ships, and
+a second store implementation would be one package behind the same `IndexStore`
+interface. See [03](03-data-model.md).
 
 ### D7 — Every source is a plugin, and every plugin is optional
 
@@ -258,6 +261,8 @@ Central `internalerror`-style package: typed constructors
 cmd/lore/                   # composition root: names the plugins this binary ships
 app/                        # composable wiring (FX + cobra); takes []lore.Plugin
 sdk/                        # package lore — public plugin contract, stdlib only
+├── stdio/                  # Serve — the Go side of the plugin protocol
+├── wire/                   # frame types and protocol constants
 ├── httpx/                  # retrying HTTP client
 ├── refs/                   # reference scanning helpers
 └── conform/                # conformance / certification suite
