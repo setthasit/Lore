@@ -66,14 +66,9 @@ func runOn(t *testing.T, reg *registry.Registry, rt *Runtime, stdin string, args
 
 	root := newRootCommand(resolve, reg)
 	root.SetIn(strings.NewReader(stdin))
-	root.SetOut(&out)
-	root.SetErr(&errOut)
 	root.SetArgs(args)
 
-	err := root.ExecuteContext(context.Background())
-	if err != nil {
-		res.exitCode = Report(&errOut, err)
-	}
+	res.exitCode = execute(context.Background(), root, reg.Sink(), &out, &errOut)
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
 }
@@ -217,7 +212,7 @@ func TestReportMapsKindsToExitCodes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if got := Report(&stderr, c.err); got != c.code {
+			if got := Report(&stderr, nil, c.err); got != c.code {
 				t.Errorf("Report = %d, want %d", got, c.code)
 			}
 			if c.err == nil {
@@ -237,7 +232,7 @@ func TestReportPrintsTheClassifiedMessageOnly(t *testing.T) {
 	wrapped := fxLikeWrap(internalerror.NewPreconditionError("another process holds the sync lock", errUnclassified))
 
 	var stderr bytes.Buffer
-	if got := Report(&stderr, wrapped); got != exitPrecondition {
+	if got := Report(&stderr, nil, wrapped); got != exitPrecondition {
 		t.Errorf("Report = %d, want %d", got, exitPrecondition)
 	}
 	if got := stderr.String(); got != "lore: another process holds the sync lock\n" {

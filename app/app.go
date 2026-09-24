@@ -16,7 +16,7 @@ func Run(plugins ...lore.Plugin) int {
 	log := slog.New(slog.NewTextHandler(sink.Writer(os.Stderr), nil))
 	reg := registry.New(lore.Host{Log: log}, sink)
 	if err := reg.Register(plugins...); err != nil {
-		return cli.Report(os.Stderr, err)
+		return cli.Report(os.Stderr, sink, err)
 	}
 	return cli.Main(reg)
 }

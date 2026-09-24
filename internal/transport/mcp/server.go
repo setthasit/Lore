@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -17,10 +19,14 @@ const (
 	serverVersion = "v0.1.0"
 )
 
-// Blocks until ctx is cancelled or the client disconnects.
-func Serve(ctx context.Context, svc transport.Services, log *slog.Logger) error {
-	return newServer(svc, log).Run(ctx, &sdk.StdioTransport{})
+// Blocks until ctx is cancelled or the client disconnects. Requests are read from os.Stdin.
+func Serve(ctx context.Context, out io.Writer, svc transport.Services, log *slog.Logger) error {
+	return newServer(svc, log).Run(ctx, &sdk.IOTransport{Reader: os.Stdin, Writer: nopWriteCloser{out}})
 }
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 func newServer(svc transport.Services, log *slog.Logger) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: serverName, Version: serverVersion}, nil)

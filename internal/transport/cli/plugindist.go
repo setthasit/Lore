@@ -13,6 +13,7 @@ import (
 	"github.com/setthasit/Lore/internal/plugexec"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/conform"
@@ -154,7 +155,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	if err != nil {
 		return err
 	}
-	printNotices(cmd.ErrOrStderr(), reg.Sink())
+	noticesOf(cmd.Context()).print(cmd.ErrOrStderr(), reg.Sink())
 
 	ident := prepared.instance.Ident()
 	certification, err := plugexec.Certify(cmd.Context(),
@@ -162,7 +163,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	if err != nil {
 		return err
 	}
-	return renderCertification(out, prepared.instance, certification)
+	return renderCertification(out, reg.Sink(), prepared.instance, certification)
 }
 
 type preparedInstance struct {
@@ -267,10 +268,10 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  from:    %s", inertLine(urlx.RedactIfUserinfo(report.LockedURL)))
 }
 
-func renderCertification(out io.Writer, in registry.Instance, certification plugexec.Certification) error {
+func renderCertification(out io.Writer, sink *secrets.Sink, in registry.Instance, certification plugexec.Certification) error {
 	label := "conformance"
 	if field := in.Field; field != "" {
-		label += " (" + field + ")"
+		label += " (" + inertLine(field) + ")"
 	}
 
 	if certification.Kind != lore.KindSource {
@@ -280,7 +281,7 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 	}
 	if len(certification.Ran) == 0 {
 		printfln(out, "  %s: not run — no check ran", label)
-		renderSkipped(out, certification.Skipped)
+		renderSkipped(out, sink, certification.Skipped)
 		return nil
 	}
 
@@ -298,7 +299,7 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 		printfln(out, "  %s: %s%s", label,
 			plural(len(certification.Findings), "failure", "failures"), suffix)
 		for _, finding := range certification.Findings {
-			printfln(out, "    %s: %s", finding.Check, inertLine(finding.Detail))
+			printfln(out, "    %s: %s", finding.Check, inertLine(sink.Scrub(finding.Detail)))
 		}
 		refusal = internalerror.NewPreconditionError(plugindist.Label(in.Use)+
 			" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
@@ -309,14 +310,14 @@ func renderCertification(out io.Writer, in registry.Instance, certification plug
 		for _, check := range certification.Ran {
 			printfln(out, "      %s", check)
 		}
-		renderSkipped(out, certification.Skipped)
+		renderSkipped(out, sink, certification.Skipped)
 	}
 	return refusal
 }
 
-func renderSkipped(out io.Writer, skipped []conform.Skip) {
+func renderSkipped(out io.Writer, sink *secrets.Sink, skipped []conform.Skip) {
 	printfln(out, "    skipped:")
 	for _, skip := range skipped {
-		printfln(out, "      %s — %s", skip.Check, inertLine(skip.Reason))
+		printfln(out, "      %s — %s", skip.Check, inertLine(sink.Scrub(skip.Reason)))
 	}
 }

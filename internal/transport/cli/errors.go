@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 )
 
 // The codes are stable: a script can branch on them instead of parsing stderr.
@@ -17,7 +19,7 @@ const (
 	exitNotFound     = 4
 )
 
-func Report(w io.Writer, err error) int {
+func Report(w io.Writer, sink *secrets.Sink, err error) int {
 	if err == nil {
 		return exitOK
 	}
@@ -39,6 +41,8 @@ func Report(w io.Writer, err error) int {
 		}
 	}
 
-	_, _ = fmt.Fprintln(w, "lore: "+message)
+	for _, line := range strings.Split(sink.Scrub(message), "\n") {
+		_, _ = fmt.Fprintln(w, "lore: "+inertLine(line))
+	}
 	return code
 }

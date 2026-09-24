@@ -42,14 +42,11 @@ func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 		return nil, nil, err
 	}
 
-	root := newRootCommand(resolve, registry.New(lore.Host{}, nil))
-	root.SetOut(&out)
-	root.SetErr(&errOut)
+	reg := registry.New(lore.Host{}, nil)
+	root := newRootCommand(resolve, reg)
 	root.SetArgs([]string{"--version"})
 
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		res.exitCode = Report(&errOut, err)
-	}
+	res.exitCode = execute(context.Background(), root, reg.Sink(), &out, &errOut)
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
 }

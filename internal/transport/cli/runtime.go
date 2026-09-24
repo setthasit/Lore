@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
@@ -94,7 +95,7 @@ func withRuntime(
 	for _, warning := range rt.Warnings {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+inertLine(warning))
 	}
-	printNotices(cmd.ErrOrStderr(), rt.Sink)
+	noticesOf(cmd.Context()).print(cmd.ErrOrStderr(), rt.Sink)
 
 	if err := run(rt); err != nil {
 		_ = stop()
@@ -103,8 +104,21 @@ func withRuntime(
 	return stop()
 }
 
-func printNotices(w io.Writer, sink *secrets.Sink) {
-	for _, notice := range sink.Notices() {
+type noticeLedger struct{ printed []string }
+
+type noticeLedgerKey struct{}
+
+func noticesOf(ctx context.Context) *noticeLedger {
+	return ctx.Value(noticeLedgerKey{}).(*noticeLedger)
+}
+
+func (l *noticeLedger) print(w io.Writer, sink *secrets.Sink) {
+	notices := sink.Notices()
+	if slices.Equal(l.printed, notices) {
+		return
+	}
+	l.printed = notices
+	for _, notice := range notices {
 		_, _ = fmt.Fprintln(w, "lore: "+inertLine(notice))
 	}
 }

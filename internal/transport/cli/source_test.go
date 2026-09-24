@@ -428,16 +428,12 @@ func TestSourceAddRefusesToOverwriteAnEditMadeWhileItAsked(t *testing.T) {
 	const edited = seeded + "\n# a second operator appended this while the prompt waited.\n"
 
 	var out, errOut bytes.Buffer
-	root := newRootCommand(nil, sourceRegistry(t))
+	reg := sourceRegistry(t)
+	root := newRootCommand(nil, reg)
 	root.SetIn(&answersEditingTheFile{t: t, answers: strings.NewReader(trackerAnswers), path: path, body: edited})
-	root.SetOut(&out)
-	root.SetErr(&errOut)
 	root.SetArgs([]string{"source", "add", "tracker", "--config", path})
 
-	exitCode := exitOK
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		exitCode = Report(&errOut, err)
-	}
+	exitCode := execute(context.Background(), root, reg.Sink(), &out, &errOut)
 	if exitCode != exitPrecondition {
 		t.Fatalf("exit = %d, want %d (stderr %q)", exitCode, exitPrecondition, errOut.String())
 	}

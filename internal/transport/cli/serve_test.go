@@ -46,14 +46,11 @@ func runResolving(t *testing.T, ctx context.Context, cfg *config.Config, args ..
 		return &Runtime{Config: cfg, Log: slog.New(slog.DiscardHandler)}, func() error { return nil }, nil
 	}
 
-	root := newRootCommand(resolve, registry.New(lore.Host{}, nil))
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&errOut)
+	reg := registry.New(lore.Host{}, nil)
+	root := newRootCommand(resolve, reg)
 	root.SetArgs(args)
 
-	if err := root.ExecuteContext(ctx); err != nil {
-		res.exitCode = Report(&errOut, err)
-	}
+	res.exitCode = execute(ctx, root, reg.Sink(), &bytes.Buffer{}, &errOut)
 	res.stderr = errOut.String()
 	return res
 }

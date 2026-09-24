@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 )
 
 const defaultConfigPath = "./lore.yaml"
@@ -74,8 +76,18 @@ func Main(reg *registry.Registry) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := newRootCommand(fxResolver(reg), reg).ExecuteContext(ctx); err != nil {
-		return Report(os.Stderr, err)
+	return execute(ctx, newRootCommand(fxResolver(reg), reg), reg.Sink(), os.Stdout, os.Stderr)
+}
+
+func execute(ctx context.Context, root *cobra.Command, sink *secrets.Sink, stdout, stderr io.Writer) int {
+	stdout, stderr = sink.Writer(stdout), sink.Writer(stderr)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+
+	notices := new(noticeLedger)
+	if err := root.ExecuteContext(context.WithValue(ctx, noticeLedgerKey{}, notices)); err != nil {
+		notices.print(stderr, sink)
+		return Report(stderr, sink, err)
 	}
 	return exitOK
 }

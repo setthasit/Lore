@@ -37,6 +37,7 @@ const (
 
 	leakyLoggedLine = "opening the leaky source"
 	leakyStderrLine = "raw token "
+	leakyEchoedID   = "token="
 )
 
 var leakyNotice = "lore: secrets shorter than 8 characters are not scrubbed: " +
@@ -114,15 +115,20 @@ func (plugin) Manifest() lore.Manifest {
 
 func (plugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
 	fmt.Fprintln(os.Stderr, %q+c.Secret("token"))
-	return empty(c.Instance), nil
+	return source{name: c.Instance, token: c.Secret("token")}, nil
 }
 
-type empty string
+type source struct{ name, token string }
 
-func (e empty) Name() string { return string(e) }
+func (s source) Name() string { return s.name }
 
-func (empty) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
-	return func(func(lore.Batch, error) bool) {}
+func (s source) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
+		yield(lore.Batch{
+			Docs:   []lore.Document{{ID: lore.NewDocID(s.name, lore.DocTypePage, %q+s.token)}},
+			Cursor: lore.Cursor{"page": "1"},
+		}, nil)
+	}
 }
 `
 
@@ -187,13 +193,13 @@ func writeLeakyConfig(t *testing.T, dir, body string) string {
 	return path
 }
 
-func leakyWorkspace(t *testing.T) string {
+func leakyWorkspace(t *testing.T, sources string) string {
 	t.Helper()
 
 	dir := t.TempDir()
 	return writeLeakyConfig(t, dir, "workspace: lore-e2e-redaction\n"+
 		"index_path: "+strconv.Quote(filepath.Join(dir, "redaction.db"))+"\n"+
-		leakySourceBlock+
+		sources+
 		"embedder:\n"+
 		"  provider: "+stubProviderName+"\n"+
 		"  model: "+stubEmbedderModelName+"\n")
@@ -205,7 +211,7 @@ func leakyStatus(t *testing.T, pin string) loreRun {
 	t.Setenv(leakyTokenEnv, leakyToken)
 	t.Setenv(leakyPinEnv, pin)
 
-	run := runLoreWith(t, []lore.Plugin{leakySourcePlugin{}, stubEmbedderPlugin{}}, "status", "--config", leakyWorkspace(t))
+	run := runLoreWith(t, []lore.Plugin{leakySourcePlugin{}, stubEmbedderPlugin{}}, "status", "--config", leakyWorkspace(t, leakySourceBlock))
 	if run.exitCode != exitOK {
 		t.Fatalf("`lore status` exit = %d, stderr = %q", run.exitCode, run.stderr)
 	}
@@ -251,18 +257,118 @@ func TestAShortSecretIsNoticedOnStderrAndLeavesStdoutAlone(t *testing.T) {
 	}
 }
 
+const (
+	refusingPluginName = "e2e-refusing"
+	refusingTokenEnv   = "LORE_E2E_REFUSING_TOKEN"
+	fakeTokenStem      = "FAKE-"
+	sourceRefusal      = "source refused token "
+
+	unsetTokenEnv = "LORE_E2E_UNSET_TOKEN"
+)
+
+type refusingSourcePlugin struct{}
+
+var _ lore.SourcePlugin = refusingSourcePlugin{}
+
+func (refusingSourcePlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:       refusingPluginName,
+		Kind:       lore.KindSource,
+		APIVersion: lore.APIVersion,
+		Summary:    "compiled-in source whose upstream quotes its token in every refusal",
+		Secrets:    []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+	}
+}
+
+func (refusingSourcePlugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
+	return refusingConnector{name: c.Instance, token: c.Secret("token")}, nil
+}
+
+type refusingConnector struct{ name, token string }
+
+func (c refusingConnector) Name() string { return c.name }
+
+func (c refusingConnector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) { yield(lore.Batch{}, errors.New(sourceRefusal+c.token)) }
+}
+
+func TestASyncFailureQuotingASecretReachesStderrRedacted(t *testing.T) {
+	for name, token := range map[string]string{
+		"plain":                  fakeTokenStem + "src-tok-9Qx7Lm2Zp",
+		"control byte and quote": fakeTokenStem + "tab\there\"quoted-99",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(refusingTokenEnv, token)
+			config := leakyWorkspace(t, "sources:\n"+
+				"  - use: "+refusingPluginName+"\n"+
+				"    with:\n"+
+				"      token_env: "+refusingTokenEnv+"\n")
+
+			run := runLoreWith(t, []lore.Plugin{refusingSourcePlugin{}, stubEmbedderPlugin{}}, "sync", "--config", config)
+
+			if run.exitCode == exitOK {
+				t.Fatalf("`lore sync` succeeded over a refusing source; stdout = %q", run.stdout)
+			}
+			if !strings.Contains(run.stderr, sourceRefusal+secrets.Placeholder) {
+				t.Errorf("stderr = %q, want the source's refusal with the token replaced by %s", run.stderr, secrets.Placeholder)
+			}
+			if strings.Contains(run.stdout+run.stderr, fakeTokenStem) {
+				t.Errorf("stdout = %q, stderr = %q, want both free of the token in any form", run.stdout, run.stderr)
+			}
+		})
+	}
+}
+
+func TestAFailedStartupNoticesAShortSecretBeforeItsError(t *testing.T) {
+	t.Setenv(leakyTokenEnv, leakyToken)
+	t.Setenv(leakyPinEnv, leakyShort)
+	t.Setenv(unsetTokenEnv, "")
+	config := leakyWorkspace(t, leakySourceBlock+
+		"  - id: unset\n"+
+		"    use: "+leakyPluginName+"\n"+
+		"    with:\n"+
+		"      token_env: "+unsetTokenEnv+"\n"+
+		"      pin_env: "+leakyPinEnv+"\n")
+
+	run := runLoreWith(t, []lore.Plugin{leakySourcePlugin{}, stubEmbedderPlugin{}}, "status", "--config", config)
+
+	if run.exitCode == exitOK {
+		t.Fatalf("`lore status` started without %s; stdout = %q", unsetTokenEnv, run.stdout)
+	}
+	if got := strings.Count(run.stderr, leakyNotice); got != 1 {
+		t.Fatalf("stderr = %q, want the notice %q exactly once", run.stderr, leakyNotice)
+	}
+	failure := strings.Index(run.stderr, "lore: sources[unset]")
+	if failure < 0 || strings.Index(run.stderr, leakyNotice) > failure {
+		t.Errorf("stderr = %q, want the notice before the startup error", run.stderr)
+	}
+}
+
+func TestAnInstanceIDCarryingControlBytesReachesStderrEscaped(t *testing.T) {
+	t.Setenv(leakyTokenEnv, leakyToken)
+	t.Setenv(leakyPinEnv, leakyLongPin)
+	config := leakyWorkspace(t, "sources:\n"+
+		"  - id: \"\\e[31mBOOM\\a\"\n"+
+		"    use: "+leakyPluginName+"\n")
+
+	run := runLoreWith(t, []lore.Plugin{leakySourcePlugin{}, stubEmbedderPlugin{}}, "status", "--config", config)
+
+	if run.exitCode == exitOK {
+		t.Fatalf("`lore status` accepted a control-byte id; stdout = %q", run.stdout)
+	}
+	if !strings.Contains(run.stderr, `lore: sources[\x1b[31mBOOM\a]`) {
+		t.Errorf("stderr = %q, want the id's control bytes shown escaped", run.stderr)
+	}
+	if strings.ContainsAny(run.stderr, "\x1b\a") {
+		t.Errorf("stderr = %q, want it free of raw control bytes", run.stderr)
+	}
+}
+
 func TestPluginVerifyNoticesAShortSecretBeforeCertifying(t *testing.T) {
 	t.Setenv(leakyTokenEnv, leakyToken)
 	t.Setenv(leakyPinEnv, leakyShort)
-	dir := t.TempDir()
-	// A declaration names a local plugin by a ./ path; a Windows absolute path would not read as local.
-	config := writeLeakyConfig(t, dir, "workspace: lore-e2e-redaction\n"+
-		"plugins:\n"+
-		"  - name: "+leakyPluginName+"\n"+
-		"    from: ./"+buildExternalLeaky(t, dir)+"\n"+
-		leakySourceBlock)
 
-	run := runLoreWith(t, nil, "plugin", "verify", leakyPluginName, "--config", config)
+	run := runLoreWith(t, nil, "plugin", "verify", leakyPluginName, "--config", verifyWorkspace(t))
 
 	if got := strings.Count(run.stderr, leakyNotice); got != 1 {
 		t.Errorf("exit = %d, stderr = %q, want the notice %q exactly once", run.exitCode, run.stderr, leakyNotice)
@@ -270,6 +376,33 @@ func TestPluginVerifyNoticesAShortSecretBeforeCertifying(t *testing.T) {
 	if strings.Contains(run.stdout, "not scrubbed") {
 		t.Errorf("stdout = %q, want the notice on stderr only", run.stdout)
 	}
+}
+
+func TestPluginVerifyPrintsAFailureQuotingASecretRedacted(t *testing.T) {
+	t.Setenv(leakyTokenEnv, leakyToken)
+	t.Setenv(leakyPinEnv, leakyLongPin)
+
+	run := runLoreWith(t, nil, "plugin", "verify", leakyPluginName, "--config", verifyWorkspace(t))
+
+	if !strings.Contains(run.stdout, leakyEchoedID+secrets.Placeholder) {
+		t.Errorf("exit = %d, stdout = %q, want the failed check's document id with the token replaced by %s",
+			run.exitCode, run.stdout, secrets.Placeholder)
+	}
+	if strings.Contains(run.stdout+run.stderr, leakyToken) {
+		t.Errorf("stdout = %q, stderr = %q, want both free of the token", run.stdout, run.stderr)
+	}
+}
+
+func verifyWorkspace(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	// A declaration names a local plugin by a ./ path; a Windows absolute path would not read as local.
+	return writeLeakyConfig(t, dir, "workspace: lore-e2e-redaction\n"+
+		"plugins:\n"+
+		"  - name: "+leakyPluginName+"\n"+
+		"    from: ./"+buildExternalLeaky(t, dir)+"\n"+
+		leakySourceBlock)
 }
 
 func TestAnExternalPluginsStderrReachesTheHostLogRedacted(t *testing.T) {
@@ -315,7 +448,7 @@ func buildExternalLeaky(t *testing.T, dir string) (name string) {
 	t.Helper()
 
 	source := filepath.Join(dir, "main.go")
-	body := fmt.Sprintf(externalLeakySource, leakyPluginName, leakyStderrLine)
+	body := fmt.Sprintf(externalLeakySource, leakyPluginName, leakyStderrLine, leakyEchoedID)
 	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
 		t.Fatalf("write %s: %v", source, err)
 	}
@@ -380,6 +513,80 @@ func TestAnMCPToolFailureCarryingASecretReachesStderrRedacted(t *testing.T) {
 		"  provider: "+echoingProviderName+"\n"+
 		"  model: "+stubEmbedderModelName+"\n")
 
+	_, logged := callMCPTool(t, []lore.Plugin{leakySourcePlugin{}, echoingEmbedderPlugin{}},
+		config, findDecisionTool, `{"question":"why sqlite?"}`)
+
+	failure := toolFailureLine(logged, findDecisionTool)
+	if failure == "" {
+		t.Fatalf("stderr = %q, want the %s failure logged", logged, findDecisionTool)
+	}
+	if !strings.Contains(failure, "token "+secrets.Placeholder) {
+		t.Errorf("failure line = %q, want the echoed token replaced by %s", failure, secrets.Placeholder)
+	}
+	if strings.Contains(logged, echoingToken) {
+		t.Errorf("stderr = %q, want it free of the echoed token", logged)
+	}
+}
+
+const (
+	misfilingPluginName = "e2e-misfiling"
+	misfilingTokenEnv   = "LORE_E2E_MISFILING_TOKEN"
+	misfilingToken      = "fake-misfiling-token-4b8d"
+	misfiledIDPrefix    = "elsewhere:page:token="
+)
+
+type misfilingSourcePlugin struct{}
+
+var _ lore.SourcePlugin = misfilingSourcePlugin{}
+
+func (misfilingSourcePlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:       misfilingPluginName,
+		Kind:       lore.KindSource,
+		APIVersion: lore.APIVersion,
+		Summary:    "compiled-in source that files a document holding its token under another namespace",
+		Secrets:    []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+	}
+}
+
+func (misfilingSourcePlugin) NewSource(c lore.SourceConfig) (lore.Connector, error) {
+	return misfilingConnector{name: c.Instance, token: c.Secret("token")}, nil
+}
+
+type misfilingConnector struct{ name, token string }
+
+func (c misfilingConnector) Name() string { return c.name }
+
+func (c misfilingConnector) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
+		yield(lore.Batch{
+			Docs:   []lore.Document{{ID: lore.DocID(misfiledIDPrefix + c.token), Source: c.name}},
+			Cursor: lore.Cursor{"page": "1"},
+		}, nil)
+	}
+}
+
+func TestAnMCPSyncFailureNamingASecretReachesStdoutRedacted(t *testing.T) {
+	t.Setenv(misfilingTokenEnv, misfilingToken)
+	config := leakyWorkspace(t, "sources:\n"+
+		"  - use: "+misfilingPluginName+"\n"+
+		"    with:\n"+
+		"      token_env: "+misfilingTokenEnv+"\n")
+
+	response, _ := callMCPTool(t, []lore.Plugin{misfilingSourcePlugin{}, stubEmbedderPlugin{}}, config, syncNowTool, `{}`)
+
+	if !strings.Contains(response, misfiledIDPrefix+secrets.Placeholder) {
+		t.Errorf("sync_now response = %q, want the misfiled document id with the token replaced by %s",
+			response, secrets.Placeholder)
+	}
+	if strings.Contains(response, misfilingToken) {
+		t.Errorf("sync_now response = %q, want it free of the token", response)
+	}
+}
+
+func callMCPTool(t *testing.T, plugins []lore.Plugin, config, tool, arguments string) (response, logged string) {
+	t.Helper()
+
 	stdin, requests, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe stdin: %v", err)
@@ -403,18 +610,18 @@ func TestAnMCPToolFailureCarryingASecretReachesStderrRedacted(t *testing.T) {
 	})
 
 	returned := make(chan int, 1)
-	go func() { returned <- app.Run(leakySourcePlugin{}, echoingEmbedderPlugin{}) }()
+	go func() { returned <- app.Run(plugins...) }()
 
 	for _, message := range []string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"lore-e2e","version":"v0.0.1"}}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_decision","arguments":{"question":"why sqlite?"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + arguments + `}}`,
 	} {
 		if _, err := requests.WriteString(message + "\n"); err != nil {
 			t.Fatalf("write %s: %v", message, err)
 		}
 	}
-	awaitResponse(t, bufio.NewScanner(responses), 2, stderr.Name())
+	response = awaitResponse(t, bufio.NewScanner(responses), 2, stderr.Name())
 	_ = requests.Close()
 
 	select {
@@ -423,18 +630,7 @@ func TestAnMCPToolFailureCarryingASecretReachesStderrRedacted(t *testing.T) {
 	case <-time.After(commandTimeout):
 		t.Fatalf("`lore mcp` has not returned %s after its client hung up", commandTimeout)
 	}
-
-	logged := readCapture(t, stderr)
-	failure := toolFailureLine(logged, findDecisionTool)
-	if failure == "" {
-		t.Fatalf("stderr = %q, want the %s failure logged", logged, findDecisionTool)
-	}
-	if !strings.Contains(failure, "token "+secrets.Placeholder) {
-		t.Errorf("failure line = %q, want the echoed token replaced by %s", failure, secrets.Placeholder)
-	}
-	if strings.Contains(logged, echoingToken) {
-		t.Errorf("stderr = %q, want it free of the echoed token", logged)
-	}
+	return response, readCapture(t, stderr)
 }
 
 func toolFailureLine(logged, tool string) string {
@@ -446,7 +642,7 @@ func toolFailureLine(logged, tool string) string {
 	return ""
 }
 
-func awaitResponse(t *testing.T, stdout *bufio.Scanner, id int, stderrPath string) {
+func awaitResponse(t *testing.T, stdout *bufio.Scanner, id int, stderrPath string) string {
 	t.Helper()
 
 	for stdout.Scan() {
@@ -457,9 +653,10 @@ func awaitResponse(t *testing.T, stdout *bufio.Scanner, id int, stderrPath strin
 			t.Fatalf("stdout line %q is not JSON-RPC: %v", stdout.Text(), err)
 		}
 		if response.ID == id {
-			return
+			return stdout.Text()
 		}
 	}
 	logged, _ := os.ReadFile(stderrPath)
 	t.Fatalf("no response with id %d on stdout: %v; stderr = %q", id, stdout.Err(), logged)
+	return ""
 }

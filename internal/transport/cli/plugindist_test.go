@@ -21,6 +21,7 @@ import (
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/plugindist/plugindisttest"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/conform"
 )
@@ -543,7 +544,7 @@ func TestPluginVerifyCertifiesWithTheDeclaredInstancesConfiguration(t *testing.T
 		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+	res := runOn(t, registry.New(lore.Host{}, &secrets.Sink{}), nil, "", "plugin", "verify", "linear", "--config", path)
 	if res.exitCode != exitPrecondition {
 		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
 			res.exitCode, exitPrecondition, res.stdout, res.stderr)
@@ -551,11 +552,14 @@ func TestPluginVerifyCertifiesWithTheDeclaredInstancesConfiguration(t *testing.T
 	for _, want := range []string{
 		"conformance (sources[tickets]): 1 failure on 2 of 7 checks",
 		"tickets: full stream",
-		"got team=PLATFORM token=fake-linear-token",
+		"got team=PLATFORM token=" + secrets.Placeholder,
 	} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("stdout %q does not mention %q", res.stdout, want)
 		}
+	}
+	if strings.Contains(res.stdout, "fake-linear-token") {
+		t.Errorf("stdout %q carries the resolved token", res.stdout)
 	}
 }
 
@@ -916,7 +920,7 @@ func TestRenderVerifyMakesAPluginSuppliedStringInert(t *testing.T) {
 
 func TestRenderCertificationMakesAFindingsDocumentIDInert(t *testing.T) {
 	var out bytes.Buffer
-	refusal := renderCertification(&out, registry.Instance{Use: "linear"}, plugexec.Certification{
+	refusal := renderCertification(&out, nil, registry.Instance{Use: "linear"}, plugexec.Certification{
 		Kind: lore.KindSource,
 		Result: conform.Result{
 			Ran: []conform.CheckName{conform.CheckIdentity},
