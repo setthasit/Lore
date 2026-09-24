@@ -55,7 +55,7 @@ Rules that hold for all four:
   (`internal/config/validate.go:29-31`).
 - **`*_env` holds a variable name, never a secret.** If the named variable is
   unset, startup stops with
-  `sources[<id>].with.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set`
+  `sources[<id>].with.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set or is blank`
   — resolved against the plugin's declared secrets when the instance is built,
   before it issues a request (`internal/registry/build.go:517-550`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
@@ -243,7 +243,7 @@ behavior, not something this repository decides [vendor].
 
 A missing variable is caught earlier, before any request:
 `sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment
-variable is not set` (exit 2).
+variable is not set or is blank` (exit 2).
 
 ### Rotate and revoke
 
@@ -357,7 +357,7 @@ first rule broken is the one reported, before any request goes out (exit 2 —
 | Wrong | Message |
 |---|---|
 | `token_env` present but empty | `sources[gitlab].with.token_env must name an environment variable` |
-| the named variable unset | `sources[gitlab].with.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set` |
+| the named variable unset | `sources[gitlab].with.token_env names LORE_GITLAB_TOKEN, but that environment variable is not set or is blank` |
 | `projects` absent | `sources[gitlab].with.projects must be set — Namespaced paths, matched verbatim: "acme/myproject", or "acme/platform/myproject" when the project nests through subgroups.` |
 | `base_url` not absolute http(s) | `sources[gitlab].with.base_url must be an absolute http(s) URL like https://gitlab.com, got ftp://gitlab.example.com` |
 | `base_url` unparseable | `sources[gitlab].with.base_url is not a URL` |

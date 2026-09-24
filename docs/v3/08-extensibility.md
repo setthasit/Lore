@@ -450,7 +450,7 @@ produced:
 
 ```
 sources[jira-acme].with.token_env names LORE_JIRA_TOKEN, but that environment
-variable is not set
+variable is not set or is blank
 ```
 
 Resolution order for every `use:` is compiled registry, then `plugins:`

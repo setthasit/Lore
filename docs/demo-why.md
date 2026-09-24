@@ -110,7 +110,7 @@ out; the values above are the edits. Every command takes `--config`, defaulting 
 
 Two things the loader enforces before anything runs: the instance's `token_env` must name a
 variable that is actually **set** in the environment (`sources[github].with.token_env names
-LORE_GITHUB_TOKEN, but that environment variable is not set`), and every `repos[].path`
+LORE_GITHUB_TOKEN, but that environment variable is not set or is blank`), and every `repos[].path`
 must exist and contain a `.git` entry (`repos path /home/dev/cli is not a git repository —
 no .git entry found`). A leading `~` in `repos[].path` and `index_path` is expanded before
 validation, which is why that message names the absolute path. Unknown keys are rejected

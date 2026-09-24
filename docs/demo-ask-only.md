@@ -141,7 +141,7 @@ Notes worth knowing before the first run:
 
 - Every `*_env` key must name a variable that is **set** at load time, or the run
   refuses with e.g. `sources[jira].with.token_env names LORE_JIRA_TOKEN, but that
-  environment variable is not set`.
+  environment variable is not set or is blank`.
 - `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are the *defaults* those two provider
   manifests declare, used because neither role here names a `providers[]` instance
   that overrides `api_key_env`. `embedder.dimensions` must **not** be set for
