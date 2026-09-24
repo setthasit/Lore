@@ -153,6 +153,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	if err != nil {
 		return err
 	}
+	printNotices(cmd.ErrOrStderr(), reg.Sink())
 
 	ident := prepared.instance.Ident()
 	certification, err := plugexec.Certify(cmd.Context(),

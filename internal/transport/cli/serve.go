@@ -91,7 +91,7 @@ func serve(cmd *cobra.Command, rt *Runtime, httpOverride, grpcOverride string, m
 				Listener:  grpcListener,
 				Services:  svc,
 				Synthesis: rt.Synthesis,
-				Log:       di.DiagnosticLogger(nil),
+				Log:       di.DiagnosticLogger(rt.Sink),
 				TLS:       grpcTLS,
 			})
 		},

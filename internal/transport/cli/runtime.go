@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
@@ -10,12 +11,14 @@ import (
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
 
 type Runtime struct {
 	Config *config.Config
+	Sink   *secrets.Sink
 
 	Warnings  registry.Warnings
 	Query     services.QueryService
@@ -48,7 +51,7 @@ func resolveWithFX(
 		append([]fx.Option{
 			fx.NopLogger,
 			di.Workspace(configPath, reg),
-			fx.Populate(&rt.Config, &rt.Warnings, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History,
+			fx.Populate(&rt.Config, &rt.Sink, &rt.Warnings, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History,
 				&rt.Sync, &rt.Status, &rt.Synthesis),
 		}, modules...)...,
 	)
@@ -89,10 +92,17 @@ func withRuntime(
 	for _, warning := range rt.Warnings {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "lore: warning: "+inertLine(warning))
 	}
+	printNotices(cmd.ErrOrStderr(), rt.Sink)
 
 	if err := run(rt); err != nil {
 		_ = stop()
 		return err
 	}
 	return stop()
+}
+
+func printNotices(w io.Writer, sink *secrets.Sink) {
+	for _, notice := range sink.Notices() {
+		_, _ = fmt.Fprintln(w, "lore: "+inertLine(notice))
+	}
 }
