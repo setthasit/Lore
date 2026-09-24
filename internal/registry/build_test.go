@@ -7,6 +7,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -365,6 +366,58 @@ func TestPrepareRejectsAnUnsetSecretVariable(t *testing.T) {
 			t.Errorf("error %q does not fall back to the manifest's variable", err)
 		}
 	})
+}
+
+func TestBuildSourcesRecordsEachResolvedSecretWithTheSink(t *testing.T) {
+	const long = "t-example-acme-token"
+	t.Setenv("ACME_TOKEN", long)
+	t.Setenv("LORE_LEGACY_TOKEN", "t-short")
+
+	sink := &secrets.Sink{}
+	r := New(lore.Host{}, sink)
+	if err := r.Register(tokenSource(nil)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if _, err := r.BuildSources([]Instance{
+		{ID: "acme", Use: "acme", Field: "sources[acme]"},
+		{ID: "legacy", Use: "acme", With: map[string]any{"token_env": "LORE_LEGACY_TOKEN"}, Field: "sources[legacy]"},
+	}); err != nil {
+		t.Fatalf("BuildSources: %v", err)
+	}
+
+	if got := sink.Scrub("auth " + long); got != "auth "+secrets.Placeholder {
+		t.Errorf("Scrub = %q, want the resolved value redacted", got)
+	}
+	notices := strings.Join(sink.Notices(), "\n")
+	if !strings.Contains(notices, "LORE_LEGACY_TOKEN (sources[legacy].with.token_env)") {
+		t.Errorf("notices = %q, want the short value named by its variable and field", notices)
+	}
+	if strings.Contains(notices, "sources[acme]") {
+		t.Errorf("notices = %q, want the scrubbed value left unnamed", notices)
+	}
+}
+
+func TestPrepareRejectsAWhitespaceOnlySecretVariable(t *testing.T) {
+	t.Setenv("LORE_ACME_TOKEN", " \t")
+
+	_, err := newRegistry(t, tokenSource(nil)).BuildSources([]Instance{{
+		Use:   "acme",
+		With:  map[string]any{"token_env": "LORE_ACME_TOKEN"},
+		Field: "sources[acme]",
+	}})
+	if err == nil {
+		t.Fatal("BuildSources: want a refusal of a value holding only whitespace")
+	}
+	message := internalerror.MessageOf(err)
+	for _, want := range []string{"sources[acme].with.token_env", "LORE_ACME_TOKEN"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("refusal %q does not contain %q", message, want)
+		}
+	}
+	if !strings.HasSuffix(message, "is not set or is blank") {
+		t.Errorf("refusal %q does not say the variable is blank", message)
+	}
 }
 
 func TestBuildCodeBindsEachCloneToItsRoot(t *testing.T) {
