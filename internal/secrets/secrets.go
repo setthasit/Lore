@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -38,7 +39,16 @@ func (s *Sink) Record(field, value string) {
 		s.short = appendNew(s.short, cmp.Or(field, unnamedField))
 		return
 	}
-	s.values = appendNew(s.values, value)
+	// slog's TextHandler quotes a value this way, and again when a %q error already quoted it.
+	once := quoteBody(value)
+	for _, form := range []string{value, once, quoteBody(once)} {
+		s.values = appendNew(s.values, form)
+	}
+}
+
+func quoteBody(s string) string {
+	quoted := strconv.Quote(s)
+	return quoted[1 : len(quoted)-1]
 }
 
 func appendNew(list []string, item string) []string {
