@@ -13,7 +13,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugexec"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
-	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 	"github.com/setthasit/Lore/sdk/conform"
@@ -163,7 +162,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	if err != nil {
 		return err
 	}
-	return renderCertification(out, reg.Sink(), prepared.instance, certification)
+	return renderCertification(out, prepared.instance, certification)
 }
 
 type preparedInstance struct {
@@ -268,7 +267,7 @@ func renderVerify(out io.Writer, report plugindist.Report) {
 	printfln(out, "  from:    %s", inertLine(urlx.RedactIfUserinfo(report.LockedURL)))
 }
 
-func renderCertification(out io.Writer, sink *secrets.Sink, in registry.Instance, certification plugexec.Certification) error {
+func renderCertification(out io.Writer, in registry.Instance, certification plugexec.Certification) error {
 	label := "conformance"
 	if field := in.Field; field != "" {
 		label += " (" + inertLine(field) + ")"
@@ -281,7 +280,7 @@ func renderCertification(out io.Writer, sink *secrets.Sink, in registry.Instance
 	}
 	if len(certification.Ran) == 0 {
 		printfln(out, "  %s: not run — no check ran", label)
-		renderSkipped(out, sink, certification.Skipped)
+		renderSkipped(out, certification.Skipped)
 		return nil
 	}
 
@@ -299,7 +298,7 @@ func renderCertification(out io.Writer, sink *secrets.Sink, in registry.Instance
 		printfln(out, "  %s: %s%s", label,
 			plural(len(certification.Findings), "failure", "failures"), suffix)
 		for _, finding := range certification.Findings {
-			printfln(out, "    %s: %s", finding.Check, inertLine(sink.Scrub(finding.Detail)))
+			printfln(out, "    %s: %s", finding.Check, inertLine(finding.Detail))
 		}
 		refusal = internalerror.NewPreconditionError(plugindist.Label(in.Use)+
 			" does not satisfy the plugin contract; the failures above name what a sync round would get wrong", nil)
@@ -310,14 +309,14 @@ func renderCertification(out io.Writer, sink *secrets.Sink, in registry.Instance
 		for _, check := range certification.Ran {
 			printfln(out, "      %s", check)
 		}
-		renderSkipped(out, sink, certification.Skipped)
+		renderSkipped(out, certification.Skipped)
 	}
 	return refusal
 }
 
-func renderSkipped(out io.Writer, sink *secrets.Sink, skipped []conform.Skip) {
+func renderSkipped(out io.Writer, skipped []conform.Skip) {
 	printfln(out, "    skipped:")
 	for _, skip := range skipped {
-		printfln(out, "      %s — %s", skip.Check, inertLine(sink.Scrub(skip.Reason)))
+		printfln(out, "      %s — %s", skip.Check, inertLine(skip.Reason))
 	}
 }

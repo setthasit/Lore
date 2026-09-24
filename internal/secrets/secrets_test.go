@@ -3,6 +3,7 @@ package secrets_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -161,6 +162,107 @@ func TestWriterScrubsRenderedLog(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScrubMatchesEveryFormAnOutputEscapesAValueInto(t *testing.T) {
+	t.Parallel()
+
+	const controlAndQuote = "fake\x01tok\"en\tvalue"
+	cases := map[string]struct {
+		value  string
+		render func(t *testing.T, value string) string
+	}{
+		"rendered inert on one line": {
+			value: controlAndQuote,
+			render: func(_ *testing.T, value string) string {
+				return "title: " + strings.NewReplacer("\x01", `\x01`, "\t", `\t`).Replace(value)
+			},
+		},
+		"rendered inert inside a multi-line excerpt": {
+			value: controlAndQuote,
+			render: func(_ *testing.T, value string) string {
+				return "      " + strings.ReplaceAll(value, "\x01", `\x01`)
+			},
+		},
+		"encoded as JSON": {
+			value: "fake&tok<en>\x01value",
+			render: func(t *testing.T, value string) string {
+				return jsonText(t, map[string]string{"title": value})
+			},
+		},
+		"encoded as JSON without HTML escaping": {
+			value: "fake\x01tok\"en&value",
+			render: func(t *testing.T, value string) string {
+				return jsonTextUnescapedHTML(t, map[string]string{"title": value})
+			},
+		},
+		"quoted by %q inside a JSON-encoded error": {
+			value: `fake"tok&en-value`,
+			render: func(t *testing.T, value string) string {
+				return jsonText(t, map[string]string{"error": fmt.Sprintf("auth %q rejected", value)})
+			},
+		},
+		"quoted by %q inside JSON carried as text inside JSON": {
+			value: "fake\x01tok\"en-value",
+			render: func(t *testing.T, value string) string {
+				structured := jsonText(t, map[string]string{"error": fmt.Sprintf("auth %q rejected", value)})
+				return jsonTextUnescapedHTML(t, map[string]any{"text": structured, "structured": json.RawMessage(structured)})
+			},
+		},
+		"quoted by %q in a plugin log line the host logs again": {
+			value: `fake"tok\en-value`,
+			render: func(t *testing.T, value string) string {
+				pluginLine := textLine(t, "sync failed", "err", fmt.Errorf("auth %q rejected", value))
+				return textLine(t, "plugin wrote to stderr", "line", pluginLine)
+			},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			sink := &secrets.Sink{}
+			sink.Record("token", c.value)
+			if got, want := sink.Scrub(c.render(t, c.value)), c.render(t, secrets.Placeholder); got != want {
+				t.Errorf("Scrub() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func jsonText(t *testing.T, v any) string {
+	t.Helper()
+
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal %v: %v", v, err)
+	}
+	return string(encoded)
+}
+
+func jsonTextUnescapedHTML(t *testing.T, v any) string {
+	t.Helper()
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		t.Fatalf("encode %v: %v", v, err)
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+func textLine(t *testing.T, msg string, args ...any) string {
+	t.Helper()
+
+	var buf bytes.Buffer
+	record := slog.NewRecord(time.Time{}, slog.LevelError, msg, 0)
+	record.Add(args...)
+	if err := slog.NewTextHandler(&buf, nil).Handle(context.Background(), record); err != nil {
+		t.Fatalf("handle %q: %v", msg, err)
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 func TestWriterLeavesALineWithoutARecordedValueByteIdentical(t *testing.T) {

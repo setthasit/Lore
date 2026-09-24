@@ -920,7 +920,7 @@ func TestRenderVerifyMakesAPluginSuppliedStringInert(t *testing.T) {
 
 func TestRenderCertificationMakesAFindingsDocumentIDInert(t *testing.T) {
 	var out bytes.Buffer
-	refusal := renderCertification(&out, nil, registry.Instance{Use: "linear"}, plugexec.Certification{
+	refusal := renderCertification(&out, registry.Instance{Use: "linear"}, plugexec.Certification{
 		Kind: lore.KindSource,
 		Result: conform.Result{
 			Ran: []conform.CheckName{conform.CheckIdentity},

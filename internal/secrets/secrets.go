@@ -2,11 +2,13 @@ package secrets
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -15,6 +17,9 @@ const (
 	MinLength   = 8
 
 	unnamedField = "(unnamed)"
+
+	// An MCP tool result's text block JSON-encodes structured content that JSON-encodes a %q error.
+	encodingDepth = 3
 )
 
 type Sink struct {
@@ -39,16 +44,77 @@ func (s *Sink) Record(field, value string) {
 		s.short = appendNew(s.short, cmp.Or(field, unnamedField))
 		return
 	}
-	// slog's TextHandler quotes a value this way, and again when a %q error already quoted it.
-	once := quoteBody(value)
-	for _, form := range []string{value, once, quoteBody(once)} {
+	for _, form := range escapedForms(value) {
 		s.values = appendNew(s.values, form)
 	}
+}
+
+var encodings = []func(string) string{quoteBody, jsonBody, jsonBodyUnescapedHTML}
+
+func escapedForms(value string) []string {
+	forms := []string{value}
+	level := forms
+	for range encodingDepth {
+		first := len(forms)
+		for _, form := range level {
+			for _, encode := range encodings {
+				forms = appendNew(forms, encode(form))
+			}
+		}
+		level = forms[first:]
+	}
+	for _, form := range forms {
+		forms = appendNew(forms, inertText(form))
+		forms = appendNew(forms, inertLine(form))
+	}
+	return forms
 }
 
 func quoteBody(s string) string {
 	quoted := strconv.Quote(s)
 	return quoted[1 : len(quoted)-1]
+}
+
+func jsonBody(s string) string {
+	encoded, _ := json.Marshal(s)
+	return string(encoded[1 : len(encoded)-1])
+}
+
+func jsonBodyUnescapedHTML(s string) string {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	encoded := strings.TrimSuffix(buf.String(), "\n")
+	return encoded[1 : len(encoded)-1]
+}
+
+// inertText and inertLine mirror the terminal rendering of the same names in internal/transport/cli.
+func inertText(s string) string {
+	return escapeRunes(s, func(r rune) bool { return r != '\n' && r != '\t' && isEscapedInLine(r) })
+}
+
+func inertLine(s string) string {
+	return escapeRunes(s, isEscapedInLine)
+}
+
+func isEscapedInLine(r rune) bool {
+	return unicode.IsControl(r) || r == utf8.RuneError || unicode.In(r, unicode.Zl, unicode.Zp, unicode.Bidi_Control)
+}
+
+func escapeRunes(s string, isEscaped func(rune) bool) string {
+	var out strings.Builder
+	out.Grow(len(s))
+	for len(s) > 0 {
+		r, width := utf8.DecodeRuneInString(s)
+		if isEscaped(r) {
+			out.WriteString(quoteBody(s[:width]))
+		} else {
+			out.WriteString(s[:width])
+		}
+		s = s[width:]
+	}
+	return out.String()
 }
 
 func appendNew(list []string, item string) []string {

@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/secrets"
 	lore "github.com/setthasit/Lore/sdk"
 )
 
@@ -112,6 +114,29 @@ func TestInertLineEscapesEveryBreakAndTabToo(t *testing.T) {
 	}
 	if strings.ContainsAny(got, "\n\r\t") {
 		t.Errorf("inertLine(%q) = %q, want it to stay on one line", text, got)
+	}
+}
+
+func TestSinkScrubsTheInertRenderingOfARecordedSecret(t *testing.T) {
+	var escaped []string
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if raw := string(r); inertLine(raw) != raw {
+			escaped = append(escaped, raw)
+		}
+	}
+	for b := 0x80; b <= 0xff; b++ {
+		escaped = append(escaped, string([]byte{byte(b)}))
+	}
+
+	for _, raw := range escaped {
+		secret := `fake"tok` + raw + "en-value"
+		sink := &secrets.Sink{}
+		sink.Record("token", secret)
+		for render, rendered := range map[string]string{"inertLine": inertLine(secret), "inertText": inertText(secret)} {
+			if got, want := sink.Scrub("title: "+rendered), "title: "+secrets.Placeholder; got != want {
+				t.Errorf("Scrub(%s(%q)) = %q, want %q", render, secret, got, want)
+			}
+		}
 	}
 }
 
