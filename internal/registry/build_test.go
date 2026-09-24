@@ -447,7 +447,7 @@ func tokenSource(capture *lore.SourceConfig) stubSource {
 func externalRegistry(t *testing.T, plugin lore.Plugin) *Registry {
 	t.Helper()
 
-	r := New(lore.Host{})
+	r := New(lore.Host{}, nil)
 	if err := r.RegisterExternal(OriginExternal("./bin/lore-acme"), plugin.Manifest().Name, plugin); err != nil {
 		t.Fatalf("RegisterExternal: %v", err)
 	}

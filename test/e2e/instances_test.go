@@ -15,11 +15,11 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/setthasit/Lore/app"
 	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/plugins/sources/jira"
 	"github.com/setthasit/Lore/sdk"
@@ -202,7 +202,8 @@ func startInstanceWorkspace(t *testing.T, config, failing string) *instanceWorks
 	api := newFixtureAPI(t, corpusDir(instanceFixtures), instanceFixtureHost)
 	api.listen(func(w http.ResponseWriter, r *http.Request) { api.serveInstanceSites(w, r, failing) })
 
-	reg := registry.New(app.Host())
+	sink := &secrets.Sink{}
+	reg := registry.New(lore.Host{Log: di.DiagnosticLogger(sink)}, sink)
 	if err := reg.Register(jira.Plugin(), stubEmbedderPlugin{}); err != nil {
 		t.Fatalf("register the plugins this workspace runs on: %v", err)
 	}

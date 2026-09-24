@@ -45,7 +45,7 @@ func runResolving(t *testing.T, ctx context.Context, cfg *config.Config, args ..
 		return &Runtime{Config: cfg}, func() error { return nil }, nil
 	}
 
-	root := newRootCommand(resolve, registry.New(lore.Host{}))
+	root := newRootCommand(resolve, registry.New(lore.Host{}, nil))
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&errOut)
 	root.SetArgs(args)

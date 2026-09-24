@@ -190,8 +190,9 @@ func declaredPreparation(workspace *plugindist.Workspace, name, binary string, m
 	return preparedInstance{instance: in, config: cfg, secrets: secrets, declared: true}, nil
 }
 
+// The manifest handshake sends the plugin no secrets, and every instance built from it swaps in the host its config supplies.
 func openDeclared(ctx context.Context, binary string) (lore.Plugin, error) {
-	return plugexec.Open(ctx, binary, lore.Host{Log: di.DiagnosticLogger()})
+	return plugexec.Open(ctx, binary, lore.Host{Log: di.DiagnosticLogger(nil)})
 }
 
 func declaredManifest(ctx context.Context, binary string) (lore.Manifest, error) {

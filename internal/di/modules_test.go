@@ -199,7 +199,7 @@ func (stubClone) HasFileAtHEAD(context.Context, string) (bool, error) { return f
 func stubRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 
-	reg := registry.New(lore.Host{})
+	reg := registry.New(lore.Host{}, nil)
 	if err := reg.Register(stubSourcePlugin{}, stubDualPlugin{}, stubWidthPlugin{}, stubCodePlugin{}); err != nil {
 		t.Fatalf("register the stub plugins: %v", err)
 	}

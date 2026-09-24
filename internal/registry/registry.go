@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
 	"maps"
 )
@@ -53,14 +54,16 @@ type Entry struct {
 
 type Registry struct {
 	host    lore.Host
+	sink    *secrets.Sink
 	entries map[string]Entry
 	plugins map[string]lore.Plugin
 	order   []string
 }
 
-func New(host lore.Host) *Registry {
+func New(host lore.Host, sink *secrets.Sink) *Registry {
 	return &Registry{
 		host:    host,
+		sink:    sink,
 		entries: make(map[string]Entry),
 		plugins: make(map[string]lore.Plugin),
 	}
@@ -71,6 +74,7 @@ type Compiled struct{ *Registry }
 func (r *Registry) Clone() *Registry {
 	out := &Registry{
 		host:    r.host,
+		sink:    r.sink,
 		entries: make(map[string]Entry, len(r.entries)),
 		plugins: make(map[string]lore.Plugin, len(r.plugins)),
 		order:   slices.Clone(r.order),
@@ -78,6 +82,10 @@ func (r *Registry) Clone() *Registry {
 	maps.Copy(out.entries, r.entries)
 	maps.Copy(out.plugins, r.plugins)
 	return out
+}
+
+func (r *Registry) Sink() *secrets.Sink {
+	return r.sink
 }
 
 func (r *Registry) Register(plugins ...lore.Plugin) error {

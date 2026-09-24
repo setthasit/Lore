@@ -44,7 +44,7 @@ type result struct {
 func run(t *testing.T, rt *Runtime, args ...string) result {
 	t.Helper()
 
-	return runOn(t, registry.New(lore.Host{}), rt, "", args...)
+	return runOn(t, registry.New(lore.Host{}, nil), rt, "", args...)
 }
 
 func runOn(t *testing.T, reg *registry.Registry, rt *Runtime, stdin string, args ...string) result {

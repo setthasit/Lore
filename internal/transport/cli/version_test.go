@@ -42,7 +42,7 @@ func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 		return nil, nil, err
 	}
 
-	root := newRootCommand(resolve, registry.New(lore.Host{}))
+	root := newRootCommand(resolve, registry.New(lore.Host{}, nil))
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs([]string{"--version"})

@@ -148,7 +148,7 @@ func hostileSourcePlugin() lore.Plugin {
 func stubRegistry(t *testing.T, pluginSet ...lore.Plugin) *registry.Registry {
 	t.Helper()
 
-	reg := registry.New(lore.Host{})
+	reg := registry.New(lore.Host{}, nil)
 	if err := reg.Register(pluginSet...); err != nil {
 		t.Fatalf("register stub plugins: %v", err)
 	}

@@ -101,7 +101,7 @@ func codeManifest(name string) lore.Manifest {
 func newRegistry(t *testing.T, plugins ...lore.Plugin) *Registry {
 	t.Helper()
 
-	r := New(lore.Host{})
+	r := New(lore.Host{}, nil)
 	if err := r.Register(plugins...); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := New(lore.Host{}).Register(tt.plugin)
+			err := New(lore.Host{}, nil).Register(tt.plugin)
 			if err == nil {
 				t.Fatal("Register: want an error")
 			}
@@ -255,7 +255,7 @@ func TestRegisterAcceptsRepoRemotesOnlyFromASource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := New(lore.Host{}).Register(tt.plugin)
+			err := New(lore.Host{}, nil).Register(tt.plugin)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("Register: %v", err)
@@ -276,7 +276,7 @@ func TestRegisterAcceptsRepoRemotesOnlyFromASource(t *testing.T) {
 }
 
 func TestRegisterRejectsADuplicateName(t *testing.T) {
-	err := New(lore.Host{}).Register(
+	err := New(lore.Host{}, nil).Register(
 		stubSource{manifest: sourceManifest("acme")},
 		stubSource{manifest: sourceManifest("acme")},
 	)
@@ -292,7 +292,7 @@ func TestRegisterRejectsADuplicateName(t *testing.T) {
 }
 
 func TestRegisterExternalRejectsAManifestThatRenamesItself(t *testing.T) {
-	r := New(lore.Host{})
+	r := New(lore.Host{}, nil)
 
 	err := r.RegisterExternal("external ./bin/lore-acme", "acme", stubSource{manifest: sourceManifest("other")})
 	if err == nil {
@@ -312,7 +312,7 @@ func TestRegisterExternalRejectsAManifestThatRenamesItself(t *testing.T) {
 }
 
 func TestRegisterExternalKeepsTheDeclaredNameAsTheOrigin(t *testing.T) {
-	r := New(lore.Host{})
+	r := New(lore.Host{}, nil)
 
 	if err := r.RegisterExternal("external ./bin/lore-acme", "acme", stubSource{manifest: sourceManifest("acme")}); err != nil {
 		t.Fatalf("RegisterExternal: %v", err)

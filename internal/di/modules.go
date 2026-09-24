@@ -15,6 +15,7 @@ import (
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -23,6 +24,7 @@ func Workspace(configPath string, compiled *registry.Registry) fx.Option {
 	return fx.Options(
 		ConfigModule(configPath),
 		fx.Supply(registry.Compiled{Registry: compiled}),
+		fx.Supply(compiled.Sink()),
 		PluginModule,
 		RepositoryModule,
 		ServiceModule,
@@ -75,8 +77,8 @@ var SchedulerModule = fx.Module("scheduler",
 const schedulerStopReserve = time.Second
 
 // Stdout carries the MCP JSON-RPC stream, so diagnostics belong on stderr.
-func DiagnosticLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, nil))
+func DiagnosticLogger(sink *secrets.Sink) *slog.Logger {
+	return slog.New(slog.NewTextHandler(sink.Writer(os.Stderr), nil))
 }
 
 func newScheduler(
