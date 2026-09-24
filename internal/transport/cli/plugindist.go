@@ -149,7 +149,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	if err != nil {
 		return err
 	}
-	prepared, err := declaredPreparation(workspace, name, report.Binary, plugin.Manifest())
+	prepared, err := declaredPreparation(reg, workspace, name, report.Binary, plugin.Manifest())
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ type preparedInstance struct {
 	declared bool
 }
 
-func declaredPreparation(workspace *plugindist.Workspace, name, binary string, manifest lore.Manifest) (preparedInstance, error) {
+func declaredPreparation(reg *registry.Registry, workspace *plugindist.Workspace, name, binary string, manifest lore.Manifest) (preparedInstance, error) {
 	decl, found := workspace.SourceUsing(name)
 	if !found {
 		return preparedInstance{instance: registry.Instance{Use: name}}, nil
@@ -183,7 +183,7 @@ func declaredPreparation(workspace *plugindist.Workspace, name, binary string, m
 	if manifest.Kind != lore.KindSource {
 		return preparedInstance{instance: registry.Instance{Use: name}}, nil
 	}
-	cfg, secrets, err := registry.Prepare(manifest, in, registry.OriginExternal(binary))
+	cfg, secrets, err := reg.Prepare(manifest, in, registry.OriginExternal(binary))
 	if err != nil {
 		return preparedInstance{}, err
 	}

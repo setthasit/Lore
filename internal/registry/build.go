@@ -66,7 +66,7 @@ func (r *Registry) buildSource(in Instance) (lore.Connector, error) {
 		return nil, err
 	}
 
-	cfg, secrets, err := Prepare(manifest, in, origin)
+	cfg, secrets, err := r.Prepare(manifest, in, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 			"%s binds provider %q, which does not serve %s; %s", b.Field, id, b.Capability, serves(manifest)), nil)
 	}
 
-	cfg, secrets, err := Prepare(manifest, in, origin)
+	cfg, secrets, err := r.Prepare(manifest, in, origin)
 	if err != nil {
 		return BuiltProvider{}, err
 	}

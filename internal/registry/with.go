@@ -14,7 +14,7 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-func Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
+func (r *Registry) Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
 	if err := checkInstanceID(in); err != nil {
 		return nil, nil, err
 	}
@@ -22,7 +22,7 @@ func Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[st
 		return nil, nil, err
 	}
 
-	secrets, err := resolveSecrets(manifest, in, origin)
+	secrets, err := r.resolveSecrets(manifest, in, origin)
 	if err != nil {
 		return nil, nil, err
 	}

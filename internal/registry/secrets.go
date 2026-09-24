@@ -3,12 +3,13 @@ package registry
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 )
 
-func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[string]string, error) {
+func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[string]string, error) {
 	if len(manifest.Secrets) == 0 {
 		return nil, nil
 	}
@@ -18,6 +19,7 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 	for _, s := range manifest.Secrets {
 		var name string
 		var operatorNamed bool
+		where := in.Field
 		// An external plugin's own default would steer the host onto a variable the operator never granted.
 		if compiledIn {
 			name = s.DefaultEnv
@@ -29,6 +31,7 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 					"%s.with.%s must name an environment variable", in.Field, s.ConfigField), nil)
 			}
 			name, operatorNamed = named, true
+			where += ".with." + s.ConfigField
 		}
 		if name == "" {
 			if s.Optional {
@@ -43,18 +46,19 @@ func resolveSecrets(manifest lore.Manifest, in Instance, origin string) (map[str
 		}
 
 		value := os.Getenv(name)
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			if s.Optional && !operatorNamed {
 				continue
 			}
 			if in.ImpliedByRole {
 				return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-					"%s names plugin %q, whose default variable %s is not set; export it, or %s",
+					"%s names plugin %q, whose default variable %s is not set or is blank; export it, or %s",
 					in.Field, in.Use, name, declareProvider(in, s)), nil)
 			}
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s names %s, but that environment variable is not set", in.Field, s.ConfigField, name), nil)
+				"%s.with.%s names %s, but that environment variable is not set or is blank", in.Field, s.ConfigField, name), nil)
 		}
+		r.sink.Record(name+" ("+where+")", value)
 		secrets[s.Key] = value
 	}
 	return secrets, nil
