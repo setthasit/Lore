@@ -12,6 +12,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/setthasit/Lore/internal/secrets"
 )
 
 type httpFixture struct {
@@ -30,7 +32,9 @@ func serveOverHTTP(t *testing.T) httpFixture {
 
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- ServeHTTP(ctx, listener, newMockedTools(t).services(), nil, slog.New(slog.DiscardHandler)) }()
+	go func() {
+		served <- ServeHTTP(ctx, listener, newMockedTools(t).services(), nil, &secrets.Sink{}, slog.New(slog.DiscardHandler))
+	}()
 	t.Cleanup(stop)
 
 	return httpFixture{endpoint: "http://" + listener.Addr().String(), served: served, stop: stop}

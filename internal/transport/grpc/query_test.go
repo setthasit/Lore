@@ -24,6 +24,7 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 	"github.com/setthasit/Lore/sdk"
@@ -53,6 +54,7 @@ type rpcFixture struct {
 	queries   lorev1.QueryServiceClient
 	syncs     lorev1.SyncServiceClient
 	logs      *bytes.Buffer
+	sink      *secrets.Sink
 	stop      context.CancelFunc
 }
 
@@ -70,6 +72,7 @@ func newRPCFixture(t *testing.T) rpcFixture {
 		status:    mock_services.NewMockStatusService(ctrl),
 		synthesis: mock_services.NewMockSynthesisService(ctrl),
 		logs:      &bytes.Buffer{},
+		sink:      &secrets.Sink{},
 	}
 
 	listener := bufconn.Listen(rpcBuffer)
@@ -77,6 +80,7 @@ func newRPCFixture(t *testing.T) rpcFixture {
 		Listener:  listener,
 		Services:  f.services(),
 		Synthesis: f.synthesis,
+		Sink:      f.sink,
 		Log:       slog.New(slog.NewTextHandler(f.logs, nil)),
 	}
 	ctx, stop := context.WithCancel(context.Background())

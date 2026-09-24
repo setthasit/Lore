@@ -19,6 +19,7 @@ import (
 
 	"github.com/setthasit/Lore/app"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/transport"
 	"github.com/setthasit/Lore/internal/transport/mcp"
 	"github.com/setthasit/Lore/plugins"
@@ -76,7 +77,9 @@ func serveWorkspace(t *testing.T, w *workspace) *servedWorkspace {
 
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- mcp.ServeHTTP(ctx, listener, w.services(), nil, slog.New(slog.DiscardHandler)) }()
+	go func() {
+		served <- mcp.ServeHTTP(ctx, listener, w.services(), nil, &secrets.Sink{}, slog.New(slog.DiscardHandler))
+	}()
 
 	s := &servedWorkspace{workspace: w, stop: stop, served: served}
 	t.Cleanup(func() { s.shutDown(t) })

@@ -16,6 +16,7 @@ import (
 	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
@@ -362,5 +363,36 @@ func TestWatchClassifiesTheErrorOfAFailedRound(t *testing.T) {
 	}
 	if hidden.GetPhase() != lorev1.SyncPhase_SYNC_PHASE_FAILED {
 		t.Errorf("phase = %v, want %v", hidden.GetPhase(), lorev1.SyncPhase_SYNC_PHASE_FAILED)
+	}
+}
+
+func TestWatchStreamsAFailureQuotingASecretRedacted(t *testing.T) {
+	const token = "fake-watch-token-3Rz8"
+
+	f := newRPCFixture(t)
+	f.sink.Record("LORE_FORGE_TOKEN (sources[forge].with.token_env)", token)
+	published, _ := f.expectSubscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	stream, err := f.syncs.Watch(ctx, &lorev1.WatchRequest{})
+	if err != nil {
+		t.Fatalf("Watch() = %v, want a stream", err)
+	}
+
+	published <- entities.SyncEvent{
+		Source: "forge",
+		Phase:  entities.SyncPhaseFailed,
+		Err:    internalerror.NewBadRequestError("the forge source emitted document forge:page:"+token, nil),
+		At:     rpcCreatedAt,
+	}
+
+	failed, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv() = %v, want the failed event", err)
+	}
+	if want := "the forge source emitted document forge:page:" + secrets.Placeholder; failed.GetError() != want {
+		t.Errorf("error = %q, want %q", failed.GetError(), want)
 	}
 }

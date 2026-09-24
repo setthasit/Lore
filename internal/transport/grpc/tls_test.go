@@ -22,6 +22,7 @@ import (
 	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
 	"github.com/setthasit/Lore/internal/entities"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
@@ -136,6 +137,7 @@ func newMutualTLSFixture(t *testing.T) mutualTLSFixture {
 			Listener:  listener,
 			Services:  svc,
 			Synthesis: synthesis,
+			Sink:      &secrets.Sink{},
 			Log:       slog.New(slog.DiscardHandler),
 			TLS:       serverTLS,
 		})
