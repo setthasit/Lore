@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
@@ -20,7 +21,7 @@ import (
 const trustNotice = "installing a plugin runs that author's code on this machine, with your privileges" +
 	" and the tokens you give its sources"
 
-func newPluginInstallCommand(configPath *string) *cobra.Command {
+func newPluginInstallCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	return &cobra.Command{
 		Use:   "install [<name> | <coordinate>[@latest]]",
 		Short: "Resolve, download, verify and pin an external plugin",
@@ -31,12 +32,12 @@ func newPluginInstallCommand(configPath *string) *cobra.Command {
 			"not, and a scheduler must not.",
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginInstall(cmd, args, *configPath)
+			return runPluginInstall(cmd, args, *configPath, declaredManifest(reg.Log()))
 		},
 	}
 }
 
-func newPluginUpdateCommand(configPath *string) *cobra.Command {
+func newPluginUpdateCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	return &cobra.Command{
 		Use:   "update <name>[@<version>]",
 		Short: "Re-resolve a plugin and rewrite its locked version, URLs and digests",
@@ -44,7 +45,7 @@ func newPluginUpdateCommand(configPath *string) *cobra.Command {
 			"the newest release and writes that version back into lore.yaml.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPluginUpdate(cmd, args[0], *configPath)
+			return runPluginUpdate(cmd, args[0], *configPath, declaredManifest(reg.Log()))
 		},
 	}
 }
@@ -78,8 +79,8 @@ func newPluginVerifyCommand(configPath *string, reg *registry.Registry) *cobra.C
 	}
 }
 
-func runPluginInstall(cmd *cobra.Command, args []string, configPath string) error {
-	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+func runPluginInstall(cmd *cobra.Command, args []string, configPath string, handshake plugindist.Handshake) error {
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(handshake))
 	if err != nil {
 		return err
 	}
@@ -94,12 +95,12 @@ func runPluginInstall(cmd *cobra.Command, args []string, configPath string) erro
 		return nil
 	}
 
-	renderInstalls(cmd.Context(), out, configPath, results)
+	renderInstalls(cmd.Context(), out, configPath, results, handshake)
 	return nil
 }
 
-func runPluginUpdate(cmd *cobra.Command, argument, configPath string) error {
-	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+func runPluginUpdate(cmd *cobra.Command, argument, configPath string, handshake plugindist.Handshake) error {
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(handshake))
 	if err != nil {
 		return err
 	}
@@ -145,7 +146,7 @@ func runPluginVerify(cmd *cobra.Command, name, configPath string, reg *registry.
 	out := cmd.OutOrStdout()
 	renderVerify(out, report)
 
-	plugin, err := openDeclared(cmd.Context(), report.Binary)
+	plugin, err := plugexec.Open(cmd.Context(), report.Binary, reg.Host(name))
 	if err != nil {
 		return err
 	}
@@ -191,21 +192,18 @@ func declaredPreparation(reg *registry.Registry, workspace *plugindist.Workspace
 	return preparedInstance{instance: in, config: cfg, secrets: secrets, declared: true}, nil
 }
 
-// The manifest handshake sends the plugin no secrets, and every instance built from it swaps in the host its config supplies.
-func openDeclared(ctx context.Context, binary string) (lore.Plugin, error) {
-	return plugexec.Open(ctx, binary, lore.Host{Log: di.DiagnosticLogger(nil)})
-}
-
-func declaredManifest(ctx context.Context, binary string) (lore.Manifest, error) {
-	plugin, err := openDeclared(ctx, binary)
-	if err != nil {
-		return lore.Manifest{}, err
+func declaredManifest(log *slog.Logger) plugindist.Handshake {
+	return func(ctx context.Context, binary string) (lore.Manifest, error) {
+		plugin, err := plugexec.Open(ctx, binary, lore.Host{Log: log})
+		if err != nil {
+			return lore.Manifest{}, err
+		}
+		return plugin.Manifest(), nil
 	}
-	return plugin.Manifest(), nil
 }
 
-func renderInstalls(ctx context.Context, out io.Writer, configPath string, results []plugindist.Result) {
-	workspace, openErr := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+func renderInstalls(ctx context.Context, out io.Writer, configPath string, results []plugindist.Result, handshake plugindist.Handshake) {
+	workspace, openErr := plugindist.Open(configPath, plugindist.WithHandshake(handshake))
 	for _, result := range results {
 		renderInstall(out, result)
 

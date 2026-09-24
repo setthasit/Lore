@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
@@ -19,6 +20,7 @@ import (
 type Runtime struct {
 	Config *config.Config
 	Sink   *secrets.Sink
+	Log    *slog.Logger
 
 	Warnings  registry.Warnings
 	Query     services.QueryService
@@ -51,7 +53,7 @@ func resolveWithFX(
 		append([]fx.Option{
 			fx.NopLogger,
 			di.Workspace(configPath, reg),
-			fx.Populate(&rt.Config, &rt.Sink, &rt.Warnings, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History,
+			fx.Populate(&rt.Config, &rt.Sink, &rt.Log, &rt.Warnings, &rt.Query, &rt.Why, &rt.Trace, &rt.Impact, &rt.History,
 				&rt.Sync, &rt.Status, &rt.Synthesis),
 		}, modules...)...,
 	)

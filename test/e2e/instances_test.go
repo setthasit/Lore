@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"os"
@@ -203,7 +204,7 @@ func startInstanceWorkspace(t *testing.T, config, failing string) *instanceWorks
 	api.listen(func(w http.ResponseWriter, r *http.Request) { api.serveInstanceSites(w, r, failing) })
 
 	sink := &secrets.Sink{}
-	reg := registry.New(lore.Host{Log: di.DiagnosticLogger(sink)}, sink)
+	reg := registry.New(lore.Host{Log: slog.New(slog.NewTextHandler(sink.Writer(os.Stderr), nil))}, sink)
 	if err := reg.Register(jira.Plugin(), stubEmbedderPlugin{}); err != nil {
 		t.Fatalf("register the plugins this workspace runs on: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -210,7 +211,7 @@ func capturedManifestJSON(t *testing.T, dir string) string {
 func reportedManifestJSON(t *testing.T, binary string) string {
 	t.Helper()
 
-	manifest, err := declaredManifest(t.Context(), binary)
+	manifest, err := declaredManifest(slog.New(slog.DiscardHandler))(t.Context(), binary)
 	if err != nil {
 		t.Fatalf("handshake the installed binary: %v", err)
 	}

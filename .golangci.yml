@@ -4,6 +4,7 @@ linters:
   enable:
     - depguard
     - errcheck
+    - forbidigo
     - gosec
     - govet
     - staticcheck
@@ -30,6 +31,15 @@ linters:
           deny:
             - pkg: "github.com/setthasit/Lore/plugins"
               desc: the engine must not know a plugin by name; wire through the registry
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^slog\.(NewTextHandler|NewJSONHandler|Default|SetDefault|SetLogLoggerLevel|With|Log|LogAttrs|Debug|DebugContext|Info|InfoContext|Warn|WarnContext|Error|ErrorContext)$
+          pkg: ^log/slog$
+          msg: take the *slog.Logger app.Run builds over the secrets sink, so a resolved secret never reaches stderr unscrubbed
+        - pattern: ^log\.(Default|New|SetOutput|Output|Print|Printf|Println|Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)$
+          pkg: ^log$
+          msg: the standard logger writes stderr past the secrets sink; take the *slog.Logger app.Run builds
     gosec:
       # Findings that are structurally wrong here rather than waiting to be fixed:
       #   G115 - the gRPC mappers narrow int line numbers to the int32 the proto declares.
@@ -55,6 +65,17 @@ linters:
       - path: _test\.go
         linters:
           - gosec
+          - forbidigo
+      # A plugin process's own logger, wrapped in the redacting handler sdk/stdio applies to its secrets.
+      - path: ^sdk/stdio/stdio\.go$
+        text: slog\.NewTextHandler
+        linters:
+          - forbidigo
+      # The composition root: the one handler every host log line passes through.
+      - path: ^app/app\.go$
+        text: slog\.NewTextHandler
+        linters:
+          - forbidigo
       # The git plugin exists to shell out to git; every argv it passes is assembled in-process.
       - path: ^plugins/code/git/git\.go$
         text: "^G204"

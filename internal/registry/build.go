@@ -279,11 +279,15 @@ func unbuildable(field, use string, err error) error {
 		"cannot configure %s from plugin %q: %s", field, use, err.Error()), err)
 }
 
+func (r *Registry) Log() *slog.Logger {
+	if r.host.Log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return r.host.Log
+}
+
 func (r *Registry) Host(instance string) lore.Host {
 	host := r.host
-	if host.Log == nil {
-		host.Log = slog.New(slog.DiscardHandler)
-	}
-	host.Log = host.Log.With(slog.String("instance", instance))
+	host.Log = r.Log().With(slog.String("instance", instance))
 	return host
 }

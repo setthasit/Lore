@@ -24,8 +24,8 @@ func newPluginCommand(configPath *string, reg *registry.Registry) *cobra.Command
 	}
 	plugin.AddCommand(
 		newPluginListCommand(configPath, reg),
-		newPluginInstallCommand(configPath),
-		newPluginUpdateCommand(configPath),
+		newPluginInstallCommand(configPath, reg),
+		newPluginUpdateCommand(configPath, reg),
 		newPluginRemoveCommand(configPath),
 		newPluginVerifyCommand(configPath, reg),
 		newPluginSearchCommand(plugbuild.Index{}),

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -22,8 +23,7 @@ const (
 
 // Blocks until ctx is done, answering over streamable HTTP the tool calls Serve
 // answers over stdio.
-func ServeHTTP(ctx context.Context, listener net.Listener, svc transport.Services, tlsConfig *tls.Config) error {
-	log := diagnosticLogger()
+func ServeHTTP(ctx context.Context, listener net.Listener, svc transport.Services, tlsConfig *tls.Config, log *slog.Logger) error {
 	tools := newServer(svc, log)
 
 	mux := http.NewServeMux()
@@ -33,7 +33,12 @@ func ServeHTTP(ctx context.Context, listener net.Listener, svc transport.Service
 		&sdk.StreamableHTTPOptions{Stateless: true, Logger: log},
 	))
 
-	server := &http.Server{Handler: mux, TLSConfig: tlsConfig, ReadHeaderTimeout: readHeaderTimeout}
+	server := &http.Server{
+		Handler:           mux,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelError),
+	}
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- accept(server, listener, tlsConfig) }()

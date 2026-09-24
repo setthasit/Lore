@@ -85,13 +85,13 @@ func serve(cmd *cobra.Command, rt *Runtime, httpOverride, grpcOverride string, m
 
 	svc := rt.services()
 	return serveBoth(cmd.Context(),
-		func(ctx context.Context) error { return mcp.ServeHTTP(ctx, httpListener, svc, httpTLS) },
+		func(ctx context.Context) error { return mcp.ServeHTTP(ctx, httpListener, svc, httpTLS, rt.Log) },
 		func(ctx context.Context) error {
 			return grpc.Serve(ctx, grpc.Config{
 				Listener:  grpcListener,
 				Services:  svc,
 				Synthesis: rt.Synthesis,
-				Log:       di.DiagnosticLogger(rt.Sink),
+				Log:       rt.Log,
 				TLS:       grpcTLS,
 			})
 		},

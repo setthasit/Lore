@@ -1,8 +1,11 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -325,4 +328,138 @@ func buildExternalLeaky(t *testing.T, dir string) (name string) {
 		t.Fatalf("build the external plugin: %v\n%s", err, out)
 	}
 	return name
+}
+
+const (
+	echoingProviderName = "e2e-echoing"
+	echoingTokenEnv     = "LORE_E2E_ECHOING_TOKEN"
+	echoingToken        = "fake-echoing-token-9c4e"
+)
+
+type echoingEmbedderPlugin struct{}
+
+var _ lore.ProviderPlugin = echoingEmbedderPlugin{}
+
+func (echoingEmbedderPlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:          echoingProviderName,
+		Kind:          lore.KindProvider,
+		APIVersion:    lore.APIVersion,
+		Summary:       "embedder whose upstream echoes its token in every refusal",
+		Capabilities:  lore.Capabilities{Embed: true},
+		DefaultModels: map[lore.Capability]string{lore.CapabilityEmbed: stubEmbedderModelName},
+		Secrets:       []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+	}
+}
+
+func (echoingEmbedderPlugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
+	return echoingEmbedder{token: c.Secret("token")}, nil
+}
+
+type echoingEmbedder struct{ token string }
+
+func (e echoingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, errors.New("upstream rejected token " + e.token)
+}
+
+func (echoingEmbedder) Dimensions() int { return 8 }
+
+func TestAnMCPToolFailureCarryingASecretReachesStderrRedacted(t *testing.T) {
+	t.Setenv(leakyTokenEnv, leakyToken)
+	t.Setenv(leakyPinEnv, leakyLongPin)
+	t.Setenv(echoingTokenEnv, echoingToken)
+	dir := t.TempDir()
+	config := writeLeakyConfig(t, dir, "workspace: lore-e2e-redaction\n"+
+		"index_path: "+strconv.Quote(filepath.Join(dir, "redaction.db"))+"\n"+
+		leakySourceBlock+
+		"providers:\n"+
+		"  - use: "+echoingProviderName+"\n"+
+		"    with:\n"+
+		"      token_env: "+echoingTokenEnv+"\n"+
+		"embedder:\n"+
+		"  provider: "+echoingProviderName+"\n"+
+		"  model: "+stubEmbedderModelName+"\n")
+
+	stdin, requests, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdin: %v", err)
+	}
+	responses, stdout, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	if err := responses.SetReadDeadline(time.Now().Add(commandTimeout)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	stderr := captureFile(t, "stderr")
+	realArgs, realStdin, realStdout, realStderr := os.Args, os.Stdin, os.Stdout, os.Stderr
+	os.Args = []string{"lore", "mcp", "--config", config}
+	os.Stdin, os.Stdout, os.Stderr = stdin, stdout, stderr
+	t.Cleanup(func() {
+		os.Args, os.Stdin, os.Stdout, os.Stderr = realArgs, realStdin, realStdout, realStderr
+		for _, f := range []*os.File{stdin, requests, responses, stdout} {
+			_ = f.Close()
+		}
+	})
+
+	returned := make(chan int, 1)
+	go func() { returned <- app.Run(leakySourcePlugin{}, echoingEmbedderPlugin{}) }()
+
+	for _, message := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"lore-e2e","version":"v0.0.1"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_decision","arguments":{"question":"why sqlite?"}}}`,
+	} {
+		if _, err := requests.WriteString(message + "\n"); err != nil {
+			t.Fatalf("write %s: %v", message, err)
+		}
+	}
+	awaitResponse(t, bufio.NewScanner(responses), 2, stderr.Name())
+	_ = requests.Close()
+
+	select {
+	case <-returned:
+		os.Stdout, os.Stderr = realStdout, realStderr
+	case <-time.After(commandTimeout):
+		t.Fatalf("`lore mcp` has not returned %s after its client hung up", commandTimeout)
+	}
+
+	logged := readCapture(t, stderr)
+	failure := toolFailureLine(logged, findDecisionTool)
+	if failure == "" {
+		t.Fatalf("stderr = %q, want the %s failure logged", logged, findDecisionTool)
+	}
+	if !strings.Contains(failure, "token "+secrets.Placeholder) {
+		t.Errorf("failure line = %q, want the echoed token replaced by %s", failure, secrets.Placeholder)
+	}
+	if strings.Contains(logged, echoingToken) {
+		t.Errorf("stderr = %q, want it free of the echoed token", logged)
+	}
+}
+
+func toolFailureLine(logged, tool string) string {
+	for line := range strings.Lines(logged) {
+		if strings.Contains(line, `msg="`+tool+` failed"`) {
+			return line
+		}
+	}
+	return ""
+}
+
+func awaitResponse(t *testing.T, stdout *bufio.Scanner, id int, stderrPath string) {
+	t.Helper()
+
+	for stdout.Scan() {
+		var response struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+			t.Fatalf("stdout line %q is not JSON-RPC: %v", stdout.Text(), err)
+		}
+		if response.ID == id {
+			return
+		}
+	}
+	logged, _ := os.ReadFile(stderrPath)
+	t.Fatalf("no response with id %d on stdout: %v; stderr = %q", id, stdout.Err(), logged)
 }

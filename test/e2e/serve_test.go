@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"net"
 	"os"
@@ -75,7 +76,7 @@ func serveWorkspace(t *testing.T, w *workspace) *servedWorkspace {
 
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- mcp.ServeHTTP(ctx, listener, w.services(), nil) }()
+	go func() { served <- mcp.ServeHTTP(ctx, listener, w.services(), nil, slog.New(slog.DiscardHandler)) }()
 
 	s := &servedWorkspace{workspace: w, stop: stop, served: served}
 	t.Cleanup(func() { s.shutDown(t) })

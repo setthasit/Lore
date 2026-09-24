@@ -112,7 +112,7 @@ func sourceToAdd(ctx context.Context, args []string, configPath string, reg *reg
 		}
 	}
 
-	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest))
+	workspace, err := plugindist.Open(configPath, plugindist.WithHandshake(declaredManifest(reg.Log())))
 	if err != nil {
 		return lore.Manifest{}, false, err
 	}

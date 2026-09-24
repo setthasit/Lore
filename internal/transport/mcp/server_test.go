@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 			Query:  query,
 			Trace:  mock_services.NewMockTraceService(ctrl),
 			Impact: mock_services.NewMockImpactService(ctrl),
-		})
+		}, slog.New(slog.DiscardHandler))
 	}()
 
 	send(t, requests, map[string]any{

@@ -259,9 +259,10 @@ fields it prompts for when the name is not one this build compiled in
 Every other reader executes the binary. Every remote install and every
 `lore plugin update` captures a fresh reply through `Installer.captureManifest`
 (`internal/plugindist/install.go`), which calls the handshake the CLI supplies,
-`declaredManifest` (`internal/transport/cli/plugindist.go`), which is
-`plugexec.Open`. `lore plugin verify` opens the installed binary itself through
-`openDeclared` in that same file and certifies that process, never the stored
+`declaredManifest` (`internal/transport/cli/plugindist.go`), which builds that
+handshake over `plugexec.Open` with the registry's logger. `lore plugin verify`
+opens the installed binary itself with `plugexec.Open` and the registry's host,
+`reg.Host(name)`, and certifies that process, never the stored
 copy, because `Workspace.Verify` stops at `Store.Locate`. `lore plugin list`
 resolves a declared external plugin through the record alone
 (`declaredExternals`, `internal/transport/cli/plugin.go`), reading no stored

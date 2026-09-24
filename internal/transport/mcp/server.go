@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -19,8 +18,8 @@ const (
 )
 
 // Blocks until ctx is cancelled or the client disconnects.
-func Serve(ctx context.Context, svc transport.Services) error {
-	return newServer(svc, diagnosticLogger()).Run(ctx, &sdk.StdioTransport{})
+func Serve(ctx context.Context, svc transport.Services, log *slog.Logger) error {
+	return newServer(svc, log).Run(ctx, &sdk.StdioTransport{})
 }
 
 func newServer(svc transport.Services, log *slog.Logger) *sdk.Server {
@@ -34,11 +33,6 @@ func newServer(svc transport.Services, log *slog.Logger) *sdk.Server {
 	registerSyncStatus(server, svc.Status, log)
 
 	return server
-}
-
-// Stdout carries the JSON-RPC stream, so anything printed there corrupts the session.
-func diagnosticLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, nil))
 }
 
 func toolError(log *slog.Logger, tool string, err error) error {
