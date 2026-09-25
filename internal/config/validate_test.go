@@ -13,6 +13,11 @@ import (
 
 const repoPlaceholder = "{{REPO}}"
 
+const (
+	fakeToken  = "fake-not-a-real-token"
+	missingVar = "LORE_TEST_MISSING"
+)
+
 const docExample = `
 workspace: myproject
 index_path: ~/.lore/myproject.db
@@ -911,6 +916,147 @@ func TestExpandHome(t *testing.T) {
 	}
 }
 
+func TestLoadExpandsEnvironmentReferences(t *testing.T) {
+	tests := []struct {
+		name  string
+		edit  map[string]string
+		check func(*testing.T, *Config)
+	}{
+		{
+			name: "workspace, index_path and a server address expand, and index_path still expands ~",
+			edit: map[string]string{
+				"workspace: myproject":             "workspace: ${env:LORE_TEST_WORKSPACE}",
+				"index_path: ~/.lore/myproject.db": "index_path: ${env:LORE_TEST_INDEX}",
+				`grpc_addr: ":9090"`:               `grpc_addr: "${env:LORE_TEST_GRPC_ADDR}"`,
+			},
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Workspace != "acme-staging" {
+					t.Errorf("Workspace = %q, want %q", cfg.Workspace, "acme-staging")
+				}
+				if want := homePath(t, "indexes", "acme.db"); cfg.IndexPath != want {
+					t.Errorf("IndexPath = %q, want %q", cfg.IndexPath, want)
+				}
+				if cfg.Server.GRPCAddr != "127.0.0.1:9443" {
+					t.Errorf("Server.GRPCAddr = %q, want %q", cfg.Server.GRPCAddr, "127.0.0.1:9443")
+				}
+			},
+		},
+		{
+			name: "a repo path expands before it is checked for a clone",
+			edit: map[string]string{"path: " + repoPlaceholder: "path: ${env:LORE_TEST_REPO}"},
+			check: func(t *testing.T, cfg *Config) {
+				if want := os.Getenv("LORE_TEST_REPO"); cfg.Repos[0].Path != want {
+					t.Errorf("Repos[0].Path = %q, want %q", cfg.Repos[0].Path, want)
+				}
+			},
+		},
+		{
+			name: "an escaped expansion reaches the field as literal text without reading the variable",
+			edit: map[string]string{"model: moonshotai/kimi-k2": "model: $${env:" + missingVar + "}"},
+			check: func(t *testing.T, cfg *Config) {
+				if want := "${env:" + missingVar + "}"; cfg.LLM.Model != want {
+					t.Errorf("LLM.Model = %q, want %q", cfg.LLM.Model, want)
+				}
+			},
+		},
+		{
+			name: "two expansions in one value are joined by the text between them",
+			edit: map[string]string{`http_addr: ":8080"`: `http_addr: "${env:LORE_TEST_HOST}:${env:LORE_TEST_PORT}"`},
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Server.HTTPAddr != "127.0.0.1:8443" {
+					t.Errorf("Server.HTTPAddr = %q, want %q", cfg.Server.HTTPAddr, "127.0.0.1:8443")
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setExpansionEnv(t)
+
+			cfg, err := Load(writeDocExample(t, test.edit))
+			if err != nil {
+				t.Fatalf("Load() error = %v, want success", err)
+			}
+			test.check(t, cfg)
+		})
+	}
+}
+
+func TestLoadRefusesAnUnusableEnvironmentReference(t *testing.T) {
+	tests := []struct {
+		name    string
+		edit    map[string]string
+		field   string
+		mention string
+	}{
+		{
+			name:    "an unset variable",
+			edit:    map[string]string{"index_path: ~/.lore/myproject.db": "index_path: ${env:LORE_TEST_TOKEN}/${env:" + missingVar + "}.db"},
+			field:   "index_path",
+			mention: missingVar + " is not set",
+		},
+		{
+			name:    "a reference without the env: prefix",
+			edit:    map[string]string{`grpc_addr: ":9090"`: `grpc_addr: "${LORE_TEST_TOKEN}"`},
+			field:   "server.grpc_addr",
+			mention: "${env:VAR}",
+		},
+		{
+			name:    "a reference with a shell default",
+			edit:    map[string]string{"workspace: myproject": "workspace: ${env:LORE_TEST_TOKEN:-https://api.openai.com}"},
+			field:   "workspace",
+			mention: "${env:VAR}",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setExpansionEnv(t)
+
+			cfg, err := Load(writeDocExample(t, test.edit))
+			if err == nil {
+				t.Fatalf("Load() = %+v, want a refusal naming %s", cfg, test.field)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("Load() error kind = %s, want bad request", internalerror.KindOf(err))
+			}
+			message := internalerror.MessageOf(err)
+			if !strings.HasPrefix(message, test.field+" ") || !strings.Contains(message, test.mention) {
+				t.Errorf("Load() message = %q, want it to name %s and %q", message, test.field, test.mention)
+			}
+			if strings.Contains(err.Error(), fakeToken) {
+				t.Errorf("Load() error = %q, want it free of the variable's value", err)
+			}
+		})
+	}
+}
+
+func TestReadFileLeavesEnvironmentReferencesRaw(t *testing.T) {
+	setExpansionEnv(t)
+	const reference = "${env:LORE_TEST_WORKSPACE}"
+	path := writeDocExample(t, map[string]string{"workspace: myproject": "workspace: " + reference})
+
+	text, parsed, err := ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v, want success", err)
+	}
+	if want := "workspace: " + reference; !strings.Contains(text, want) {
+		t.Errorf("ReadFile() text = %q, want it to contain %q verbatim", text, want)
+	}
+	if parsed.Workspace != reference {
+		t.Errorf("ReadFile() Workspace = %q, want the raw reference %q", parsed.Workspace, reference)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v, want success", err)
+	}
+	if loaded.Workspace != "acme-staging" {
+		t.Errorf("Load() workspace = %q, want the expanded %q", loaded.Workspace, "acme-staging")
+	}
+}
+
 func idents(instances []Instance) []string {
 	got := make([]string, 0, len(instances))
 	for i := range instances {
@@ -964,4 +1110,38 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatalf("write fixture: %v", err)
 	}
 	return path
+}
+
+func setExpansionEnv(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("HOME", t.TempDir())
+	for name, value := range map[string]string{
+		"LORE_TEST_WORKSPACE": "acme-staging",
+		"LORE_TEST_INDEX":     "~/indexes/acme.db",
+		"LORE_TEST_GRPC_ADDR": "127.0.0.1:9443",
+		"LORE_TEST_HOST":      "127.0.0.1",
+		"LORE_TEST_PORT":      "8443",
+		"LORE_TEST_REPO":      gitClone(t),
+		"LORE_TEST_TOKEN":     fakeToken,
+	} {
+		t.Setenv(name, value)
+	}
+	t.Setenv(missingVar, "")
+	if err := os.Unsetenv(missingVar); err != nil {
+		t.Fatalf("unset %s: %v", missingVar, err)
+	}
+}
+
+func writeDocExample(t *testing.T, edit map[string]string) string {
+	t.Helper()
+
+	body := docExample
+	for from, to := range edit {
+		if !strings.Contains(body, from) {
+			t.Fatalf("docExample has no %q to edit", from)
+		}
+		body = strings.Replace(body, from, to, 1)
+	}
+	return writeConfig(t, strings.ReplaceAll(body, repoPlaceholder, gitClone(t)))
 }
