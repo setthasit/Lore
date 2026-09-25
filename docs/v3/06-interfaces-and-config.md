@@ -286,9 +286,9 @@ engine's.
   names the variable rather than the value behind it
   (`internal/registry/secrets.go`, `resolveSecrets`). An external plugin's own
   diagnostics are redacted as they cross the pipe (`sdk/stdio`, `redacting`),
-  while a plugin compiled into this binary logs through a `Host.Log` that
-  redacts nothing (`internal/registry/build.go`, `Registry.Host`), so keeping
-  a token out of a log line is the author's discipline there.
+  and a plugin compiled into this binary logs through the host's diagnostic
+  logger (`internal/registry/build.go`, `Registry.Host`), which the host
+  scrubs as below.
 - The host resolves each named variable and injects the value, so a plugin
   receives only the secrets its manifest declared. For an external plugin the
   host also withholds its own environment, handing the subprocess an empty one
@@ -296,6 +296,30 @@ engine's.
   (`internal/plugexec/env.go`, `minimalEnv`). A plugin compiled into this
   binary shares the host process, so there the rule is a contract it keeps
   rather than a boundary the host draws.
+- The host scrubs resolved secret values from what it emits
+  (`internal/secrets`). Resolving a secret records the value with one `Sink`
+  in every escaped form an output produces: `strconv` quoting and JSON with
+  and without HTML escaping, in any mix nested up to three levels, and the
+  CLI's control-character escaping (`Sink.Record`). `app.Run` builds that sink
+  and the one diagnostic logger, which writes through it, so a compiled-in
+  plugin's log, an external plugin's relayed stderr, and the scheduler, gRPC
+  and MCP diagnostics are all scrubbed. A lint rule (`.golangci.yml`,
+  `forbidigo`) rejects any other host text or JSON handler and the default and
+  standard loggers. Relayed stderr is logged at Debug and that logger prints
+  from Info, so it never prints (`internal/plugexec/session.go`, `stderrLog`).
+  The CLI's own stdout and stderr, the `lore mcp` stream included, pass the
+  sink (`internal/transport/cli/root.go`, `execute`), as do `lore serve`'s
+  MCP-over-HTTP response bodies (`internal/transport/mcp/http.go`,
+  `scrubResponses`) and its gRPC response strings and status messages
+  (`internal/transport/grpc/scrub.go`).
+- The scrub misses a value shorter than 8 characters; its variable and field
+  are named in one stderr line at startup instead (`lore: secrets shorter than
+  8 characters are not scrubbed: ...`). An encoding nested deeper than three
+  levels passes. Each write is scrubbed on its own, so a value split across two
+  writes passes intact (`internal/secrets/writer.go`). A multi-line value
+  inside an excerpt the CLI indents passes too, since the indent breaks the
+  recorded form. HTTP response headers and gRPC metadata are not scrubbed;
+  none carries plugin text today.
 - Private data leaves the machine only toward the configured embedder/LLM —
   documented loudly; Ollama provider = fully local pipeline.
 - gRPC/HTTP off-loopback requires TLS; gRPC additionally supports mTLS.
