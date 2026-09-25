@@ -233,6 +233,84 @@ func TestSourceAddReAsksUntilTheInstanceIDIsUsable(t *testing.T) {
 	}
 }
 
+const seededWithExpandedUse = `workspace: myproject
+
+sources:
+  - use: ${env:LORE_SRC_USE}
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos: []
+
+embedder:
+  provider: vectors
+  model: embed-small
+`
+
+func TestSourceAddChecksIDsAgainstTheExpandedSources(t *testing.T) {
+	t.Setenv("LORE_SRC_USE", "forge")
+	path := writeConfigFile(t, seededWithExpandedUse)
+
+	res := runOn(t, sourceRegistry(t), nil, "forge-infra\n"+forgeAnswers, "source", "add", "forge", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	const question = "sources already has an instance called forge," +
+		" so this one needs its own id, for example forge-2: "
+	if !strings.HasPrefix(res.stdout, question) {
+		t.Errorf("stdout = %q, want it to open with the id question\n%q", res.stdout, question)
+	}
+
+	const want = `workspace: myproject
+
+sources:
+  - use: ${env:LORE_SRC_USE}
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos: []
+  - id: forge-infra
+    use: forge
+    with:
+      token_env: LORE_FORGE_TOKEN
+      repos:
+        - acme/app
+      base_url: https://forge.example
+
+embedder:
+  provider: vectors
+  model: embed-small
+`
+	if after := readConfigFile(t, path); after != want {
+		t.Errorf("file =\n%s\nwant the raw use: kept and the new item appended\n%s", after, want)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("the file no longer loads: %v", err)
+	}
+	if len(cfg.Sources) != 2 || cfg.Sources[0].Ident() != "forge" || cfg.Sources[1].Ident() != "forge-infra" {
+		t.Errorf("sources = %+v, want forge and forge-infra", cfg.Sources)
+	}
+}
+
+func TestSourceAddNamesTheFieldOfAnUnsetVariable(t *testing.T) {
+	t.Setenv("LORE_SRC_USE", "")
+	if err := os.Unsetenv("LORE_SRC_USE"); err != nil {
+		t.Fatalf("unset LORE_SRC_USE: %v", err)
+	}
+	path := writeConfigFile(t, seededWithExpandedUse)
+
+	res := runOn(t, sourceRegistry(t), nil, forgeAnswers, "source", "add", "forge", "--config", path)
+	if res.exitCode != exitBadRequest {
+		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	}
+	if want := "sources[0].use expands LORE_SRC_USE, but LORE_SRC_USE is not set"; !strings.Contains(res.stderr, want) {
+		t.Errorf("stderr = %q, want it to contain %q", res.stderr, want)
+	}
+	if after := readConfigFile(t, path); after != seededWithExpandedUse {
+		t.Errorf("file =\n%s\nwant it unchanged", after)
+	}
+}
+
 func TestSourceAddOnAnUnknownPluginListsTheRegisteredSources(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 

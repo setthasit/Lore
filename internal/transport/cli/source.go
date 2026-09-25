@@ -71,6 +71,10 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	if err != nil {
 		return err
 	}
+	refs, err := current.ExpandPluginRefs()
+	if err != nil {
+		return err
+	}
 
 	out := cmd.OutOrStdout()
 	if !compiledIn {
@@ -79,7 +83,7 @@ func runSourceAdd(cmd *cobra.Command, args []string, configPath string, reg *reg
 	draft, err := promptSource(&prompter{
 		in:  bufio.NewReader(cmd.InOrStdin()),
 		out: out,
-	}, manifest, compiledIn, current)
+	}, manifest, compiledIn, refs.Sources)
 	if err != nil {
 		return err
 	}
@@ -180,10 +184,10 @@ func (d sourceDraft) ident() string {
 	return d.use
 }
 
-func promptSource(p *prompter, m lore.Manifest, compiledIn bool, current *config.Config) (sourceDraft, error) {
+func promptSource(p *prompter, m lore.Manifest, compiledIn bool, sources []config.Instance) (sourceDraft, error) {
 	draft := sourceDraft{use: m.Name}
 
-	id, err := promptInstanceID(p, m.Name, current.Sources)
+	id, err := promptInstanceID(p, m.Name, sources)
 	if err != nil {
 		return draft, err
 	}
