@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -40,9 +41,9 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 			return nil, unnamedSecret(in, s, compiledIn)
 		}
 		// The value is withheld: an operator who pastes a credential here must not see it echoed back.
-		if !envPattern.MatchString(name) {
+		if !envx.ValidName(name) {
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must be an environment variable name: %s", in.Field, s.ConfigField, EnvNameRule), nil)
+				"%s.with.%s must be an environment variable name: %s", in.Field, s.ConfigField, envx.NameRule), nil)
 		}
 
 		value := os.Getenv(name)

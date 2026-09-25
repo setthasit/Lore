@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
@@ -26,10 +27,6 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
 var keyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
-var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-
-const EnvNameRule = "upper-case letters, digits and underscores, not starting with a digit"
-
 var instancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 const InstanceIDRule = "an instance id becomes the prefix of every document identity it produces," +
@@ -37,10 +34,6 @@ const InstanceIDRule = "an instance id becomes the prefix of every document iden
 
 func ValidPluginName(name string) bool {
 	return namePattern.MatchString(name)
-}
-
-func ValidEnvName(name string) bool {
-	return envPattern.MatchString(name)
 }
 
 func ValidInstanceID(id string) bool {
@@ -301,7 +294,7 @@ func validateFields(m lore.Manifest) error {
 				"plugin %q declares secret %q with config field %q; it must be snake_case and end in _env, because it names an environment variable rather than holding a value",
 				m.Name, s.Key, s.ConfigField), nil)
 		}
-		if s.DefaultEnv != "" && !envPattern.MatchString(s.DefaultEnv) {
+		if s.DefaultEnv != "" && !envx.ValidName(s.DefaultEnv) {
 			return internalerror.NewInternalError(fmt.Sprintf(
 				"plugin %q declares secret %q with default env %q, which is not an environment variable name",
 				m.Name, s.Key, s.DefaultEnv), nil)

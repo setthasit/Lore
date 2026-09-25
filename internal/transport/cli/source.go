@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
@@ -351,13 +352,13 @@ func (p *prompter) envName(field, holds, fallback string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !registry.ValidEnvName(answer) {
+	if !envx.ValidName(answer) {
 		// The answer is never echoed: a user who pastes a token here must not see it logged back.
 		refusal := field + " must be an environment variable name"
 		if fallback != "" {
 			refusal += " like " + fallback
 		}
-		return "", internalerror.NewBadRequestError(refusal+": "+registry.EnvNameRule, nil)
+		return "", internalerror.NewBadRequestError(refusal+": "+envx.NameRule, nil)
 	}
 	return answer, nil
 }
