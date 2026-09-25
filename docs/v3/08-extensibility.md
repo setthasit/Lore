@@ -107,7 +107,7 @@ unchanged over a pipe for an out-of-process plugin.
 ```go
 package lore // github.com/setthasit/Lore/sdk
 
-const APIVersion = 1
+const APIVersion = 2
 
 // ---- data contract -------------------------------------------------------
 
@@ -234,12 +234,13 @@ type Field struct {
     Prompt   string    // question `lore source add` asks
 }
 
+// Secret is a credential in the operator's `with:` key named Key; the host
+// resolves its value, literal or `${env:VAR}`, and injects it under Key.
 type Secret struct {
-    Key         string // "token" — how the plugin asks for it
-    ConfigField string // "token_env" — the config key naming the env var
-    Optional    bool   // the host skips it when nothing names its variable
-    DefaultEnv  string // "LORE_GITHUB_TOKEN"
-    Doc         string
+    Key        string // "token" — the `with:` key and the injected key
+    Optional   bool   // the host skips it when nothing supplies a value
+    DefaultEnv string // "LORE_GITHUB_TOKEN" — read when the field is absent; compiled-in plugins only
+    Doc        string
 }
 ```
 
@@ -293,14 +294,15 @@ func (c SourceConfig) Secret(key string) string              // declared secrets
 func (c SourceConfig) DocID(t DocType, external string) DocID
 ```
 
-A plugin has no reason to read the environment. The host resolves the env var
-named by each secret's `ConfigField` and injects the value, which is what makes
-a per-plugin secret allowlist possible and what keeps one plugin from reading
-another's token. For an out-of-process plugin the discipline is also enforced:
-`minimalEnv` (`internal/plugexec/env.go`) hands the subprocess an empty
-environment, and on Windows only the variables the loader and runtime need. A
-plugin compiled into this binary shares the host process, so there the rule is
-a contract the author keeps.
+A plugin has no reason to read the environment. The host resolves each
+secret's `with:` field, a literal or `${env:VAR}`, falls back to `DefaultEnv`
+when the field is absent and the plugin is compiled in, and injects the value
+under `Key`. That is what makes a per-plugin secret allowlist possible and what
+keeps one plugin from reading another's token. For an out-of-process plugin
+the discipline is also enforced: `minimalEnv` (`internal/plugexec/env.go`)
+hands the subprocess an empty environment, and on Windows only the variables
+the loader and runtime need. A plugin compiled into this binary shares the
+host process, so there the rule is a contract the author keeps.
 
 An official plugin in full:
 
@@ -320,9 +322,9 @@ func (plugin) Manifest() lore.Manifest {
              Doc: "Project keys such as PROJ. An empty list syncs every project the credentials can browse."},
         },
         Secrets: []lore.Secret{
-            {Key: "email", ConfigField: "email_env", DefaultEnv: "LORE_JIRA_EMAIL",
+            {Key: "email", DefaultEnv: "LORE_JIRA_EMAIL",
              Doc: "Atlassian account email the API token belongs to; Jira Cloud authenticates the pair, not the token alone."},
-            {Key: "token", ConfigField: "token_env", DefaultEnv: "LORE_JIRA_TOKEN",
+            {Key: "token", DefaultEnv: "LORE_JIRA_TOKEN",
              Doc: "Atlassian API token for that account."},
         },
     }
@@ -414,24 +416,25 @@ plugins:                                    # OPTIONAL — external plugins; see
 sources:                                    # instances, in sync order
   - use: github                             # id defaults to "github"
     with:
-      token_env: LORE_GITHUB_TOKEN
+      token: ${env:LORE_GITHUB_TOKEN}       # or the credential itself, as a literal
       repos: [acme/app]
-  - id: jira-acme
-    use: jira
+  - id: jira-acme                           # no email or token: falls back to
+    use: jira                               # LORE_JIRA_EMAIL and LORE_JIRA_TOKEN
     with: { base_url: https://acme.atlassian.net, projects: [PROJ] }
   - id: jira-legacy
     use: jira
-    with: { base_url: https://legacy.atlassian.net, projects: [OLD] }
+    with: { base_url: https://legacy.atlassian.net, projects: [OLD],
+            token: "${env:LORE_JIRA_LEGACY_TOKEN}" }
   - id: linear
     use: linear                             # external plugin, identical syntax
-    with: { team: PLATFORM, token_env: LORE_LINEAR_TOKEN }
+    with: { team: PLATFORM, token: "${env:LORE_LINEAR_TOKEN}" }
 
 providers:                                  # OPTIONAL — an undeclared provider id
   - id: openrouter                          # that names a registered plugin is
     use: openai-compatible                  # built with that plugin's defaults
     with:
       base_url: https://openrouter.ai/api
-      api_key_env: LORE_OPENROUTER_KEY
+      api_key: ${env:LORE_OPENROUTER_KEY}
 
 embedder: { provider: openai,     model: text-embedding-3-small }
 llm:      { provider: openrouter, model: moonshotai/kimi-k2 }
@@ -443,14 +446,16 @@ repos:                                      # OPTIONAL — local clones
 ```
 
 Loading is two-stage. The core skeleton decodes strictly. Each `with:` block is
-captured raw, re-encoded as JSON, checked against the plugin's `Fields` and
-`Secrets`, and handed to the plugin, which decodes it strictly itself. The
-generic check produces messages of the same quality the hand-written validators
-produced:
+captured raw, expanded, checked against the plugin's `Fields` and `Secrets`,
+re-encoded as JSON without its secrets, and handed to the plugin, which decodes
+it strictly itself; [06](06-interfaces-and-config.md#environment-expansion)
+says where `${env:VAR}` expands. The generic check produces messages of the
+same quality the hand-written validators produced:
 
 ```
-sources[jira-acme].with.token_env names LORE_JIRA_TOKEN, but that environment
-variable is not set or is blank
+sources[jira-acme].with.token is not set, and its default variable
+LORE_JIRA_TOKEN is not set or is blank; export LORE_JIRA_TOKEN, or set the
+field, as a value or as `${env:VAR}`
 ```
 
 Resolution order for every `use:` is compiled registry, then `plugins:`
@@ -496,7 +501,7 @@ OpenAI-compatible vendor is a configuration change with no new code:
 providers:
   - id: kimi
     use: openai-compatible
-    with: { base_url: https://api.moonshot.ai, api_key_env: LORE_MOONSHOT_KEY }
+    with: { base_url: https://api.moonshot.ai, api_key: "${env:LORE_MOONSHOT_KEY}" }
 ```
 
 Model-to-dimensions knowledge belongs to the driver that knows it, never to the

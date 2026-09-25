@@ -18,6 +18,12 @@ an unimplementable contract, and a published protocol turns that class of fix
 into an ecosystem break. The additive rule is what makes the "ignore unknown
 fields" requirement below safe in both directions.
 
+Version 2 broke that rule on purpose. It removed the separate config-key name
+from each manifest `secrets` entry, because a secret's `key` now names the
+`with:` field that holds the credential. The `api_version` check refuses a
+version 1 plugin at the handshake and at registration, so the host never
+misreads its secrets.
+
 ## Transport
 
 The host spawns the plugin binary as a child process: requests go to its
@@ -44,12 +50,12 @@ multi-line objects, which are pretty-printed for readability.
 ## Envelope
 
 ```json
-{ "v": 1, "id": "7f3a", "op": "changes" }
-{ "v": 1, "id": "7f3a", "ok": true }
-{ "v": 1, "id": "7f3a", "error": { "message": "…", "retryable": false, "kind": "auth" } }
+{ "v": 2, "id": "7f3a", "op": "changes" }
+{ "v": 2, "id": "7f3a", "ok": true }
+{ "v": 2, "id": "7f3a", "error": { "message": "…", "retryable": false, "kind": "auth" } }
 ```
 
-- `v` is the protocol version, equal to `lore.APIVersion` (1); a plugin
+- `v` is the protocol version, equal to `lore.APIVersion` (2); a plugin
   receiving a `v` it does not implement MUST answer with an error naming both
   numbers, never guess.
 - `id` is host-generated and opaque; the plugin echoes it **verbatim** on every
@@ -58,8 +64,8 @@ multi-line objects, which are pretty-printed for readability.
   concurrency is the host's job and it gets it by running more processes, so a
   plugin needs no scheduler. The next request follows `ok`, `error`, or `done`.
 - Unknown response fields are ignored by the host, unknown request fields MUST
-  be ignored by the plugin; evolution is additive only, which is what makes
-  ignoring safe both ways.
+  be ignored by the plugin; evolution is additive only (see [Status](#status)),
+  which is what makes ignoring safe both ways.
 
 ## Operations
 
@@ -85,28 +91,31 @@ The first request on every process; the host validates config against `fields`
 and resolves `secrets` before any other op.
 
 ```json
-{ "v": 1, "id": "1", "op": "manifest" }
+{ "v": 2, "id": "1", "op": "manifest" }
 ```
 
 ```json
 {
-  "v": 1, "id": "1", "ok": true,
+  "v": 2, "id": "1", "ok": true,
   "manifest": {
-    "name": "linear", "kind": "source", "api_version": 1,
+    "name": "linear", "kind": "source", "api_version": 2,
     "summary": "Linear issues and comments; created_at is the issue createdAt",
     "capabilities": { "embed": false, "complete": false, "repo_remotes": false },
     "fields": [
       { "name": "teams", "type": "string_list", "required": true },
       { "name": "base_url", "type": "string", "required": false }
     ],
-    "secrets": [{ "key": "api_key", "config_field": "token_env", "default_env": "LORE_LINEAR_TOKEN" }]
+    "secrets": [{ "key": "token", "default_env": "LORE_LINEAR_TOKEN" }]
   }
 }
 ```
 
+`secrets` lists the `with:` keys that hold a credential; [Secrets](#secrets)
+says how the host resolves and delivers them.
+
 The host MUST reject a manifest whose `api_version` differs from its own with a
-message naming **both** numbers (`plugin "linear" speaks api_version 2, host
-speaks 1`), never a generic mismatch error. It refuses at the handshake itself
+message naming **both** numbers (`plugin "linear" speaks api_version 3, host
+speaks 2`), never a generic mismatch error. It refuses at the handshake itself
 (`internal/plugexec/session.go`, `handshake`, which every session runs before
 its operation), and again at registration whichever way the plugin was
 registered (`internal/registry/registry.go`, `CheckManifest`, reached through
@@ -125,9 +134,9 @@ Streams documents modified since `cursor`, oldest-first: zero or more `batch`
 frames, then exactly one `done`. An empty `cursor` object means full backfill.
 
 ```json
-{ "v": 1, "id": "2", "op": "changes", "instance": "linear-core", "config": { "teams": ["CORE", "PLAT"] }, "secrets": { "api_key": "lin_api_…" }, "cursor": { "updated_after": "2026-08-31T09:12:44Z", "last_id": "ENG-4471" } }
-{ "v": 1, "id": "2", "batch": { "docs": [], "cursor": { "updated_after": "2026-09-01T00:00:00Z" } } }
-{ "v": 1, "id": "2", "done": true }
+{ "v": 2, "id": "2", "op": "changes", "instance": "linear-core", "config": { "teams": ["CORE", "PLAT"] }, "secrets": { "token": "lin_api_…" }, "cursor": { "updated_after": "2026-08-31T09:12:44Z", "last_id": "ENG-4471" } }
+{ "v": 2, "id": "2", "batch": { "docs": [], "cursor": { "updated_after": "2026-09-01T00:00:00Z" } } }
+{ "v": 2, "id": "2", "done": true }
 ```
 
 Every `batch` frame MUST carry a non-empty `cursor`, including one whose `docs`
@@ -149,8 +158,8 @@ host asks it once per registered local clone at startup, to decide whether the
 clone's `remote:` names something this instance ingests.
 
 ```json
-{ "v": 1, "id": "8", "op": "matches_remote", "instance": "github", "config": { "repos": ["acme/app"] }, "secrets": {}, "remote": "github:ACME/App" }
-{ "v": 1, "id": "8", "ok": true, "matches": true }
+{ "v": 2, "id": "8", "op": "matches_remote", "instance": "github", "config": { "repos": ["acme/app"] }, "secrets": {}, "remote": "github:ACME/App" }
+{ "v": 2, "id": "8", "ok": true, "matches": true }
 ```
 
 It is an operation rather than a comparison the host performs itself, because
@@ -166,8 +175,8 @@ workspace fails to start.
 ### embed
 
 ```json
-{ "v": 1, "id": "3", "op": "embed", "config": { "base_url": "http://127.0.0.1:11434" }, "secrets": {}, "model": "nomic-embed-text", "texts": ["why option B over A", "rollback plan"] }
-{ "v": 1, "id": "3", "ok": true, "vectors": [[0.0131, -0.0442], [-0.0087, 0.0210]], "dimensions": 768 }
+{ "v": 2, "id": "3", "op": "embed", "config": { "base_url": "http://127.0.0.1:11434" }, "secrets": {}, "model": "nomic-embed-text", "texts": ["why option B over A", "rollback plan"] }
+{ "v": 2, "id": "3", "ok": true, "vectors": [[0.0131, -0.0442], [-0.0087, 0.0210]], "dimensions": 768 }
 ```
 
 `vectors` MUST be positionally aligned with `texts` and of equal length; a
@@ -183,8 +192,8 @@ can claim another's identity ([08](08-extensibility.md)).
 ### complete
 
 ```json
-{ "v": 1, "id": "4", "op": "complete", "config": {}, "secrets": { "api_key": "sk-…" }, "model": "claude-sonnet-4", "system": "Answer only from the evidence.", "user": "Why did we pick B over A?" }
-{ "v": 1, "id": "4", "ok": true, "text": "B was chosen because …" }
+{ "v": 2, "id": "4", "op": "complete", "config": {}, "secrets": { "api_key": "sk-…" }, "model": "claude-sonnet-4", "system": "Answer only from the evidence.", "user": "Why did we pick B over A?" }
+{ "v": 2, "id": "4", "ok": true, "text": "B was chosen because …" }
 ```
 
 Empty or whitespace-only `text` is an **error**, not a success: an empty
@@ -193,12 +202,12 @@ completion is indistinguishable from a dropped request, reported as `internal`.
 ### blame, log and has_file
 
 ```json
-{ "v": 1, "id": "5", "op": "blame", "path": "/w/api/internal/auth/auth.go", "start_line": 40, "end_line": 42 }
-{ "v": 1, "id": "5", "ok": true, "spans": [{ "sha": "9c1f0ab3e5d4", "line_start": 40, "line_end": 42, "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "lines": ["if !tok.Valid() {", "\treturn errUnauthorized", "}"] }] }
-{ "v": 1, "id": "6", "op": "log", "path": "/w/api/internal/auth/auth.go" }
-{ "v": 1, "id": "6", "ok": true, "commits": [{ "sha": "9c1f0ab3e5d4", "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "subject": "reject expired tokens" }] }
-{ "v": 1, "id": "7", "op": "has_file", "path": "/w/api/internal/auth/auth.go" }
-{ "v": 1, "id": "7", "ok": true, "present": true }
+{ "v": 2, "id": "5", "op": "blame", "path": "/w/api/internal/auth/auth.go", "start_line": 40, "end_line": 42 }
+{ "v": 2, "id": "5", "ok": true, "spans": [{ "sha": "9c1f0ab3e5d4", "line_start": 40, "line_end": 42, "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "lines": ["if !tok.Valid() {", "\treturn errUnauthorized", "}"] }] }
+{ "v": 2, "id": "6", "op": "log", "path": "/w/api/internal/auth/auth.go" }
+{ "v": 2, "id": "6", "ok": true, "commits": [{ "sha": "9c1f0ab3e5d4", "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "subject": "reject expired tokens" }] }
+{ "v": 2, "id": "7", "op": "has_file", "path": "/w/api/internal/auth/auth.go" }
+{ "v": 2, "id": "7", "ok": true, "present": true }
 ```
 
 Spans come in span order, `lines` holds one entry per line in the span, and
@@ -222,8 +231,8 @@ are all `"present": false`, not errors.
 ### shutdown
 
 ```json
-{ "v": 1, "id": "7", "op": "shutdown" }
-{ "v": 1, "id": "7", "ok": true }
+{ "v": 2, "id": "7", "op": "shutdown" }
+{ "v": 2, "id": "7", "ok": true }
 ```
 
 The plugin answers, flushes stdout, and exits `0`; it MUST NOT start new work.
@@ -297,7 +306,7 @@ Field names are snake_case, one-to-one with the entity fields: `Document` →
 ## Errors
 
 ```json
-{ "v": 1, "id": "2", "error": { "message": "token lacks read:issues", "retryable": false, "kind": "auth" } }
+{ "v": 2, "id": "2", "error": { "message": "token lacks read:issues", "retryable": false, "kind": "auth" } }
 ```
 
 | `kind` | What the plugin is reporting |
@@ -365,11 +374,14 @@ stalled instance, which is why exiting on EOF is a MUST rather than a courtesy.
 
 Secrets travel **inside the request payload on stdin**: never argv, which is
 world-readable in `ps`, and never the inherited environment, so a plugin sees
-only what its manifest declared. The host resolves the env var names given in
-`lore.yaml` and delivers values keyed by the manifest's secret keys
-(`{"api_key": "…"}`), so a plugin's key names are its own, independent of the
-operator's variable naming. A plugin MUST NOT read `os.Getenv` or any
-equivalent; needing an undeclared value means it is misconfigured.
+only what its manifest declared. The host resolves each secret from its
+`with:` field in `lore.yaml`, a literal or `${env:VAR}`, and delivers values
+keyed by the manifest's secret keys (`{"api_key": "…"}`), so a plugin never
+learns which variable, if any, the operator chose. The host never reads an
+external plugin's `default_env`, because it would steer the host onto a
+variable the operator never granted, so the operator's `with:` block holds
+every required secret. A plugin MUST NOT read `os.Getenv` or any equivalent;
+needing an undeclared value means it is misconfigured.
 
 The discipline is enforced rather than requested: the host starts the child
 with an empty environment instead of an inherited one, so one plugin cannot

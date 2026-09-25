@@ -93,10 +93,12 @@ covered by any of them.
   commit → PR → review → issue chains.
 - Be useful from an AI agent (MCP), a terminal (CLI), and programmatically
   (gRPC, future web UI).
-- Local-first: the index is a single SQLite file, and a credential is read from
-  the local environment by name and handed only to the plugin whose manifest
-  declared it (`internal/registry/secrets.go`, `resolveSecrets`). Each
-  credential does reach the API it authenticates, so a Jira token goes to Jira,
+- Local-first: the index is a single SQLite file, and a credential is written
+  in `lore.yaml` as a literal or read from the environment through
+  `${env:VAR}`, or, for a compiled-in plugin whose field is omitted, from its
+  default variable, then handed only to the plugin whose manifest declared it
+  (`internal/registry/secrets.go`, `resolveSecrets`). Each credential does
+  reach the API it authenticates, so a Jira token goes to Jira,
   and with a hosted embedder the chunk text being indexed goes to that vendor
   too. Binding `embedder:` to Ollama keeps even that on the machine. The engine
   sends nothing anywhere else, having no service of its own, but an installed

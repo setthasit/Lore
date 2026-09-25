@@ -49,13 +49,15 @@ Contract rules:
   Notion's `/v1/search` and GitHub's GraphQL query endpoint), and for a
   third-party plugin read-only is a promise. The trust paragraph under
   [Plugins](#plugins) says what backs it.
-- Credentials are named in config as environment variable names, resolved by
-  the host, and injected. A connector receives only the secrets its manifest
-  declared. For an external connector the host also withholds its own
-  environment, handing the subprocess an empty one and, on Windows, the
-  variables the loader and runtime need (`internal/plugexec/env.go`,
-  `minimalEnv`). A connector compiled into this binary shares the host process,
-  so there not reading the environment is a rule the connector keeps.
+- Credentials sit in the instance's `with:` block under each secret's own key,
+  as a literal or as `${env:VAR}`, and the host resolves and injects them
+  ([06](06-interfaces-and-config.md#security-posture)). A connector receives
+  only the secrets its manifest declared. For an external connector the host
+  also withholds its own environment, handing the subprocess an empty one and,
+  on Windows, the variables the loader and runtime need
+  (`internal/plugexec/env.go`, `minimalEnv`). A connector compiled into this
+  binary shares the host process, so there not reading the environment is a
+  rule the connector keeps.
 - Both timestamps populated: `CreatedAt` (event time) and `UpdatedAt`
   (edit time / watermark). A source without true creation time sets
   `CreatedAt = UpdatedAt` and says so in its manifest summary.
@@ -73,7 +75,8 @@ Contract rules:
 
 ### GitHubConnector (v1)
 
-- Auth: PAT (`LORE_GITHUB_TOKEN`); public and private repos.
+- Auth: PAT in `with.token`, falling back to `LORE_GITHUB_TOKEN` when the
+  field is absent; public and private repos.
 - Ingest scope: the instance's own `with.repos`, a required string list
   (`plugins/sources/github/plugin.go`, `Manifest`). It is independent of local
   clones, so a workspace can index GitHub PRs and issues with no repository on
@@ -90,9 +93,10 @@ Contract rules:
 
 ### GitLabConnector
 
-- Auth: personal or project access token with `read_api` (`LORE_GITLAB_TOKEN`),
-  sent as the `PRIVATE-TOKEN` header; `base_url` is optional and defaults to
-  `https://gitlab.com`, so a self-managed instance only passes its root.
+- Auth: personal or project access token with `read_api` in `with.token`
+  (fallback `LORE_GITLAB_TOKEN`), sent as the `PRIVATE-TOKEN` header;
+  `base_url` is optional and defaults to `https://gitlab.com`, so a
+  self-managed instance only passes its root.
 - Ingest scope: the instance's own `with.projects`, a required list of
   namespaced paths such as `group/project` or `group/subgroup/project`
   (`plugins/sources/gitlab/plugin.go`, `Manifest`).
@@ -116,10 +120,10 @@ Contract rules:
 
 ### NotionConnector (v1)
 
-- Auth: integration token (`LORE_NOTION_TOKEN`). `with.root_pages` scopes the
-  sync to the named pages and their descendants, and an empty list syncs every
-  page shared with the integration (`plugins/sources/notion/plugin.go`,
-  `Manifest`).
+- Auth: integration token in `with.token` (fallback `LORE_NOTION_TOKEN`).
+  `with.root_pages` scopes the sync to the named pages and their descendants,
+  and an empty list syncs every page shared with the integration
+  (`plugins/sources/notion/plugin.go`, `Manifest`).
 - Ingests pages + their block content flattened to markdown-ish text.
 - `CreatedAt` = Notion `created_time`; cursor: `last_edited_time` search
   watermark.
@@ -130,8 +134,9 @@ Contract rules:
 
 - Target: Jira **Cloud** (Data Center is post-v1; same package, second auth
   mode).
-- Auth: email + API token (`LORE_JIRA_EMAIL`, `LORE_JIRA_TOKEN`), basic auth;
-  `base_url` per site (`https://<org>.atlassian.net`).
+- Auth: email + API token in `with.email` and `with.token` (fallbacks
+  `LORE_JIRA_EMAIL`, `LORE_JIRA_TOKEN`), basic auth; `base_url` per site
+  (`https://<org>.atlassian.net`).
 - Endpoint: the **new** `/rest/api/3/search/jql` (the legacy `/rest/api/3/search`
   is deprecated) with `nextPageToken` pagination.
 - Cursor: a JQL watermark built by `Connector.jql`

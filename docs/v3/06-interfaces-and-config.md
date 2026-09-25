@@ -130,6 +130,13 @@ anchoring. Sources and repos may each be empty (but not both). Every `use:`
 names a plugin — official, third-party-compiled, or external
 ([08](08-extensibility.md)).
 
+`lore-system-design.drawio` still shows the earlier secret contract, in which
+a config key named an environment variable instead of holding the credential,
+and needs a manual redraw on six pages: 1 ("env vars only"), 8 ("secrets only
+via env vars" and its YAML example), 6 and 11 (a secret read "from the
+variable the operator's `with:` entry names"), 9 ("env-only secrets") and 10
+(frames at protocol version 1).
+
 ```yaml
 workspace: myproject
 index_path: ~/.lore/myproject.db           # default: ~/.lore/<workspace>.db
@@ -141,36 +148,35 @@ plugins:                                    # OPTIONAL — external plugins; see
 sources:                                    # ALL optional — instances, in sync order
   - use: github                             # id defaults to the plugin name
     with:
-      token_env: LORE_GITHUB_TOKEN          # env var NAME; value never stored
+      token: ${env:LORE_GITHUB_TOKEN}       # the credential itself, or ${env:VAR} to keep it out of the file
       repos:                                # what to INGEST (no clone needed)
         - acme/myproject
         - acme/myproject-infra
-  - use: notion
+  - use: notion                             # no token: falls back to LORE_NOTION_TOKEN
     with:
-      token_env: LORE_NOTION_TOKEN
       root_pages: ["Engineering Wiki"]      # subtree scoping
   - id: jira-acme                           # explicit id: two instances of one plugin
     use: jira
     with:
       base_url: https://acme.atlassian.net
-      email_env: LORE_JIRA_EMAIL
-      token_env: LORE_JIRA_TOKEN
+      email: ${env:LORE_JIRA_EMAIL}
+      token: ${env:LORE_JIRA_TOKEN}
       projects: [PROJ, INFRA]
   - id: jira-legacy
     use: jira
     with:
       base_url: https://legacy.atlassian.net
-      email_env: LORE_JIRA_EMAIL
-      token_env: LORE_JIRA_LEGACY_TOKEN
+      email: ${env:LORE_JIRA_EMAIL}
+      token: ${env:LORE_JIRA_LEGACY_TOKEN}
       projects: [OLD]
   - use: gitlab
     with:
       base_url: https://gitlab.com          # OPTIONAL — self-managed instances pass their root
-      token_env: LORE_GITLAB_TOKEN
+      token: ${env:LORE_GITLAB_TOKEN}
       projects: [acme/myproject]            # merge requests map onto `pr`
   - id: linear
     use: linear                             # external plugin, identical syntax
-    with: { team: PLATFORM, token_env: LORE_LINEAR_TOKEN }
+    with: { team: PLATFORM, token: "${env:LORE_LINEAR_TOKEN}" }  # quoted: {} are flow syntax
 
 repos: []                                   # OPTIONAL — local clones, blame/log only.
 # repos:                                    # Zero repos = ask-only workspace;
@@ -188,7 +194,7 @@ providers:                                  # OPTIONAL — a provider id that na
     use: openai-compatible                  # may be referenced without declaring it
     with:
       base_url: https://openrouter.ai/api
-      api_key_env: LORE_OPENROUTER_KEY
+      api_key: ${env:LORE_OPENROUTER_KEY}
 
 embedder:                                   # role binding: provider instance + model
   provider: openai
@@ -228,19 +234,22 @@ plugin itself. Validation at load:
 - Required manifest fields present, and a required list field declared as an
   empty list refuses: an empty list selects nothing, so the instance would
   ingest nothing (`internal/registry/with.go`, `checkType`).
-- A secret the manifest does not mark optional needs a named variable that
-  holds a value. An optional secret is skipped when nothing names its variable,
-  and, for a plugin compiled into this binary, when the only name came from the
-  plugin's default and that variable is unset. Once a `with:` entry names the
-  variable, that variable must be set
-  (`sdk/plugin.go`, `Secret.Optional`, and `internal/registry/secrets.go`,
+- A secret lives under its own key in `with:`, the manifest's `Secret.Key`
+  (`token`, `email`, `api_key`), and that field holds the credential: a
+  literal, or `${env:VAR}`. A field that is present must resolve to non-blank
+  text, and a refusal names the field, plus the variable when it expanded one.
+  When the field is absent, a plugin compiled into this binary falls back to
+  the secret's `DefaultEnv`, and an unset or blank default stops the load,
+  naming the field and that variable. An optional secret is skipped instead
+  (`sdk/plugin.go`, `Secret`, and `internal/registry/secrets.go`,
   `resolveSecrets`).
-- A plugin's declared default variable applies only to a plugin compiled into
-  this binary. For a plugin installed from outside the binary the declared
-  default is never used, because it would steer the host onto a variable the
-  operator never granted, so a required secret needs that plugin's `with:`
-  block to name the variable itself (`internal/registry/secrets.go`,
-  `resolveSecrets`).
+- A plugin installed from outside the binary gets no fallback. Its declared
+  default would steer the host onto a variable the operator never granted, so
+  its `with:` block holds every required secret itself
+  (`internal/registry/secrets.go`, `resolveSecrets`).
+- A secret never reaches the plugin's configuration JSON, which is built from
+  the declared fields alone; its value travels only in the secrets map
+  (`internal/registry/with.go`, `configJSON`).
 - At least one of `sources` / `repos` non-empty
   (`internal/config/validate.go`, `Config.Validate`).
 - `embedder.provider` and `llm.provider` resolve to provider instances whose
@@ -288,9 +297,15 @@ underscores and does not start with a digit, and one value may hold several:
 - Every string field the skeleton decodes is expanded, and a refusal names it
   with its index, as `repos[2].path` (`internal/config/expand.go`,
   `Config.stringFields` and `instanceFields`). Durations and whole numbers
-  parse during decoding and are not expanded. Nothing inside a `with:` block
-  is expanded: a plugin's own settings are the registry's to expand, and it
-  expands none.
+  parse during decoding and are not expanded.
+- A `with:` block stays raw through the load, and the registry expands it
+  when it prepares the instance (`internal/registry/expand.go`,
+  `expandWith`). For a plugin compiled into this binary every string expands,
+  inside lists and maps too. A plugin installed from outside the binary
+  expands only in its declared secret fields, whose values the host resolves
+  and injects anyway. An expansion in any other field of such a plugin is
+  refused, naming the field and the plugin, so the environment reaches a third
+  party's settings only where its manifest asked for a credential.
 - Because `plugins[].name` and every `use:` expand, the environment may
   choose which plugin a declaration runs. That is by design; the expanded
   name still resolves as any `use:` does (`internal/registry/build.go`,
@@ -323,15 +338,22 @@ name (`internal/plugindist/workspace.go`, `Workspace.onDisk` and
   are the control that holds: GitHub fine-grained PAT read scopes, GitLab
   token with `read_api`, Notion integration scoped to subtree, Jira API token
   with read-only project access.
-- Secrets only via env vars, never written to `lore.yaml` or the index. Config
-  names the variables and nothing else carries a credential, and a refusal
-  names the variable rather than the value behind it
+- A secret field holds its credential. Written as `${env:VAR}`, the value
+  stays out of `lore.yaml`. A literal is allowed, and startup announces it
+  once on stderr, naming the fields and never the value: `lore: secrets
+  written as literal values in the config: sources[github].with.token; write
+  ${env:VAR} to keep a credential out of the file` (`internal/secrets`,
+  `Sink.Notices`, printed by `internal/transport/cli/runtime.go`,
+  `noticeLedger.print`). No credential is written to the index. Every
+  resolved value, literal, expanded or read from a default variable, is
+  scrubbed from output as below, and a refusal names the field, and the
+  variable when there is one, never the value
   (`internal/registry/secrets.go`, `resolveSecrets`). An external plugin's own
   diagnostics are redacted as they cross the pipe (`sdk/stdio`, `redacting`),
   and a plugin compiled into this binary logs through the host's diagnostic
   logger (`internal/registry/build.go`, `Registry.Host`), which the host
   scrubs as below.
-- The host resolves each named variable and injects the value, so a plugin
+- The host resolves each secret and injects the value, so a plugin
   receives only the secrets its manifest declared. For an external plugin the
   host also withholds its own environment, handing the subprocess an empty one
   and, on Windows, the variables the loader and runtime need
@@ -354,11 +376,12 @@ name (`internal/plugindist/workspace.go`, `Workspace.onDisk` and
   MCP-over-HTTP response bodies (`internal/transport/mcp/http.go`,
   `scrubResponses`) and its gRPC response strings and status messages
   (`internal/transport/grpc/scrub.go`).
-- The scrub misses a value shorter than 8 characters; its variable and field
-  are named in one stderr line at startup instead (`lore: secrets shorter than
-  8 characters are not scrubbed: ...`). An encoding nested deeper than three
-  levels passes. Each write is scrubbed on its own, so a value split across two
-  writes passes intact (`internal/secrets/writer.go`). A multi-line value
+- The scrub misses a value shorter than 8 characters; its field, or for a
+  default its variable and instance, is named in one stderr line at startup
+  instead (`lore: secrets shorter than 8 characters are not scrubbed: ...`).
+  An encoding nested deeper than three levels passes. Each write is scrubbed
+  on its own, so a value split across two writes passes intact
+  (`internal/secrets/writer.go`). A multi-line value
   inside an excerpt the CLI indents passes too, since the indent breaks the
   recorded form. HTTP response headers and gRPC metadata are not scrubbed;
   none carries plugin text today.

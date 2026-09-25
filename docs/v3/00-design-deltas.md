@@ -47,7 +47,8 @@ stays, as one anchor type among several.
 Δ17 is superseded by Δ18–Δ24: the seam it protected is now the shipped
 contract, and the transport it deferred is specified in
 [09](09-plugin-protocol.md), which shipped with external plugins and is now
-frozen — it evolves additively from here.
+frozen — it evolves additively from here, with the one version 2 exception
+[09](09-plugin-protocol.md#status) records.
 
 ## Unchanged (deliberately)
 
@@ -55,7 +56,7 @@ frozen — it evolves additively from here.
 - D1: MCP returns evidence, not prose; zero LLM key server-side.
 - Synthesis as an optional final step for non-AI surfaces.
 - Single SQLite file per workspace; RRF fusion in Go; store portability rules.
-- Lease-lock sync (heartbeat + TTL takeover); read-only connectors; env-only secrets.
+- Lease-lock sync (heartbeat + TTL takeover); read-only connectors; secrets resolved by the host, never read by a plugin.
 - `Gaps` honesty invariant — extended to every query tool rather than weakened.
 
 ## Corrections to this set
