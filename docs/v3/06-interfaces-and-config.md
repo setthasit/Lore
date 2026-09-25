@@ -271,6 +271,48 @@ identity is known without the daemon — and rejected for `openai`, where the
 model implies it. Which of the two applies is the driver's rule, not the
 engine's.
 
+### Environment expansion
+
+A string value may take text from the environment. `${env:VAR}` is the only
+accepted form, where VAR is made of upper-case letters, digits and
+underscores and does not start with a digit, and one value may hold several:
+`http_addr: ${env:LORE_HOST}:${env:LORE_HTTP_PORT}`. `$${` writes a literal
+`${` and reads no variable; `$$` is an escape only directly before `{`, so
+`pa$$word` stays as typed (`internal/envx`, `Expand`).
+
+- A variable that is set but empty expands to empty text. An unset one stops
+  the load, naming the field and the variable. Any other `${`, `${VAR}` and
+  `${env:VAR:-default}` included, is refused, naming the field and the
+  accepted form. No refusal quotes the field's text beyond the variable name,
+  or any expanded value (`internal/envx`, `expandOne`).
+- Every string field the skeleton decodes is expanded, and a refusal names it
+  with its index, as `repos[2].path` (`internal/config/expand.go`,
+  `Config.stringFields` and `instanceFields`). Durations and whole numbers
+  parse during decoding and are not expanded. Nothing inside a `with:` block
+  is expanded: a plugin's own settings are the registry's to expand, and it
+  expands none.
+- Because `plugins[].name` and every `use:` expand, the environment may
+  choose which plugin a declaration runs. That is by design; the expanded
+  name still resolves as any `use:` does (`internal/registry/build.go`,
+  `Registry.resolve`).
+
+`Config.expand` applies the `internal/envx` scanner in `Load` after strict
+decoding and before defaults, so expansion runs before `~` expansion:
+`index_path: ${env:LORE_INDEX}` with `LORE_INDEX=~/db/x.db` still resolves
+under `$HOME`. It walks named struct fields because `yaml.v3`'s `Node.Decode`
+ignores `KnownFields`.
+
+`config.ReadFile` and `config.Decode` never expand, so the commands that edit
+`lore.yaml` as text splice the file as written. The `lore plugin` commands
+expand, through `Config.ExpandPluginRefs` into a `config.PluginRefs` copy,
+only `plugins[]` and the `id`, `use` and `path` fields that name a plugin or
+its users, so an unset variable in `workspace` does not stop them. They never
+write an expanded value back: an update, or an install that resolves
+`@latest`, that would pin a `from:` written with `${env:VAR}` is refused,
+naming the field, and `lore plugin list` shows such a `from` by its field
+name (`internal/plugindist/workspace.go`, `Workspace.onDisk` and
+`Workspace.DeclaredFrom`).
+
 ## Security posture
 
 - Read-only against all external sources by contract, not by enforcement.
