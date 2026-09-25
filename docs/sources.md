@@ -58,6 +58,19 @@ Rules that hold for all four:
   `sources[<id>].with.token_env names LORE_<NAME>_TOKEN, but that environment variable is not set or is blank`
   — resolved against the plugin's declared secrets when the instance is built,
   before it issues a request (`internal/registry/build.go:517-550`).
+- **Any `lore.yaml` string outside a `with:` block may read `${env:VAR}`**
+  (`internal/config/expand.go:68-98`); `with:` values are never expanded, nor
+  are durations and whole numbers. `VAR` is upper-case letters, digits and
+  underscores, not starting with a digit (`internal/envx/envx.go:13-22`).
+  Several may share a value, as in
+  `remote: github:${env:GH_OWNER}/${env:REPO}`. `$${` writes a literal `${`, a
+  literal `$` directly before an expansion cannot be written, and any other
+  `${` is refused. A plugin name may come from the environment, and an expanded
+  `index_path` still expands a leading `~`. An unset variable stops startup:
+  `lore: index_path expands LORE_INDEX, but LORE_INDEX is not set` (exit 2)
+  (`internal/envx/envx.go:54-82`). `lore plugin` never writes an expanded value
+  back, and refuses a pin over a `from:` written with `${env:VAR}`
+  (`internal/plugindist/workspace.go:401-414`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
   silently ignored setting: `invalid configuration at ./lore.yaml: …` for a key
   the engine does not have (`internal/config/config.go:223-226`), and
