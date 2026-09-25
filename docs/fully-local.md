@@ -78,7 +78,7 @@ llm:
 #   - use: ollama
 #     with:
 #       base_url: http://127.0.0.1:11434  # this is the default
-# no api_key_env anywhere: the ollama plugin declares no secret, so Lore never reads a key for it
+# no api_key anywhere: the ollama plugin declares no secret, so Lore never reads a key for it
 ```
 
 `lore init` writes `llm:` commented out, so a fresh workspace has no synthesis until you
@@ -101,10 +101,10 @@ does not serve embed; it serves complete`. What this build ships:
 
 | Provider plugin | Serves | Credential | Endpoint |
 |---|---|---|---|
-| `openai` | embeddings, completions | `api_key_env`, defaulting to `OPENAI_API_KEY` | `https://api.openai.com` + `/v1/embeddings`, `/v1/chat/completions` |
-| `anthropic` | completions | `api_key_env`, defaulting to `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1/messages` |
+| `openai` | embeddings, completions | `api_key`; left out, it falls back to `OPENAI_API_KEY` | `https://api.openai.com` + `/v1/embeddings`, `/v1/chat/completions` |
+| `anthropic` | completions | `api_key`; left out, it falls back to `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1/messages` |
 | `ollama` | embeddings, completions | none — the daemon is unauthenticated | `http://127.0.0.1:11434` + `/api/embed`, `/api/chat` |
-| `openai-compatible` | embeddings, completions — per preset, see below | `api_key_env`, no default: every vendor names its own variable | the preset's base URL + its paths |
+| `openai-compatible` | embeddings, completions — per preset, see below | `api_key`, optional and with no fallback variable: set it per vendor | the preset's base URL + its paths |
 
 `zai` is no longer a provider name. Z.AI is one preset of the `openai-compatible` driver,
 alongside the vendors it also reaches:
@@ -131,7 +131,7 @@ providers:
     use: openai-compatible
     with:
       preset: zai
-      api_key_env: LORE_ZAI_KEY
+      api_key: ${env:LORE_ZAI_KEY}
 
 llm:
   provider: zai
@@ -282,9 +282,9 @@ lore ask "why did we pick sqlite?"
 If step 5 succeeds and step 6 fails, the embedder is fine and the problem is the `llm:`
 block. A workspace with no `llm:` block answers with:
 
-> synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — add one naming the provider, the model and the api_key_env that holds its key
+> synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — add one naming the provider and the model, and give that provider its api_key as a literal or as ${env:VAR}
 
-The `api_key_env` that remedy names is a key on the provider instance rather than on the
+The `api_key` that remedy names is a key on the provider instance rather than on the
 `llm:` block, and the `ollama` plugin declares no secret at all, so an Ollama synthesis
 block needs only a provider and a model.
 
@@ -296,4 +296,4 @@ or a transport error up to 4 attempts with jittered backoff.
 
 - [`sources.md`](sources.md) — what each connector ingests and the tokens it needs
 - [`quickstart-mcp.md`](quickstart-mcp.md) — wiring Lore into an MCP host, which needs no LLM
-- [`v3/06-interfaces-and-config.md#security-posture`](v3/06-interfaces-and-config.md#security-posture) — the full posture: read-only sources, env-only secrets, loopback/TLS rules
+- [`v3/06-interfaces-and-config.md#security-posture`](v3/06-interfaces-and-config.md#security-posture) — the full posture: read-only sources, secret handling, loopback/TLS rules

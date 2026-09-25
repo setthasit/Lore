@@ -34,8 +34,9 @@ Two properties of the tool that shape this walkthrough:
 
 - **Read-only toward every source.** Nothing in this repository writes to Jira or
   Notion. Seeding is a manual step you perform in your own sandbox, by hand.
-- **No secrets in configuration.** `lore.yaml` names environment *variables*; the
-  values live in your shell only.
+- **Credentials stay out of the file by choice.** A secret field in `lore.yaml` holds
+  the credential, and this walkthrough writes every one as `${env:VAR}`, so the values
+  live in your shell only.
 
 For a run with no third-party API at all — local embedder, local model — configure
 the workspace as in [`fully-local.md`](fully-local.md) and follow this walkthrough
@@ -98,15 +99,15 @@ sources:
   - use: jira
     with:
       base_url: https://acme-sandbox.atlassian.net
-      email_env: LORE_JIRA_EMAIL
-      token_env: LORE_JIRA_TOKEN
+      email: ${env:LORE_JIRA_EMAIL}
+      token: ${env:LORE_JIRA_TOKEN}
       projects:
         - INC
         - ARCH
         - OPS
   - use: notion
     with:
-      token_env: LORE_NOTION_TOKEN
+      token: ${env:LORE_NOTION_TOKEN}
       root_pages:
         - 1f2e3d4c5b6a47788990aabbccddeeff   # the "Engineering Decisions" page id
 
@@ -126,8 +127,8 @@ llm:
   model: claude-sonnet-4-5
 ```
 
-Then export the three variables it names, plus the two the provider manifests
-default to:
+Then export the three variables it expands, plus the two the provider manifests
+fall back to:
 
 ```bash
 export LORE_JIRA_EMAIL='lore-bot@example.invalid'      # the Jira account's e-mail
@@ -139,12 +140,15 @@ export ANTHROPIC_API_KEY='…'                           # only if you kept the 
 
 Notes worth knowing before the first run:
 
-- Every `*_env` key must name a variable that is **set** at load time, or the run
-  refuses with e.g. `sources[jira].with.token_env names LORE_JIRA_TOKEN, but that
-  environment variable is not set or is blank`.
-- `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are the *defaults* those two provider
-  manifests declare, used because neither role here names a `providers[]` instance
-  that overrides `api_key_env`. `embedder.dimensions` must **not** be set for
+- Every `${env:VAR}` must name a variable that is **set**, and not blank, at load
+  time, or the run refuses with e.g. `sources[jira].with.token expands
+  LORE_JIRA_TOKEN, but LORE_JIRA_TOKEN is not set`, or `… but it is blank`.
+- A secret field may hold a literal instead. The run proceeds and prints, once on
+  stderr, `lore: secrets written as literal values in the config:
+  sources[jira].with.token; write ${env:VAR} to keep a credential out of the file`.
+- `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are the variables those two provider
+  manifests fall back to, read because neither role here names a `providers[]`
+  instance that sets `api_key`. `embedder.dimensions` must **not** be set for
   `openai`; the model implies the width.
 - Unknown keys are rejected, so a typo in `lore.yaml` fails the load rather than
   being ignored.
@@ -160,10 +164,10 @@ lore source add notion
 ```
 
 Both prompt for the **name** of the variable holding each credential, never the
-credential, and finish with ``next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN,
-then run `lore sync` ``. Adding a plugin the file already has an instance of is not
-refused: it asks for an `id` first, because that id is the cursor key and the
-document-id prefix, and two instances may not share one.
+credential, write it as `${env:VAR}`, and finish with ``next: export LORE_JIRA_EMAIL
+and LORE_JIRA_TOKEN, then run `lore sync` ``. Adding a plugin the file already has
+an instance of is not refused: it asks for an `id` first, because that id is the
+cursor key and the document-id prefix, and two instances may not share one.
 
 ## 4. Sync
 
@@ -325,7 +329,8 @@ markdown link is rejected rather than printed.
 
 With no `llm:` block, this same command exits **3** with
 `lore: synthesis needs an LLM, and this workspace has no llm: block in lore.yaml
-— add one naming the provider, the model and the api_key_env that holds its key`.
+— add one naming the provider and the model, and give that provider its api_key as
+a literal or as ${env:VAR}`.
 `--raw` is the LLM-free path. `lore ask` has no `--explain` flag; prose is its
 default.
 

@@ -18,7 +18,7 @@ One toggle block, which holds the rest of the tree:
 ```
 
 Nothing else. This page carries no decision text; it exists to be the single
-`sources.notion.root_pages` entry that scopes the sync.
+`sources[notion].with.root_pages` entry that scopes the sync.
 
 ## Why the toggle
 
@@ -36,10 +36,11 @@ here means the demo exercises that walk instead of assuming a flat tree.
 
 ```yaml
 sources:
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - 1f2e3d4c5b6a47788990aabbccddeeff   # this page's id
+  - use: notion
+    with:
+      token: ${env:LORE_NOTION_TOKEN}
+      root_pages:
+        - 1f2e3d4c5b6a47788990aabbccddeeff   # this page's id
 ```
 
 An entry may be a page id — dashed or undashed, both are accepted — or an exact

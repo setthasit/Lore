@@ -67,7 +67,7 @@ is a single portable file and queries work offline after a sync.
 go install github.com/setthasit/Lore/cmd/lore@latest   # or: git clone … && make bin
 
 export OPENAI_API_KEY=...          # embeddings
-export LORE_GITHUB_TOKEN=...       # fine-grained, read-only PAT
+export LORE_GITHUB_TOKEN=...       # fine-grained, read-only PAT; lore.yaml expands it
 
 lore init                          # writes a commented lore.yaml scaffold
 lore source add jira               # optional: grow the workspace interactively
@@ -77,8 +77,8 @@ lore ask "why did we pick sqlite?" # prose answer; needs an llm: block
 ```
 
 `lore init` generates the scaffold from the manifests of the plugins this build
-registers — a starter source instance and the **names** of the environment variables
-its credentials live in, never a credential:
+registers — a starter source instance whose secret field holds an `${env:VAR}`
+expansion, so the credential stays in your shell:
 
 ```yaml
 workspace: acme
@@ -86,7 +86,7 @@ workspace: acme
 sources:
   - use: github
     with:
-      token_env: LORE_GITHUB_TOKEN         # read-only PAT for the listed repositories
+      token: ${env:LORE_GITHUB_TOKEN}      # read-only PAT for the listed repositories
       repos: []                            # each entry is "owner/name"; no clone needed
 
 repos: []                                  # local clones, for blame and history only
@@ -99,6 +99,13 @@ embedder:
 #   provider: openai
 #   model: gpt-4o-mini
 ```
+
+A secret field holds the credential itself, written either as `${env:VAR}` or as a
+literal value. A literal is announced once on stderr:
+`lore: secrets written as literal values in the config: sources[github].with.token; write ${env:VAR} to keep a credential out of the file`.
+Leave a secret field out and a plugin compiled into the binary falls back to the
+variable its manifest suggests — `OPENAI_API_KEY` for the embedder above. A plugin
+installed from outside the binary gets no such fallback.
 
 `lore source add <plugin>` appends another instance of any source plugin this build
 registers, asking only for the fields that plugin's manifest declares; two Jira sites
@@ -361,8 +368,10 @@ commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
 ## Security posture
 
 - **Read-only toward every source.** Lore never writes to GitHub, GitLab, Notion or Jira.
-- **Secrets live in environment variables named by config.** They are never written to
-  `lore.yaml`, the index, or logs; least-privilege tokens are the documented default.
+- **Secrets are held by their own config field**, as a literal or as `${env:VAR}`.
+  A literal is announced on stderr at startup. Every resolved secret is scrubbed from
+  logs and errors — one shorter than 8 characters is named at startup instead — and
+  never reaches the index; least-privilege tokens are the documented default.
 - **A plugin sees only the secrets its manifest declared.** External plugins are
   digest-pinned, re-verified at launch, and started with no inherited environment.
 - **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.

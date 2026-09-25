@@ -40,7 +40,7 @@ Then, in the workspace directory:
 
 ```bash
 lore init                            # writes ./lore.yaml
-export LORE_GITHUB_TOKEN=...         # the variable lore.yaml names
+export LORE_GITHUB_TOKEN=...         # the variable lore.yaml expands
 export OPENAI_API_KEY=...            # the embedder key
 lore sync                            # first run creates the index
 lore status                          # counts, per-source cursor ages, lock state
@@ -61,7 +61,7 @@ Four things must be true before a host model gets useful answers:
    sources:
      - use: github
        with:
-         token_env: LORE_GITHUB_TOKEN
+         token: ${env:LORE_GITHUB_TOKEN}
          repos:
            - acme/myproject
    repos: []                          # local clones, for `why` and `history_of` only
@@ -74,9 +74,13 @@ Four things must be true before a host model gets useful answers:
    default. The full source list and each block's rules live in
    [sources.md](sources.md) and
    [docs/v3/06-interfaces-and-config.md](v3/06-interfaces-and-config.md).
-3. **The environment variables that `lore.yaml` names.** Startup requires the named
-   variable to actually be set: a missing one fails with
-   `sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set or is blank`.
+3. **The environment variables that `lore.yaml` expands.** A secret field holds the
+   credential, as `${env:VAR}` or as a literal value. Startup requires an expanded
+   variable to actually be set and not blank: a missing one fails with
+   `sources[github].with.token expands LORE_GITHUB_TOKEN, but LORE_GITHUB_TOKEN is not set`,
+   and a blank one with `sources[github].with.token expands LORE_GITHUB_TOKEN, but it is blank`.
+   A literal needs no variable, and startup announces it once on stderr with
+   `lore: secrets written as literal values in the config: sources[github].with.token; write ${env:VAR} to keep a credential out of the file`.
 4. **At least one completed `lore sync`.** Tools read the index; an unsynced workspace
    answers every question with an empty bundle. `lore sync` takes `--source <instance>` to
    sync just one connector (an unknown name is refused with
@@ -148,10 +152,12 @@ directory) are likewise **not verifiable from this repository** — see
   `./lore.yaml` only makes sense when you run `lore` yourself.
 - **The spawned environment is not your shell.** A GUI-launched client typically
   inherits the desktop session's environment, not the one your `.zshrc` exports, so
-  `OPENAI_API_KEY` and every `*_env` variable your `lore.yaml` names can be absent even
+  `OPENAI_API_KEY` and every variable your `lore.yaml` expands can be absent even
   though `lore sync` works fine in your terminal. That is what the `env` block above is
-  for. Lore reads secrets from the environment only — it never stores them in
-  `lore.yaml`.
+  for. A secret field in `lore.yaml` may hold a literal instead; Lore accepts it,
+  announces it on stderr at startup, and scrubs it from its output unless it is shorter
+  than 8 characters, when startup names the field instead — but the credential
+  then sits in the file, so `${env:VAR}` plus the `env` block is the safer pairing.
 
 ## Transport 2 — streamable HTTP (`lore serve`)
 
@@ -347,7 +353,7 @@ of the tool surface returning evidence instead of prose.
 
 | Symptom | What you see | Fix |
 |---|---|---|
-| Server never appears in the client's tool list | The client shows the server as failed; the real reason is on the process's **stderr** — most often ``no configuration at ./lore.yaml — run `lore init` to create one`` (relative `--config`, or none), ``embedder.provider names plugin "openai", whose default variable OPENAI_API_KEY is not set or is blank; export it, or declare `providers: [{id: openai, use: openai, with: {api_key_env: YOUR_VARIABLE}}]` and keep embedder.provider naming "openai"``, or `sources[github].with.token_env names LORE_GITHUB_TOKEN, but that environment variable is not set or is blank` | Pass an absolute `--config`, and supply every variable your `lore.yaml` names through the client's `env` block. Verify the command outside the client first: `/absolute/path/to/lore mcp --config /absolute/path/to/lore.yaml` should sit there silently instead of exiting. A connected server identifies itself as `lore` …
+| Server never appears in the client's tool list | The client shows the server as failed; the real reason is on the process's **stderr** — most often ``no configuration at ./lore.yaml — run `lore init` to create one`` (relative `--config`, or none), ``embedder.provider names plugin "openai", whose default variable OPENAI_API_KEY is not set or is blank; export it, or declare `providers: [{id: openai, use: openai, with: {api_key: "${env:YOUR_VARIABLE}"}}]` and keep embedder.provider naming "openai"``, or `sources[github].with.token expands LORE_GITHUB_TOKEN, but LORE_GITHUB_TOKEN is not set` | Pass an absolute `--config`, and supply every variable your `lore.yaml` expands or falls back to through the client's `env` block. Verify the command outside the client first: `/absolute/path/to/lore mcp --config /absolute/path/to/lore.yaml` should sit there silently instead of exiting. A connected server identifies itself as `lore` …
 | `why` or `history_of` fails on a zero-repo workspace | `no repositories registered — code anchoring disabled for this workspace` | Blame and file history need a local clone. Add one under `repos:` (`path:`, plus `remote:` to map it onto an ingested source repo), or ask `find_decision` instead — it answers the same question from the index. Naming an unregistered repo instead returns `repo "…" is not registered — registered repos: …` |
 | `sync_now` refuses to run | `cannot run a sync round — myhost/4213 (last heartbeat 3s ago) is already writing this index; retry later, or wait out the 60s lease TTL if that holder crashed` | Something else holds the workspace lease — usually a manual `lore sync`, or the scheduler inside a running `lore serve`. Rounds are exclusive across every process sharing the workspace, and a refused round writes nothing. Report it and wait; do not retry in a loop. `sync_status` shows `sync_lock.held`, `holder`, `held_for_seconds` and `last_heartbeat_seconds_ago` — a heartbeat many minutes old means that holder most likely died, and the next round takes the lock over |
 | `sync_now` refuses after an embedder change | ``embedder identity mismatch: this index was built with "openai/text-embedding-3-small/1536" but the workspace is now configured for "ollama/nomic-embed-text/768" — vectors from one embedder are meaningless to another, so run `lore sync --reembed` to wipe the chunk layer and rebuild it with "ollama/nomic-embed-text/768"`` | Identity is `plugin/model/dimensions` — the provider plugin, not the instance id — so changing any one of the three invalidates every stored vector. Run `lore sync --reembed` once from the terminal. Note the index file's vector width is fixed when it is created, so a change of width also needs a fresh index path — the index is derived data, safe to delete |

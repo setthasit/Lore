@@ -52,7 +52,7 @@ body and the issue say *why* anyone accepted it. That is the gap `lore why` clos
 |---|---|
 | `lore` | `go install github.com/setthasit/Lore/cmd/lore@latest` |
 | `git` | on `PATH` — the blame and log connector shells out to it |
-| A GitHub token | Read-only, exported under the name you put in `token_env`. `cli/cli` is public, so a fine-grained token scoped to *public repositories, read-only* is enough — it is there to lift the API rate limit, and the connector never writes |
+| A GitHub token | Read-only. Export it as the variable the instance's `token` expands, or write it into `token` as a literal. `cli/cli` is public, so a fine-grained token scoped to *public repositories, read-only* is enough — it is there to lift the API rate limit, and the connector never writes |
 | An embedder | `lore why` embeds its retrieval query, so the embedder must be reachable. `embedder: openai` needs `OPENAI_API_KEY`; a local Ollama needs the daemon up — see [`fully-local.md`](fully-local.md) |
 | An LLM | **optional**, and only for `--explain` |
 
@@ -85,7 +85,7 @@ workspace: cli-demo
 sources:
   - use: github
     with:
-      token_env: LORE_GITHUB_TOKEN
+      token: ${env:LORE_GITHUB_TOKEN}
       repos:
         - cli/cli
 
@@ -108,9 +108,9 @@ embedder:
 out; the values above are the edits. Every command takes `--config`, defaulting to
 `./lore.yaml`.
 
-Two things the loader enforces before anything runs: the instance's `token_env` must name a
-variable that is actually **set** in the environment (`sources[github].with.token_env names
-LORE_GITHUB_TOKEN, but that environment variable is not set or is blank`), and every `repos[].path`
+Two things the loader enforces before anything runs: a variable the instance's `token`
+expands must be actually **set** in the environment, and not blank (`sources[github].with.token expands
+LORE_GITHUB_TOKEN, but LORE_GITHUB_TOKEN is not set`, or `… but it is blank`), and every `repos[].path`
 must exist and contain a `.git` entry (`repos path /home/dev/cli is not a git repository —
 no .git entry found`). A leading `~` in `repos[].path` and `index_path` is expanded before
 validation, which is why that message names the absolute path. Unknown keys are rejected
@@ -305,7 +305,7 @@ lore why api/queries_pr_review.go:573-577 --explain
 `--explain` answers from the trail in prose instead of printing the timeline. It needs the
 `llm:` block; without one it fails with:
 
-> synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — add one naming the provider, the model and the api_key_env that holds its key
+> synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — add one naming the provider and the model, and give that provider its api_key as a literal or as ${env:VAR}
 
 ```
 lore why api/queries_pr_review.go:573-577 --raw | jq '.chains, .anchor.blamed_shas'
