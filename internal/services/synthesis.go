@@ -40,7 +40,7 @@ const synthesisSystem = `You explain the history of a software project from evid
 - Answer in markdown prose: short paragraphs, no headings.`
 
 const unconfiguredSynthesis = "synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — " +
-	"add one naming the provider, the model and the api_key_env that holds its key"
+	"add one naming the provider and the model, and give that provider its api_key as a literal or as ${env:VAR}"
 
 var citation = regexp.MustCompile(`\[\s*(\d+)\s*\]`)
 

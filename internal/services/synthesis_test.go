@@ -207,7 +207,7 @@ func TestSynthesizeWithoutAConfiguredLLMNamesTheRemedy(t *testing.T) {
 		t.Errorf("kind = %s, want %s", kind, internalerror.KindPrecondition)
 	}
 	const want = "synthesis needs an LLM, and this workspace has no llm: block in lore.yaml — " +
-		"add one naming the provider, the model and the api_key_env that holds its key"
+		"add one naming the provider and the model, and give that provider its api_key as a literal or as ${env:VAR}"
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err, want)
 	}
