@@ -225,6 +225,9 @@ func Load(path string) (*Config, error) {
 		return nil, refuseUndecodable("invalid configuration at "+path, err)
 	}
 
+	if err := cfg.expand(); err != nil {
+		return nil, err
+	}
 	if err := cfg.applyDefaults(); err != nil {
 		return nil, err
 	}
