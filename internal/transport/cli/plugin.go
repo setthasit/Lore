@@ -9,7 +9,6 @@ import (
 	"github.com/setthasit/Lore/internal/plugbuild"
 	"github.com/setthasit/Lore/internal/plugindist"
 	"github.com/setthasit/Lore/internal/registry"
-	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -70,12 +69,12 @@ func declaredExternals(configPath string, reg *registry.Registry) ([]externalRow
 	}
 
 	var rows []externalRow
-	for _, decl := range workspace.Plugins() {
+	for at, decl := range workspace.Plugins() {
 		if _, compiled := reg.Manifest(decl.Name); compiled {
 			continue
 		}
 
-		row := externalRow{name: decl.Name, from: urlx.RedactIfUserinfo(decl.From)}
+		row := externalRow{name: decl.Name, from: workspace.DeclaredFrom(at)}
 		switch install, err := workspace.Installed(decl); {
 		case err != nil:
 			row.state = "unresolvable — " + internalerror.MessageOf(err)

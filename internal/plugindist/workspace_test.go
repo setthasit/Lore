@@ -224,6 +224,205 @@ func TestConfigEditRefusesAnUnhandledKind(t *testing.T) {
 	}
 }
 
+const expandedLocal = "workspace: myproject\n\nplugins:\n  - name: linear\n    from: ${env:LORE_PLUGIN_DIR}/lore-linear\n"
+
+func stagePluginDir(t *testing.T, binaries ...string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	for _, binary := range binaries {
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte(stubBinary), 0o755); err != nil {
+			t.Fatalf("seed a local plugin binary: %v", err)
+		}
+	}
+	t.Setenv("LORE_PLUGIN_DIR", dir)
+	return dir
+}
+
+func TestAnExpandedFromInstallsListsAndVerifiesTheExpandedPath(t *testing.T) {
+	path := scratchWorkspace(t, expandedLocal)
+	binary := filepath.Join(stagePluginDir(t, "lore-linear"), "lore-linear")
+	workspace := openScratch(t, path)
+
+	results, err := workspace.Install(context.Background(), nil, func() {})
+	if err != nil || len(results) != 1 || results[0].Binary != binary {
+		t.Fatalf("results = %+v, err = %v, want one install of %s", results, err, binary)
+	}
+	if install, err := workspace.Installed(workspace.Plugins()[0]); err != nil || install.Binary != binary {
+		t.Errorf("install = %+v, err = %v, want %s", install, err, binary)
+	}
+	if report, err := workspace.Verify("linear"); err != nil || report.Binary != binary {
+		t.Errorf("report = %+v, err = %v, want %s", report, err, binary)
+	}
+	if after := readFile(t, path); after != expandedLocal {
+		t.Errorf("configuration =\n%s\nwant it untouched", after)
+	}
+}
+
+func TestAnUnsetVariableRefusesToOpenTheWorkspace(t *testing.T) {
+	path := scratchWorkspace(t, expandedLocal)
+	unsetEnv(t, "LORE_PLUGIN_DIR")
+
+	_, err := Open(path)
+	const want = "plugins[0].from expands LORE_PLUGIN_DIR, but LORE_PLUGIN_DIR is not set"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Errorf("kind = %v, want %v", internalerror.KindOf(err), internalerror.KindBadRequest)
+	}
+}
+
+func TestAPinRefusesToOverwriteAnExpandedFrom(t *testing.T) {
+	cases := []struct {
+		name     string
+		from     string
+		variable string
+		value    string
+	}{
+		{name: "whole value", from: "${env:LORE_LINEAR_FROM}", variable: "LORE_LINEAR_FROM",
+			value: "github.com/jdoe/lore-linear@v0.3.1"},
+		{name: "mid value", from: "github.com/${env:LORE_LINEAR_OWNER}/lore-linear@v0.3.1",
+			variable: "LORE_LINEAR_OWNER", value: "jdoe"},
+	}
+	const want = "cannot pin plugins[linear]: plugins[0].from is written with ${env:VAR}, which a pin never" +
+		" overwrites — point the variable at the new coordinate instead"
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "workspace: myproject\n\nplugins:\n  - name: linear\n    from: " + tc.from + "\n"
+			path := scratchWorkspace(t, body)
+			t.Setenv(tc.variable, tc.value)
+			latest, err := Resolve(".", config.PluginDecl{Name: "linear", From: "github.com/jdoe/lore-linear@v0.4.2"})
+			if err != nil {
+				t.Fatalf("resolve the published coordinate: %v", err)
+			}
+
+			updating := openScratch(t, path)
+			publishRelease(t, updating, latest)
+			_, err = updating.Update(context.Background(), "linear@v0.4.2", func() {
+				t.Error("the trust notice fired for a refused update")
+			})
+			if err == nil || err.Error() != want || !internalerror.IsPrecondition(err) {
+				t.Errorf("update error = %v, want the precondition %q", err, want)
+			}
+
+			installing := openScratch(t, path)
+			publishRelease(t, installing, latest)
+			if _, err := installing.Install(context.Background(), []string{"linear@latest"}, func() {}); err == nil ||
+				err.Error() != want {
+				t.Errorf("install error = %v, want %q", err, want)
+			}
+
+			if after := readFile(t, path); after != body {
+				t.Errorf("configuration =\n%s\nwant it untouched", after)
+			}
+			if _, err := os.Stat(lockPath(filepath.Dir(path))); !os.IsNotExist(err) {
+				t.Errorf("a refused pin wrote a lockfile: %v", err)
+			}
+		})
+	}
+}
+
+func TestRemoveRefusesAPluginAnExpandedUseStillNames(t *testing.T) {
+	const body = "workspace: myproject\n\nplugins:\n  - name: ${env:LORE_LINEAR_NAME}\n    from: ./lore-linear\n" +
+		"\nsources:\n  - use: ${env:LORE_LINEAR_NAME}\n" +
+		"\nrepos:\n  - path: /srv/lore\n    use: ${env:LORE_LINEAR_NAME}\n"
+	path := scratchWorkspace(t, body)
+	t.Setenv("LORE_LINEAR_NAME", "linear")
+	workspace := openScratch(t, path)
+
+	if source, found := workspace.SourceUsing("linear"); !found || source.Use != "linear" {
+		t.Errorf("source = %+v, found = %v, want the source whose use: expands to linear", source, found)
+	}
+
+	_, err := workspace.Remove("linear")
+	const want = "plugins[linear] is still used by sources[linear], repos[/srv/lore]" +
+		" — remove those first, or the next `lore sync` has nothing to build them from"
+	if err == nil || err.Error() != want || !internalerror.IsPrecondition(err) {
+		t.Errorf("error = %v, want the precondition %q", err, want)
+	}
+	if after := readFile(t, path); after != body {
+		t.Errorf("configuration =\n%s\nwant it untouched", after)
+	}
+}
+
+func TestAnInstallMismatchNamesAnExpandedFromInsteadOfItsValue(t *testing.T) {
+	path := scratchWorkspace(t, "workspace: myproject\n\nplugins:\n  - name: linear\n    from: ${env:LORE_LINEAR_FROM}\n")
+	t.Setenv("LORE_LINEAR_FROM", "https://artifacts.example.com/lore/linear/v2.0.1.tar.gz?sig=fake-signature")
+
+	_, err := openScratch(t, path).Install(context.Background(),
+		[]string{"github.com/jdoe/lore-linear@v1.0.0"}, func() {
+			t.Error("the trust notice fired for a refused install")
+		})
+	want := path + " declares linear from plugins[0].from, not github.com/jdoe/lore-linear@v1.0.0" +
+		" — edit the declaration, or run: lore plugin update linear"
+	if err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+func TestOpenLeavesFieldsNoPluginCommandReadsUnexpanded(t *testing.T) {
+	path := scratchWorkspace(t, "workspace: ${env:LORE_UNSET_WORKSPACE}\n\n"+
+		"repos:\n  - path: /srv/lore\n    remote: ${env:LORE_UNSET_REMOTE}\n")
+	unsetEnv(t, "LORE_UNSET_WORKSPACE", "LORE_UNSET_REMOTE")
+
+	if _, err := Open(path); err != nil {
+		t.Errorf("open: %v, want the unset variables of workspace and repos[0].remote left unread", err)
+	}
+}
+
+func unsetEnv(t *testing.T, names ...string) {
+	t.Helper()
+
+	for _, name := range names {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+	}
+}
+
+func TestEditsLeaveExpansionsRawInTheConfiguration(t *testing.T) {
+	const scratch = "  - name: ${env:LORE_SCRATCH_NAME}\n    from: ${env:LORE_PLUGIN_DIR}/lore-scratch\n"
+	path := scratchWorkspace(t, "workspace: myproject\n\nplugins:\n"+
+		"  - name: linear\n    from: github.com/jdoe/lore-linear@v0.3.1\n"+scratch)
+	binary := filepath.Join(stagePluginDir(t, "lore-scratch"), "lore-scratch")
+	t.Setenv("LORE_SCRATCH_NAME", "scratch")
+
+	workspace := openScratch(t, path)
+	coord, err := Resolve(".", config.PluginDecl{Name: "linear", From: "github.com/jdoe/lore-linear@v0.4.2"})
+	if err != nil {
+		t.Fatalf("resolve the published coordinate: %v", err)
+	}
+	publishRelease(t, workspace, coord)
+	if _, err := workspace.Update(context.Background(), "linear@v0.4.2", func() {}); err != nil {
+		t.Fatalf("update linear: %v", err)
+	}
+	updated := "workspace: myproject\n\nplugins:\n  - name: linear\n    from: github.com/jdoe/lore-linear@v0.4.2\n" + scratch
+	if after := readFile(t, path); after != updated {
+		t.Fatalf("after update, configuration =\n%s\nwant\n%s", after, updated)
+	}
+
+	if _, err := openScratch(t, path).Remove("linear"); err != nil {
+		t.Fatalf("remove linear: %v", err)
+	}
+	if after, want := readFile(t, path), "workspace: myproject\n\nplugins:\n"+scratch; after != want {
+		t.Fatalf("after removing linear, configuration =\n%s\nwant\n%s", after, want)
+	}
+
+	workspace = openScratch(t, path)
+	if report, err := workspace.Verify("scratch"); err != nil || report.Binary != binary {
+		t.Fatalf("report = %+v, err = %v, want %s", report, err, binary)
+	}
+	if _, err := workspace.Remove("scratch"); err != nil {
+		t.Fatalf("remove the plugin its expanded name declares: %v", err)
+	}
+	if after := readFile(t, path); after != "workspace: myproject\n\n" {
+		t.Errorf("after removing scratch, configuration =\n%s\nwant no plugins left", after)
+	}
+}
+
 func seedCache(t *testing.T, store *Store, name, version string) string {
 	t.Helper()
 

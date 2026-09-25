@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/setthasit/Lore/internal/envx"
@@ -12,7 +13,49 @@ type stringField struct {
 }
 
 func (c *Config) expand() error {
-	for _, field := range c.stringFields() {
+	return expandFields(c.stringFields())
+}
+
+type PluginRefs struct {
+	Plugins   []PluginDecl
+	Sources   []Instance
+	Providers []Instance
+	Repos     []RepoDecl
+}
+
+// ExpandPluginRefs expands, on a copy, plugins[] and the fields that name or label a plugin's users.
+func (c *Config) ExpandPluginRefs() (PluginRefs, error) {
+	refs := PluginRefs{
+		Plugins:   slices.Clone(c.Plugins),
+		Sources:   slices.Clone(c.Sources),
+		Providers: slices.Clone(c.Providers),
+		Repos:     slices.Clone(c.Repos),
+	}
+	if err := expandFields(refs.stringFields()); err != nil {
+		return PluginRefs{}, err
+	}
+	return refs, nil
+}
+
+func (r *PluginRefs) stringFields() []stringField {
+	var fields []stringField
+	for i := range r.Plugins {
+		fields = append(fields, pluginFields(i, &r.Plugins[i])...)
+	}
+	fields = append(fields, instanceFields("sources", r.Sources)...)
+	fields = append(fields, instanceFields("providers", r.Providers)...)
+	for i := range r.Repos {
+		fields = append(fields, repoRefFields(i, &r.Repos[i])...)
+	}
+	return fields
+}
+
+func (r PluginRefs) InstancesUsing(plugin string) []string {
+	return (&Config{Sources: r.Sources, Providers: r.Providers, Repos: r.Repos}).InstancesUsing(plugin)
+}
+
+func expandFields(fields []stringField) error {
+	for _, field := range fields {
 		expanded, err := envx.Expand(field.name, *field.value)
 		if err != nil {
 			return err
@@ -28,12 +71,7 @@ func (c *Config) stringFields() []stringField {
 		{"index_path", &c.IndexPath},
 	}
 	for i := range c.Plugins {
-		at := indexed("plugins", i)
-		fields = append(fields,
-			stringField{at + ".name", &c.Plugins[i].Name},
-			stringField{at + ".from", &c.Plugins[i].From},
-			stringField{at + ".pubkey", &c.Plugins[i].PubKey},
-		)
+		fields = append(fields, pluginFields(i, &c.Plugins[i])...)
 	}
 	fields = append(fields, instanceFields("sources", c.Sources)...)
 	fields = append(fields, instanceFields("providers", c.Providers)...)
@@ -42,12 +80,8 @@ func (c *Config) stringFields() []stringField {
 		fields = append(fields, roleBindingFields("llm", c.LLM)...)
 	}
 	for i := range c.Repos {
-		at := indexed("repos", i)
-		fields = append(fields,
-			stringField{at + ".path", &c.Repos[i].Path},
-			stringField{at + ".use", &c.Repos[i].Use},
-			stringField{at + ".remote", &c.Repos[i].Remote},
-		)
+		fields = append(fields, repoRefFields(i, &c.Repos[i])...)
+		fields = append(fields, stringField{indexed("repos", i) + ".remote", &c.Repos[i].Remote})
 	}
 	fields = append(fields,
 		stringField{"server.http_addr", &c.Server.HTTPAddr},
@@ -61,6 +95,26 @@ func (c *Config) stringFields() []stringField {
 		)
 	}
 	return fields
+}
+
+func PluginField(index int, key string) string {
+	return indexed("plugins", index) + "." + key
+}
+
+func pluginFields(index int, decl *PluginDecl) []stringField {
+	return []stringField{
+		{PluginField(index, "name"), &decl.Name},
+		{PluginField(index, "from"), &decl.From},
+		{PluginField(index, "pubkey"), &decl.PubKey},
+	}
+}
+
+func repoRefFields(index int, repo *RepoDecl) []stringField {
+	at := indexed("repos", index)
+	return []stringField{
+		{at + ".path", &repo.Path},
+		{at + ".use", &repo.Use},
+	}
 }
 
 func instanceFields(section string, instances []Instance) []stringField {

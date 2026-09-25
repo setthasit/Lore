@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
@@ -21,7 +22,8 @@ type Workspace struct {
 	path      string
 	dir       string
 	content   string // kept beside the parsed config: every edit to a hand-written lore.yaml is a splice
-	config    *config.Config
+	config    *config.Config // raw: edits locate their text through it
+	refs      config.PluginRefs // expanded, index for index with config
 	lock      *Lock
 	store     *Store
 	handshake Handshake
@@ -39,6 +41,10 @@ func Open(configPath string, opts ...Option) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
+	refs, err := parsed.ExpandPluginRefs()
+	if err != nil {
+		return nil, err
+	}
 
 	dir := filepath.Dir(configPath)
 	lock, err := LoadLock(dir)
@@ -52,7 +58,7 @@ func Open(configPath string, opts ...Option) (*Workspace, error) {
 
 	w := &Workspace{
 		path: configPath, dir: dir, content: content,
-		config: parsed, lock: lock, store: store,
+		config: parsed, refs: refs, lock: lock, store: store,
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -62,11 +68,19 @@ func Open(configPath string, opts ...Option) (*Workspace, error) {
 }
 
 func (w *Workspace) Plugins() []config.PluginDecl {
-	return w.config.Plugins
+	return w.refs.Plugins
+}
+
+// DeclaredFrom names plugins[at].from itself when it is written with an expansion, so no expanded value is shown.
+func (w *Workspace) DeclaredFrom(at int) string {
+	if envx.Holds(w.config.Plugins[at].From) {
+		return config.PluginField(at, "from")
+	}
+	return urlx.RedactIfUserinfo(w.refs.Plugins[at].From)
 }
 
 func (w *Workspace) SourceUsing(plugin string) (config.Instance, bool) {
-	for _, instance := range w.config.Sources {
+	for _, instance := range w.refs.Sources {
 		if instance.Use == plugin {
 			return instance, true
 		}
@@ -155,7 +169,10 @@ func (w *Workspace) Install(ctx context.Context, args []string, notice func()) (
 		}
 		pinned = append(pinned, coord)
 	}
-	edits := pinEdits(requests, pinned, declare)
+	edits, err := w.onDisk(pinEdits(requests, pinned, declare))
+	if err != nil {
+		return nil, err
+	}
 
 	results := make([]Result, 0, len(requests))
 	for i, request := range requests {
@@ -197,6 +214,12 @@ func (w *Workspace) Update(ctx context.Context, argument string, notice func()) 
 			return Result{}, err
 		}
 	}
+	var edits []configEdit
+	if !coord.Floating() {
+		if edits, err = w.repin(name, coord.From, decl.From); err != nil {
+			return Result{}, err
+		}
+	}
 	notice()
 
 	req := Request{Coordinate: coord, Rewrite: true}
@@ -204,15 +227,16 @@ func (w *Workspace) Update(ctx context.Context, argument string, notice func()) 
 	if err != nil {
 		return Result{}, err
 	}
+	if coord.Floating() {
+		if edits, err = w.repin(name, pinned.From, decl.From); err != nil {
+			return Result{}, err
+		}
+	}
+
 	req.Coordinate = pinned
 	result, err := w.installer.Install(ctx, req, w.lock)
 	if err != nil {
 		return Result{}, err
-	}
-
-	edits := []configEdit(nil)
-	if pinned.From != decl.From {
-		edits = append(edits, configEdit{name: name, from: pinned.From, kind: editPin})
 	}
 	if err := w.commitPins(edits, true); err != nil {
 		return Result{}, err
@@ -233,15 +257,19 @@ func (w *Workspace) Remove(name string) (Removal, error) {
 	if _, err := config.FindBlock(w.content, pluginsKey); err != nil {
 		return Removal{}, err
 	}
-	if used := w.config.InstancesUsing(name); len(used) > 0 {
+	if used := w.refs.InstancesUsing(name); len(used) > 0 {
 		return Removal{}, internalerror.NewPreconditionError(Label(name)+" is still used by "+
 			strings.Join(used, ", ")+
 			" — remove those first, or the next `lore sync` has nothing to build them from", nil)
 	}
 
+	edits, err := w.onDisk([]configEdit{{name: name, kind: editRemove}})
+	if err != nil {
+		return Removal{}, err
+	}
 	unlocked := w.lock.Remove(name)
 	refusal := "removing " + Label(name) + " would leave " + w.path + " unreadable, so it is unchanged"
-	if err := w.commit([]configEdit{{name: name, kind: editRemove}}, refusal, unlocked); err != nil {
+	if err := w.commit(edits, refusal, unlocked); err != nil {
 		return Removal{}, err
 	}
 
@@ -268,8 +296,8 @@ func (w *Workspace) Verify(name string) (Report, error) {
 // The second result is the name the argument introduces, empty when lore.yaml already declares it.
 func (w *Workspace) requests(args []string) ([]Request, string, error) {
 	if len(args) == 0 {
-		requests := make([]Request, 0, len(w.config.Plugins))
-		for _, decl := range w.config.Plugins {
+		requests := make([]Request, 0, len(w.refs.Plugins))
+		for _, decl := range w.refs.Plugins {
 			coord, err := Resolve(w.dir, decl)
 			if err != nil {
 				return nil, "", err
@@ -314,15 +342,15 @@ func (w *Workspace) requests(args []string) ([]Request, string, error) {
 		from = target + "@" + version
 	}
 
-	decl, declared := w.Declaration(name)
+	decl, at := w.declaration(name)
 	coord, err := ResolveInstall(w.dir, config.PluginDecl{Name: name, From: from, PubKey: decl.PubKey})
 	if err != nil {
 		return nil, "", err
 	}
-	if declared {
+	if at >= 0 {
 		if !matchesDeclaration(decl.From, coord, version) {
 			return nil, "", internalerror.NewBadRequestError(w.path+" declares "+name+" from "+
-				urlx.RedactIfUserinfo(decl.From)+", not "+coord.SafeFrom()+
+				w.DeclaredFrom(at)+", not "+coord.SafeFrom()+
 				" — edit the declaration, or run: lore plugin update "+name, nil)
 		}
 		return []Request{{Coordinate: coord}}, "", nil
@@ -356,12 +384,42 @@ func pinEdits(requests []Request, pinned []Coordinate, declare string) []configE
 }
 
 func (w *Workspace) Declaration(name string) (config.PluginDecl, bool) {
-	for _, decl := range w.config.Plugins {
+	decl, at := w.declaration(name)
+	return decl, at >= 0
+}
+
+// declaration answers the first declaration whose expanded name matches, at index -1 when there is none.
+func (w *Workspace) declaration(name string) (config.PluginDecl, int) {
+	for at, decl := range w.refs.Plugins {
 		if decl.Name == name {
-			return decl, true
+			return decl, at
 		}
 	}
-	return config.PluginDecl{}, false
+	return config.PluginDecl{}, -1
+}
+
+func (w *Workspace) onDisk(edits []configEdit) ([]configEdit, error) {
+	for i, edit := range edits {
+		_, at := w.declaration(edit.name)
+		if at < 0 {
+			continue
+		}
+		raw := w.config.Plugins[at]
+		if edit.kind == editPin && envx.Holds(raw.From) {
+			return nil, internalerror.NewPreconditionError("cannot pin "+Label(edit.name)+": "+
+				config.PluginField(at, "from")+" is written with "+envx.Form+", which a pin never overwrites"+
+				" — point the variable at the new coordinate instead", nil)
+		}
+		edits[i].name = raw.Name
+	}
+	return edits, nil
+}
+
+func (w *Workspace) repin(name, from, declared string) ([]configEdit, error) {
+	if from == declared {
+		return nil, nil
+	}
+	return w.onDisk([]configEdit{{name: name, from: from, kind: editPin}})
 }
 
 func (w *Workspace) mustDeclare(name string) (config.PluginDecl, error) {
@@ -379,8 +437,8 @@ func (w *Workspace) mustDeclare(name string) (config.PluginDecl, error) {
 }
 
 func (w *Workspace) declaredNames() []string {
-	names := make([]string, 0, len(w.config.Plugins))
-	for _, decl := range w.config.Plugins {
+	names := make([]string, 0, len(w.refs.Plugins))
+	for _, decl := range w.refs.Plugins {
 		names = append(names, decl.Name)
 	}
 	return names
