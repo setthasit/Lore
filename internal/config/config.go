@@ -350,7 +350,7 @@ func (c *Config) applyDefaults() error {
 	c.IndexPath = indexPath
 
 	for i := range c.Repos {
-		path, err := ExpandHome("repos path", c.Repos[i].Path)
+		path, err := ExpandHome(indexed("repos", i)+".path", c.Repos[i].Path)
 		if err != nil {
 			return err
 		}
@@ -370,7 +370,7 @@ func ExpandHome(field, path string) (string, error) {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", internalerror.NewBadRequestError(field+" "+path+" starts with ~, but this user has no home directory; declare an absolute path", err)
+		return "", internalerror.NewBadRequestError(field+" starts with ~, but this user has no home directory; declare an absolute path", err)
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }

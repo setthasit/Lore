@@ -79,7 +79,7 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 		return Coordinate{}, err
 	}
 	if from == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" declares no from: — a local path"+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+" is empty — declare a local path"+
 			" (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z, or an https:// artifact URL", nil)
 	}
 
@@ -93,10 +93,10 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	case strings.HasPrefix(from, "https://"):
 		coord, err = parseURL(name, from)
 	case strings.HasPrefix(from, "http://"):
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
 			" is plaintext HTTP, which cannot carry code anyone should run: publish the artifact over https", nil)
 	default:
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+urlx.RedactIfUserinfo(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
 			" is not a coordinate — use a local path (./bin/lore-"+name+"), github.com/owner/repo@vX.Y.Z,"+
 			" or an https:// artifact URL", nil)
 	}
@@ -107,10 +107,10 @@ func parseCoordinate(dir string, decl config.PluginDecl, allowLatest bool) (Coor
 	if decl.PubKey != "" {
 		pubkey := strings.TrimSpace(decl.PubKey)
 		if pubkey == "" {
-			return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" declares a blank pubkey: — name"+
+			return Coordinate{}, internalerror.NewBadRequestError(pubkeyField(name)+" is blank — name"+
 				" the public key a signature must verify against, or remove the line to install unsigned", nil)
 		}
-		if coord.PubKey, err = absolutePath(dir, pubkey, Label(name)+" pubkey:"); err != nil {
+		if coord.PubKey, err = absolutePath(dir, pubkey, pubkeyField(name)); err != nil {
 			return Coordinate{}, err
 		}
 	}
@@ -150,7 +150,7 @@ func gitHubRepo(from string) (owner, repo string, ok bool) {
 }
 
 func parseLocal(dir, name, from string) (Coordinate, error) {
-	absolute, err := absolutePath(dir, from, Label(name)+" from")
+	absolute, err := absolutePath(dir, from, fromField(name))
 	if err != nil {
 		return Coordinate{}, err
 	}
@@ -160,25 +160,25 @@ func parseLocal(dir, name, from string) (Coordinate, error) {
 func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 	owner, repo, ok := gitHubRepo(from)
 	if !ok {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
 			" names no repository — write github.com/owner/repo@vX.Y.Z", nil)
 	}
 	_, version, versioned := strings.Cut(from, "@")
 	if !versioned || version == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
-			" pins no version — write "+from+"@v0.3.1, or run `lore plugin install "+name+
-			"@latest` to pin the newest release", nil)
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
+			" pins no version — append a release tag, as in github.com/owner/repo@v0.3.1, or run"+
+			" `lore plugin install "+name+"@latest` to pin the newest release", nil)
 	}
 
 	switch {
 	case version == LatestVersion && !allowLatest:
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
 			" floats: @latest resolves differently on two machines, which would run different code against"+
 			" one index — run `lore plugin install "+name+"@latest` to pin the version it resolves to now", nil)
 	case version == LatestVersion:
 	case !ExactVersion(version):
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+from+
-			" pins @"+version+", which is not an exact version — pin a release tag like @v0.3.1", nil)
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
+			" pins a tag that is not an exact version — pin a release tag like @v0.3.1", nil)
 	}
 
 	return Coordinate{
@@ -190,8 +190,7 @@ func parseGitHub(name, from string, allowLatest bool) (Coordinate, error) {
 func parseURL(name, from string) (Coordinate, error) {
 	parsed, err := url.Parse(from)
 	if err != nil || parsed.Host == "" {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
-			" is not a valid URL", err)
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+" is not a valid URL", nil)
 	}
 
 	version := path.Base(parsed.Path)
@@ -199,7 +198,7 @@ func parseURL(name, from string) (Coordinate, error) {
 		version = strings.TrimSuffix(version, suffix)
 	}
 	if !isCacheEntryName(version) {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(name)+" from "+safeTarget(from)+
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(name)+
 			" ends in no version — the URL's last path segment names the version, as in"+
 			" https://artifacts.example.com/lore/"+name+"/v2.0.1.tar.gz", nil)
 	}
@@ -209,8 +208,8 @@ func parseURL(name, from string) (Coordinate, error) {
 
 func (c Coordinate) AtVersion(version string) (Coordinate, error) {
 	if c.Origin != OriginGitHub {
-		return Coordinate{}, internalerror.NewBadRequestError(Label(c.Name)+" is fetched from "+c.SafeFrom()+
-			", so its version is part of that coordinate — edit from: in lore.yaml to move it", nil)
+		return Coordinate{}, internalerror.NewBadRequestError(fromField(c.Name)+" is not a github.com"+
+			" coordinate, so its version is part of the value — edit from: in lore.yaml to move it", nil)
 	}
 	return parseCoordinate("", config.PluginDecl{
 		Name:   c.Name,
@@ -269,6 +268,14 @@ func Label(name string) string {
 	return pluginsKey + "[" + name + "]"
 }
 
+func fromField(name string) string {
+	return Label(name) + ".from"
+}
+
+func pubkeyField(name string) string {
+	return Label(name) + ".pubkey"
+}
+
 func absolutePath(configDir, raw, field string) (string, error) {
 	expanded, err := config.ExpandHome(field, raw)
 	if err != nil {
@@ -281,7 +288,7 @@ func absolutePath(configDir, raw, field string) (string, error) {
 	}
 	absolute, err := filepath.Abs(expanded)
 	if err != nil {
-		return "", internalerror.NewBadRequestError(field+" "+raw+" cannot be resolved to a path", err)
+		return "", internalerror.NewBadRequestError(field+" cannot be resolved to a path", err)
 	}
 	return absolute, nil
 }

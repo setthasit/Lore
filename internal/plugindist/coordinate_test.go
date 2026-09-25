@@ -219,10 +219,89 @@ func TestCoordinateRefusesABlankPubKey(t *testing.T) {
 		if !internalerror.IsBadRequest(err) {
 			t.Errorf("pubkey %q: kind = %v, want bad request", declared, internalerror.KindOf(err))
 		}
-		if !strings.Contains(err.Error(), "plugins[linear]") {
+		if !strings.Contains(err.Error(), "plugins[linear].pubkey") {
 			t.Errorf("error %q does not name the declaration", err)
 		}
 	}
+}
+
+var declaredFragments = []string{"fake-secret-q", "vault.example.org", "secret-path", "secret-owner", "secret-repo"}
+
+func assertNamesFieldNotValue(t *testing.T, err error, field string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("resolved, want a refusal")
+	}
+	if !internalerror.IsBadRequest(err) {
+		t.Errorf("kind = %v, want bad request", internalerror.KindOf(err))
+	}
+	if !strings.Contains(err.Error(), field) {
+		t.Errorf("error %q does not name %s", err, field)
+	}
+	for _, fragment := range declaredFragments {
+		if strings.Contains(err.Error(), fragment) {
+			t.Errorf("error %q quotes %q from the declared value", err, fragment)
+		}
+	}
+}
+
+func TestCoordinateRefusalsNameTheFieldNotTheValue(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name        string
+		from        string
+		resolveOnly bool
+	}{
+		{name: "plaintext", from: "http://vault.example.org/secret-path/v1.0.0.tar.gz?token=fake-secret-q"},
+		{name: "not a coordinate", from: "ftp://vault.example.org/secret-path/a?token=fake-secret-q"},
+		{name: "invalid url", from: "https://vault.example.org:secret-path/v1.0.0.tar.gz?token=fake-secret-q"},
+		{name: "hostless url", from: "https:///secret-path/v1.0.0.tar.gz?token=fake-secret-q"},
+		{name: "unversioned url", from: "https://vault.example.org/.secret-path?token=fake-secret-q"},
+		{name: "no repository", from: "github.com/secret-owner@fake-secret-q"},
+		{name: "no version", from: "github.com/secret-owner/secret-repo?token=fake-secret-q"},
+		{name: "inexact version", from: "github.com/secret-owner/secret-repo@fake-secret-q"},
+		{name: "floating version", from: "github.com/secret-owner/secret-repo@latest", resolveOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			decl := config.PluginDecl{Name: "linear", From: tc.from}
+			_, err := Resolve(".", decl)
+			assertNamesFieldNotValue(t, err, "plugins[linear].from")
+			if tc.resolveOnly {
+				return
+			}
+			_, err = ResolveInstall(".", decl)
+			assertNamesFieldNotValue(t, err, "plugins[linear].from")
+		})
+	}
+}
+
+func TestCoordinateRefusesToMoveAURLVersionWithoutQuotingIt(t *testing.T) {
+	t.Parallel()
+
+	coord, err := Resolve(".", config.PluginDecl{
+		Name: "linear", From: "https://vault.example.org/secret-path/v1.0.0.tar.gz?token=fake-secret-q",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	_, err = coord.AtVersion("v2.0.0")
+	assertNamesFieldNotValue(t, err, "plugins[linear].from")
+}
+
+func TestCoordinateHomelessPathRefusalsNameTheField(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	_, err := Resolve(t.TempDir(), config.PluginDecl{Name: "linear", From: "~/secret-path/fake-secret-q"})
+	assertNamesFieldNotValue(t, err, "plugins[linear].from")
+
+	_, err = Resolve(t.TempDir(), config.PluginDecl{
+		Name: "linear", From: "github.com/jdoe/lore-linear@v0.3.1", PubKey: "~/secret-path/fake-secret-q.pub",
+	})
+	assertNamesFieldNotValue(t, err, "plugins[linear].pubkey")
 }
 
 func TestCoordinateKeepsPubKeyAcrossAtVersion(t *testing.T) {
