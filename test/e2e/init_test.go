@@ -9,6 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/envx"
+	"github.com/setthasit/Lore/plugins"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // cli keeps its exit codes unexported; this is the one it returns on success.
@@ -35,23 +38,34 @@ func TestInitScaffoldDecodesForTheOfficialPluginSet(t *testing.T) {
 	if err := yaml.Unmarshal(written, &tree); err != nil {
 		t.Fatalf("the scaffold is not valid YAML: %v", err)
 	}
-	assertNoSecretValues(t, scaffold)
+	assertSecretsReferenceTheEnvironment(t, scaffold, plugins.Official()...)
 	t.Logf("scaffold for the official plugin set:\n%s", scaffold)
 }
 
-// A *_env key names a variable; anything else that looks like a credential key would be holding the credential.
-func assertNoSecretValues(t *testing.T, content string) {
+func assertSecretsReferenceTheEnvironment(t *testing.T, content string, declaring ...lore.Plugin) {
 	t.Helper()
 
+	keys := map[string]bool{}
+	for _, plugin := range declaring {
+		for _, secret := range plugin.Manifest().Secrets {
+			keys[secret.Key] = true
+		}
+	}
+	secrets := 0
 	for _, line := range strings.Split(content, "\n") {
-		key, _, assigns := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), ":")
-		if !assigns {
+		key, value, assigns := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), ":")
+		if !assigns || !keys[key] {
 			continue
 		}
-		for _, secretish := range []string{"token", "key", "secret", "password"} {
-			if strings.HasSuffix(key, secretish) {
-				t.Errorf("line %q assigns a secret directly; only *_env keys are allowed", line)
-			}
+		secrets++
+		value, _, _ = strings.Cut(value, " #")
+		name, expands := strings.CutPrefix(strings.TrimSpace(value), "${env:")
+		name, closed := strings.CutSuffix(name, "}")
+		if !expands || !closed || !envx.ValidName(name) {
+			t.Errorf("line %q holds a credential; a secret must read ${env:VAR}", line)
 		}
+	}
+	if secrets == 0 {
+		t.Errorf("no secret line to check in\n%s", content)
 	}
 }

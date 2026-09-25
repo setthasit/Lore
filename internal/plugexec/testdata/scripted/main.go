@@ -85,7 +85,7 @@ func run(out *bufio.Writer, s step, req request) {
 		_ = out.Flush()
 	case "bigline":
 		size, _ := strconv.Atoi(s.arg)
-		fmt.Fprintf(out, `{"v":1,"id":%q,"ok":true,"text":%q}`+"\n", req.ID, strings.Repeat("x", size))
+		fmt.Fprintf(out, `{"v":%d,"id":%q,"ok":true,"text":%q}`+"\n", req.V, req.ID, strings.Repeat("x", size))
 		_ = out.Flush()
 	case "stderr":
 		fmt.Fprintln(os.Stderr, expand(s.arg, req))
@@ -107,6 +107,7 @@ func run(out *bufio.Writer, s step, req request) {
 }
 
 func expand(text string, req request) string {
+	text = strings.ReplaceAll(text, "$V", strconv.Itoa(req.V))
 	text = strings.ReplaceAll(text, "$ID", req.ID)
 	text = strings.ReplaceAll(text, "$OP", req.Op)
 	text = strings.ReplaceAll(text, "$NTEXTS", strconv.Itoa(len(req.Texts)))

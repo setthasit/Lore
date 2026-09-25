@@ -70,20 +70,20 @@ func pluginStub(t *testing.T) string {
 var pluginScript = manifestScript(sourceManifest("", ""))
 
 func sourceManifest(fields, secrets string) string {
-	return `{"name":"linear","kind":"source","api_version":1,` +
+	return `{"name":"linear","kind":"source","api_version":$V,` +
 		`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,` +
 		`"repo_remotes":false},"fields":[` + fields + `],"secrets":[` + secrets + `]}`
 }
 
 func ticketsManifest() string {
 	return sourceManifest(`{"name":"team","type":"string","required":true}`,
-		`{"key":"token","config_field":"token_env"}`)
+		`{"key":"token"}`)
 }
 
 func manifestScript(manifest string) string {
-	return `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":` + manifest + `}
+	return `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":` + manifest + `}
 
-shutdown emit {"v":1,"id":"$ID","ok":true}
+shutdown emit {"v":$V,"id":"$ID","ok":true}
 `
 }
 
@@ -247,7 +247,7 @@ func declaredConfig(from string) string {
 func ticketsConfig(from string) string {
 	return declaredConfig(from) +
 		"\nsources:\n  - id: tickets\n    use: linear\n    with:\n      team: PLATFORM\n" +
-		"      token_env: LORE_LINEAR_TOKEN\n"
+		"      token: ${env:LORE_LINEAR_TOKEN}\n"
 }
 
 func lockFile(t *testing.T, configPath string) string {
@@ -536,7 +536,7 @@ func TestPluginVerifyCertifiesWithTheDeclaredInstancesConfiguration(t *testing.T
 	fake := newFakeReleases(t)
 	t.Setenv("LORE_LINEAR_TOKEN", "fake-linear-token")
 	publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(ticketsManifest(),
-		`{"v":1,"id":"$ID","error":{"kind":"invalid_config",`+
+		`{"v":$V,"id":"$ID","error":{"kind":"invalid_config",`+
 			`"message":"got team=$CONFIG{team} token=$SECRET{token}"}}`))
 	path := writeConfigFile(t, ticketsConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
@@ -574,7 +574,7 @@ func TestPluginVerifyReportsNotRunWhenAnUndeclaredPluginWantsConfiguration(t *te
 		t.Run(test.kind, func(t *testing.T) {
 			fake := newFakeReleases(t)
 			publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(sourceManifest("", ""),
-				`{"v":1,"id":"$ID","error":{"kind":"`+test.kind+`","message":"`+test.reason+`"}}`))
+				`{"v":$V,"id":"$ID","error":{"kind":"`+test.kind+`","message":"`+test.reason+`"}}`))
 			path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 			if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -602,7 +602,7 @@ func TestPluginVerifyReportsNotRunWhenAnUndeclaredPluginWantsConfiguration(t *te
 func TestPluginVerifyReportsTheReducedCountOfAnEmptyStream(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub(t),
-		streamingScript(sourceManifest("", ""), `{"v":1,"id":"$ID","done":true}`))
+		streamingScript(sourceManifest("", ""), `{"v":$V,"id":"$ID","done":true}`))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
 	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
@@ -629,10 +629,10 @@ func TestPluginVerifyReportsTheReducedCountOfAnEmptyStream(t *testing.T) {
 func TestPluginVerifyFailsAnUndeclaredPluginThatBreaksAfterOpeningTheStream(t *testing.T) {
 	fake := newFakeReleases(t)
 	publishPlugin(t, fake, "v0.3.1", pluginStub(t), streamingScript(sourceManifest("", ""),
-		`{"v":1,"id":"$ID","batch":{"docs":[{"id":"linear:ticket:1","source":"linear",`+
+		`{"v":$V,"id":"$ID","batch":{"docs":[{"id":"linear:ticket:1","source":"linear",`+
 			`"type":"ticket","title":"Ticket 1","created_at":"2026-08-10T09:00:00Z",`+
 			`"updated_at":"2026-08-10T17:30:00Z"}],"cursor":{"after":"1"}}}`,
-		`{"v":1,"id":"$ID","error":{"kind":"invalid_config",`+
+		`{"v":$V,"id":"$ID","error":{"kind":"invalid_config",`+
 			`"message":"the team vanished after the first batch"}}`))
 	path := writeConfigFile(t, declaredConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
@@ -658,28 +658,54 @@ func TestPluginVerifyFailsAnUndeclaredPluginThatBreaksAfterOpeningTheStream(t *t
 		conform.CheckIdempotent, conform.CheckResumable)
 }
 
-func TestPluginVerifyRefusesWhenTheDeclaredSecretIsUnset(t *testing.T) {
-	fake := newFakeReleases(t)
-	t.Setenv("LORE_LINEAR_TOKEN", "")
-	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(ticketsManifest()))
-	path := writeConfigFile(t, ticketsConfig("github.com/jdoe/lore-linear@v0.3.1"))
+func TestPluginVerifyRefusesWhenTheDeclaredSecretIsUnsetOrBlank(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		stage func(t *testing.T)
+		want  string
+	}{
+		{
+			name:  "unset",
+			stage: func(t *testing.T) { unsetEnv(t, "LORE_LINEAR_TOKEN") },
+			want:  "sources[tickets].with.token expands LORE_LINEAR_TOKEN, but LORE_LINEAR_TOKEN is not set",
+		},
+		{
+			name:  "blank",
+			stage: func(t *testing.T) { t.Setenv("LORE_LINEAR_TOKEN", "") },
+			want:  "sources[tickets].with.token expands LORE_LINEAR_TOKEN, but it is blank",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeReleases(t)
+			tt.stage(t)
+			publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(ticketsManifest()))
+			path := writeConfigFile(t, ticketsConfig("github.com/jdoe/lore-linear@v0.3.1"))
 
-	if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
-		t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
-	}
+			if res := run(t, nil, "plugin", "install", "--config", path); res.exitCode != exitOK {
+				t.Fatalf("install: exit = %d, stderr = %q", res.exitCode, res.stderr)
+			}
 
-	res := run(t, nil, "plugin", "verify", "linear", "--config", path)
-	if res.exitCode != exitBadRequest {
-		t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
-			res.exitCode, exitBadRequest, res.stdout, res.stderr)
+			res := run(t, nil, "plugin", "verify", "linear", "--config", path)
+			if res.exitCode != exitBadRequest {
+				t.Fatalf("exit = %d, want %d; stdout = %q, stderr = %q",
+					res.exitCode, exitBadRequest, res.stdout, res.stderr)
+			}
+			if !strings.Contains(res.stderr, tt.want) {
+				t.Errorf("stderr %q does not contain %q", res.stderr, tt.want)
+			}
+			if strings.Contains(res.stdout, "conformance") {
+				t.Errorf("stdout %q certified anyway", res.stdout)
+			}
+		})
 	}
-	for _, want := range []string{"sources[tickets].with.token_env", "LORE_LINEAR_TOKEN"} {
-		if !strings.Contains(res.stderr, want) {
-			t.Errorf("stderr %q does not name %q", res.stderr, want)
-		}
-	}
-	if strings.Contains(res.stdout, "conformance") {
-		t.Errorf("stdout %q certified anyway", res.stdout)
+}
+
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+
+	t.Setenv(name, "")
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset %s: %v", name, err)
 	}
 }
 
@@ -945,7 +971,7 @@ func TestRenderCertificationMakesAFindingsDocumentIDInert(t *testing.T) {
 
 func TestPluginInstallReportsAnExecutedManifestSummaryInert(t *testing.T) {
 	fake := newFakeReleases(t)
-	const manifest = `{"name":"linear","kind":"source","api_version":1,` +
+	const manifest = `{"name":"linear","kind":"source","api_version":$V,` +
 		`"summary":"a scripted \u001b[2J external source",` +
 		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}`
 	publishPlugin(t, fake, "v0.3.1", pluginStub(t), manifestScript(manifest))

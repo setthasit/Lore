@@ -8,7 +8,7 @@ import (
 
 // APIVersion mismatch is fatal: the host refuses the plugin, because indexing
 // over a contract the two sides disagree on corrupts the index beyond repair.
-const APIVersion = 1
+const APIVersion = 2
 
 type Kind string
 
@@ -170,12 +170,11 @@ type Field struct {
 	Prompt string `json:"prompt,omitempty"` // question `lore source add` asks; defaults to Name
 }
 
-// Secret is a credential the host injects: the plugin names Key, the operator
-// names the env var holding it in ConfigField. A plugin never reads the environment.
+// Secret is a credential in the operator's `with:` key named Key; the host resolves its
+// value, literal or `${env:VAR}`, and injects it under Key. A plugin never reads the environment.
 type Secret struct {
-	Key         string `json:"key"`
-	ConfigField string `json:"config_field"`
-	Optional    bool   `json:"optional,omitempty"`
-	DefaultEnv  string `json:"default_env,omitempty"`
-	Doc         string `json:"doc,omitempty"`
+	Key        string `json:"key"`
+	Optional   bool   `json:"optional,omitempty"`
+	DefaultEnv string `json:"default_env,omitempty"` // read when the field is absent; compiled-in plugins only
+	Doc        string `json:"doc,omitempty"`
 }

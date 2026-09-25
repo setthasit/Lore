@@ -3,6 +3,7 @@ package registry
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 
@@ -205,11 +206,20 @@ func (r *Registry) BuildCode(clones []LocalClone) ([]Code, error) {
 // Secrets stay unresolved here: an instance no role binds must not demand an exported variable.
 func (r *Registry) CheckDeclarations(instances []Instance, kind lore.Kind) error {
 	for _, in := range instances {
-		_, _, manifest, _, err := r.resolve(in, kind)
+		_, _, manifest, origin, err := r.resolve(in, kind)
 		if err != nil {
 			return err
 		}
-		if err := checkKeys(manifest, in); err != nil {
+		in.With = maps.Clone(in.With)
+		for key := range secretKeys(manifest) {
+			delete(in.With, key)
+		}
+		with, vars, err := expandWith(manifest, in, origin)
+		if err != nil {
+			return err
+		}
+		in.With = with
+		if err := checkKeys(manifest, in, vars); err != nil {
 			return err
 		}
 	}

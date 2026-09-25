@@ -5,11 +5,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const seeded = `workspace: myproject
@@ -18,7 +20,7 @@ const seeded = `workspace: myproject
 sources:
   - use: forge                             # the starter instance
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos: []
 
 # Local clones, for blame and file history only.
@@ -33,11 +35,11 @@ const forgeAnswers = "\nacme/app\n\n\n\n\n"
 
 const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
 
-const linearManifest = `{"name":"linear","kind":"source","api_version":1,` +
+var linearManifest = `{"name":"linear","kind":"source","api_version":` + strconv.Itoa(lore.APIVersion) + `,` +
 	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
 	`"fields":[{"name":"team","type":"string","required":true,"prompt":"Linear team key"},` +
 	`{"name":"include_backlog","type":"bool","prompt":"Include the backlog"}],` +
-	`"secrets":[{"key":"api_key","config_field":"api_key_env","default_env":"LINEAR_API_KEY"}]}`
+	`"secrets":[{"key":"api_key","default_env":"LINEAR_API_KEY"}]}`
 
 func TestSourceAddAppendsASequenceItem(t *testing.T) {
 	path := writeConfigFile(t, seeded)
@@ -53,11 +55,11 @@ func TestSourceAddAppendsASequenceItem(t *testing.T) {
 sources:
   - use: forge                             # the starter instance
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos: []
   - use: tracker
     with:
-      token_env: LORE_TRACKER_TOKEN
+      api_token: ${env:LORE_TRACKER_TOKEN}
       base_url: https://tracker.example
       projects:
         - PROJ
@@ -132,7 +134,7 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 	const item = `  - id: forge-infra
     use: forge
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos:
         - acme/app
       base_url: https://forge.example
@@ -238,7 +240,7 @@ const seededWithExpandedUse = `workspace: myproject
 sources:
   - use: ${env:LORE_SRC_USE}
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos: []
 
 embedder:
@@ -265,12 +267,12 @@ func TestSourceAddChecksIDsAgainstTheExpandedSources(t *testing.T) {
 sources:
   - use: ${env:LORE_SRC_USE}
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos: []
   - id: forge-infra
     use: forge
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
       repos:
         - acme/app
       base_url: https://forge.example
@@ -293,10 +295,7 @@ embedder:
 }
 
 func TestSourceAddNamesTheFieldOfAnUnsetVariable(t *testing.T) {
-	t.Setenv("LORE_SRC_USE", "")
-	if err := os.Unsetenv("LORE_SRC_USE"); err != nil {
-		t.Fatalf("unset LORE_SRC_USE: %v", err)
-	}
+	unsetEnv(t, "LORE_SRC_USE")
 	path := writeConfigFile(t, seededWithExpandedUse)
 
 	res := runOn(t, sourceRegistry(t), nil, forgeAnswers, "source", "add", "forge", "--config", path)
@@ -383,10 +382,10 @@ func TestSourceAddWritesOnlyVariableNamesForSecrets(t *testing.T) {
 	}
 
 	after := readConfigFile(t, path)
-	if !strings.Contains(after, "token_env: TRACKER_PAT") {
+	if !strings.Contains(after, "api_token: ${env:TRACKER_PAT}") {
 		t.Errorf("file =\n%s\nwant the variable name the operator gave", after)
 	}
-	assertNoSecretValues(t, after)
+	assertSecretsReferenceTheEnvironment(t, after, forgePlugin(), trackerPlugin())
 	assertPromptsAskForNamesOnly(t, res.stdout)
 }
 
@@ -445,7 +444,7 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			name:    "an env var name that is not a variable name",
 			plugin:  "tracker",
 			answers: "not a name!\n\n",
-			wantErr: "sources[tracker].with.token_env must be an environment variable name like LORE_TRACKER_TOKEN",
+			wantErr: "sources[tracker].with.api_token must be an environment variable name like LORE_TRACKER_TOKEN",
 		},
 		{
 			name:    "an instance id the runtime would reject, never replaced",
@@ -538,8 +537,8 @@ func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
 	}
 
 	const transcript = "the questions below are the ones this plugin's own manifest declares;" +
-		" answer each one with configuration, and a secret with the NAME of an environment variable," +
-		" never the value\n" +
+		" answer each one with configuration; a secret's field holds the credential, and for it you give the NAME" +
+		" of the environment variable holding it, written as ${env:VAR} so the value stays out of lore.yaml\n" +
 		"name of the environment variable holding the linear api key — the name, never the value: " +
 		"Linear team key: " +
 		"Include the backlog: "
@@ -555,7 +554,7 @@ func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
 	after := readConfigFile(t, path)
 	const item = `  - use: linear
     with:
-      api_key_env: LINEAR_TOKEN
+      api_key: ${env:LINEAR_TOKEN}
       team: SRE
       include_backlog: true
 `
@@ -575,7 +574,7 @@ func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("with: does not decode: %v", err)
 	}
-	for key, want := range map[string]any{"api_key_env": "LINEAR_TOKEN", "team": "SRE", "include_backlog": true} {
+	for key, want := range map[string]any{"api_key": "${env:LINEAR_TOKEN}", "team": "SRE", "include_backlog": true} {
 		if values[key] != want {
 			t.Errorf("with.%s = %v, want %v", key, values[key], want)
 		}
@@ -602,10 +601,10 @@ func TestSourceAddRefusesACaptureTheRuntimeRejects(t *testing.T) {
 			wantErr:  `plugin "linear" declares field "TeamKey"; a field name must be snake_case`,
 		},
 		{
-			name:     "a secret whose config field would hold the credential",
-			manifest: strings.Replace(linearManifest, `"config_field":"api_key_env"`, `"config_field":"api_key"`, 1),
+			name:     "a secret key that is not snake_case",
+			manifest: strings.Replace(linearManifest, `"key":"api_key"`, `"key":"ApiKey"`, 1),
 			wantExit: exitInternal,
-			wantErr:  `plugin "linear" declares secret "api_key" with config field "api_key"`,
+			wantErr:  `plugin "linear" declares secret key "ApiKey"; a secret key must be snake_case`,
 		},
 	}
 

@@ -45,10 +45,9 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "api_key",
-				ConfigField: "api_key_env",
-				Optional:    true,
-				Doc:         "vendor API key, sent as a bearer token; a local server that authenticates nothing needs none",
+				Key:      "api_key",
+				Optional: true,
+				Doc:      "vendor API key, sent as a bearer token; a local server that authenticates nothing needs none",
 			},
 		},
 	}

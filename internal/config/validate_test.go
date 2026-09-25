@@ -30,7 +30,7 @@ plugins:
 sources:
   - use: github
     with:
-      token_env: LORE_GITHUB_TOKEN
+      token: ${env:LORE_GITHUB_TOKEN}
       repos:
         - acme/myproject
         - acme/myproject-infra
@@ -39,14 +39,14 @@ sources:
     with: { base_url: https://acme.atlassian.net, projects: [PROJ, INFRA] }
   - id: linear
     use: linear
-    with: { team: PLATFORM, token_env: LORE_LINEAR_TOKEN }
+    with: { team: PLATFORM, token: "${env:LORE_LINEAR_TOKEN}" }
 
 providers:
   - id: openrouter
     use: openai-compatible
     with:
       base_url: https://openrouter.ai/api
-      api_key_env: LORE_OPENROUTER_KEY
+      api_key: ${env:LORE_OPENROUTER_KEY}
 
 embedder:
   provider: openai
@@ -602,9 +602,9 @@ func TestInstanceWithValues(t *testing.T) {
 		},
 		{
 			name: "a mapping decodes to generic values the registry can check",
-			yaml: "- use: github\n  with: { token_env: LORE_GITHUB_TOKEN, repos: [acme/app], depth: 3 }\n",
+			yaml: "- use: github\n  with: { token: \"${env:LORE_GITHUB_TOKEN}\", repos: [acme/app], depth: 3 }\n",
 			check: func(t *testing.T, values map[string]any) {
-				if values["token_env"] != "LORE_GITHUB_TOKEN" || values["depth"] != 3 {
+				if values["token"] != "${env:LORE_GITHUB_TOKEN}" || values["depth"] != 3 {
 					t.Errorf("WithValues() = %v", values)
 				}
 				repos, ok := values["repos"].([]any)

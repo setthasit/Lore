@@ -394,12 +394,12 @@ func writeServeConfig(t *testing.T, addr string) (configPath, indexPath string) 
 		"sources:\n" +
 		"  - use: github\n" +
 		"    with:\n" +
-		"      token_env: " + fixtureTokenEnv + "\n" +
+		"      token: ${env:" + fixtureTokenEnv + "}\n" +
 		"      repos: [" + fixtureRepo + "]\n" +
 		"providers:\n" +
 		"  - use: openai\n" +
 		"    with:\n" +
-		"      api_key_env: " + embedderKeyEnv + "\n" +
+		"      api_key: ${env:" + embedderKeyEnv + "}\n" +
 		"embedder:\n" +
 		"  provider: openai\n" +
 		"  model: text-embedding-3-small\n" +

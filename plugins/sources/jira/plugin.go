@@ -29,16 +29,14 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "email",
-				ConfigField: "email_env",
-				DefaultEnv:  "LORE_JIRA_EMAIL",
-				Doc:         "Atlassian account email the API token belongs to; Jira Cloud authenticates the pair, not the token alone.",
+				Key:        "email",
+				DefaultEnv: "LORE_JIRA_EMAIL",
+				Doc:        "Atlassian account email the API token belongs to; Jira Cloud authenticates the pair, not the token alone.",
 			},
 			{
-				Key:         "token",
-				ConfigField: "token_env",
-				DefaultEnv:  "LORE_JIRA_TOKEN",
-				Doc:         "Atlassian API token for that account.",
+				Key:        "token",
+				DefaultEnv: "LORE_JIRA_TOKEN",
+				Doc:        "Atlassian API token for that account.",
 			},
 		},
 	}

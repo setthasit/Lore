@@ -18,7 +18,7 @@ const editable = `workspace: myproject
 sources:
   - use: forge                             # the starter instance
     with:
-      token_env: LORE_FORGE_TOKEN
+      token: ${env:LORE_FORGE_TOKEN}
 `
 
 // Every byte of an excerpt can escape to \xNN, so the widest quoted detail is what an all-NUL excerpt renders to.

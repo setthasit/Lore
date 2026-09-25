@@ -154,7 +154,7 @@ func TestPluginBuildsWithoutAnAPIKey(t *testing.T) {
 		return s.Key == "api_key" && s.Optional
 	})
 	if !optional {
-		t.Fatal("the manifest does not mark api_key optional, so a host refuses an instance that names no variable")
+		t.Fatal("the manifest does not mark api_key optional, so a host refuses an instance that sets no api_key")
 	}
 
 	ts := httpxtest.NewServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {

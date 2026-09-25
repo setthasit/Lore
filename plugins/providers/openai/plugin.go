@@ -43,10 +43,9 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "api_key",
-				ConfigField: "api_key_env",
-				DefaultEnv:  "OPENAI_API_KEY",
-				Doc:         "OpenAI API key, sent as a bearer token",
+				Key:        "api_key",
+				DefaultEnv: "OPENAI_API_KEY",
+				Doc:        "OpenAI API key, sent as a bearer token",
 			},
 		},
 	}

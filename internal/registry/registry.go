@@ -289,21 +289,16 @@ func validateFields(m lore.Manifest) error {
 			return internalerror.NewInternalError(fmt.Sprintf(
 				"plugin %q declares secret key %q; a secret key must be snake_case", m.Name, s.Key), nil)
 		}
-		if !keyPattern.MatchString(s.ConfigField) || !strings.HasSuffix(s.ConfigField, "_env") {
-			return internalerror.NewInternalError(fmt.Sprintf(
-				"plugin %q declares secret %q with config field %q; it must be snake_case and end in _env, because it names an environment variable rather than holding a value",
-				m.Name, s.Key, s.ConfigField), nil)
-		}
 		if s.DefaultEnv != "" && !envx.ValidName(s.DefaultEnv) {
 			return internalerror.NewInternalError(fmt.Sprintf(
 				"plugin %q declares secret %q with default env %q, which is not an environment variable name",
 				m.Name, s.Key, s.DefaultEnv), nil)
 		}
-		if where, taken := seen[s.ConfigField]; taken {
+		if where, taken := seen[s.Key]; taken {
 			return internalerror.NewInternalError(fmt.Sprintf(
-				"plugin %q declares %q twice (%s and secret config field)", m.Name, s.ConfigField, where), nil)
+				"plugin %q declares %q twice (%s and secret)", m.Name, s.Key, where), nil)
 		}
-		seen[s.ConfigField] = "secret config field"
+		seen[s.Key] = "secret"
 	}
 	return nil
 }

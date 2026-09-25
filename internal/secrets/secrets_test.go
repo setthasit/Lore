@@ -331,40 +331,62 @@ func TestWriterWrite(t *testing.T) {
 func TestNotices(t *testing.T) {
 	t.Parallel()
 
-	type record struct{ field, value string }
-	notice := func(fields string) []string {
-		return []string{"secrets shorter than 8 characters are not scrubbed: " + fields}
+	type record struct {
+		field, value string
+		literal      bool
+	}
+	short := func(fields string) string {
+		return "secrets shorter than 8 characters are not scrubbed: " + fields
+	}
+	literal := func(fields string) string {
+		return "secrets written as literal values in the config: " + fields + "; write ${env:VAR} to keep a credential out of the file"
 	}
 	cases := map[string]struct {
 		records []record
 		want    []string
 	}{
 		"nil when every value is long enough": {
-			records: []record{{"token", plain}, {"key", "fake1234"}},
+			records: []record{{"token", plain, false}, {"key", "fake1234", false}},
 			want:    nil,
 		},
 		"a short value names its field": {
-			records: []record{{"token", plain}, {"pin", "fake123"}},
-			want:    notice("pin"),
+			records: []record{{"token", plain, false}, {"pin", "fake123", false}},
+			want:    []string{short("pin")},
 		},
 		"padding does not lengthen a value": {
-			records: []record{{"pin", "  fake123\t\n "}},
-			want:    notice("pin"),
+			records: []record{{"pin", "  fake123\t\n ", false}},
+			want:    []string{short("pin")},
 		},
 		"length counts characters, not bytes": {
-			records: []record{{"pin", "fäkeñ12"}},
-			want:    notice("pin"),
+			records: []record{{"pin", "fäkeñ12", false}},
+			want:    []string{short("pin")},
 		},
 		"an empty field is named (unnamed)": {
-			records: []record{{"", "fake123"}},
-			want:    notice("(unnamed)"),
+			records: []record{{"", "fake123", false}},
+			want:    []string{short("(unnamed)")},
 		},
 		"each field is named once, in recording order": {
-			records: []record{{"pin", "fake123"}, {"code", "fake456"}, {"pin", "fake789"}},
-			want:    notice("pin, code"),
+			records: []record{{"pin", "fake123", false}, {"code", "fake456", false}, {"pin", "fake789", false}},
+			want:    []string{short("pin, code")},
 		},
 		"a blank value is ignored": {
-			records: []record{{"token", " \t\n"}},
+			records: []record{{"token", " \t\n", false}},
+			want:    nil,
+		},
+		"every literal field shares one line, each named once, in recording order": {
+			records: []record{{"a.token", plain, true}, {"b.token", "fake-other-value", true}, {"a.token", plain, true}},
+			want:    []string{literal("a.token, b.token")},
+		},
+		"a short literal gets the literal line, then the short line": {
+			records: []record{{"pin", "fake123", false}, {"code", "fake456", true}},
+			want:    []string{literal("code"), short("pin, code")},
+		},
+		"an empty literal field is named (unnamed)": {
+			records: []record{{"", plain, true}},
+			want:    []string{literal("(unnamed)")},
+		},
+		"a blank literal is ignored": {
+			records: []record{{"token", " \t\n", true}},
 			want:    nil,
 		},
 	}
@@ -375,7 +397,11 @@ func TestNotices(t *testing.T) {
 
 			sink := &secrets.Sink{}
 			for _, r := range c.records {
-				sink.Record(r.field, r.value)
+				if r.literal {
+					sink.RecordLiteral(r.field, r.value)
+				} else {
+					sink.Record(r.field, r.value)
+				}
 			}
 			if got := sink.Notices(); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("Notices() = %#v, want %#v", got, c.want)
@@ -384,11 +410,25 @@ func TestNotices(t *testing.T) {
 	}
 }
 
+func TestRecordLiteralScrubsTheValue(t *testing.T) {
+	t.Parallel()
+
+	const value = `fake"literal-123456789`
+	sink := &secrets.Sink{}
+	sink.RecordLiteral("token", value)
+
+	text := fmt.Sprintf("token=%s err=%q", value, value)
+	if got, want := sink.Scrub(text), `token=[redacted] err="[redacted]"`; got != want {
+		t.Errorf("Scrub(%q) = %q, want %q", text, got, want)
+	}
+}
+
 func TestNilSink(t *testing.T) {
 	t.Parallel()
 
 	var sink *secrets.Sink
 	sink.Record("token", plain)
+	sink.RecordLiteral("token", plain)
 
 	if got := sink.Scrub(plain); got != plain {
 		t.Errorf("Scrub() = %q, want %q", got, plain)

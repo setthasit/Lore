@@ -31,10 +31,9 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "token",
-				ConfigField: "token_env",
-				DefaultEnv:  "LORE_GITLAB_TOKEN",
-				Doc:         "Personal or group access token with read_api scope.",
+				Key:        "token",
+				DefaultEnv: "LORE_GITLAB_TOKEN",
+				Doc:        "Personal or group access token with read_api scope.",
 			},
 		},
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -546,7 +547,7 @@ func TestPluginManifestReHandshakesOnceForAnUnusableCapture(t *testing.T) {
 		{
 			name: "the capture does not decode",
 			damage: func(t *testing.T, dir string) {
-				garbled := []byte(`{"name":"linear","kind":"source","api_version":1,"summary":123}`)
+				garbled := []byte(`{"name":"linear","kind":"source","api_version":` + strconv.Itoa(lore.APIVersion) + `,"summary":123}`)
 				if err := os.WriteFile(filepath.Join(dir, manifestFileName), garbled, 0o600); err != nil {
 					t.Fatalf("garble the capture: %v", err)
 				}

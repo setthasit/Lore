@@ -370,7 +370,7 @@ func TestWatchStreamsAFailureQuotingASecretRedacted(t *testing.T) {
 	const token = "fake-watch-token-3Rz8"
 
 	f := newRPCFixture(t)
-	f.sink.Record("LORE_FORGE_TOKEN (sources[forge].with.token_env)", token)
+	f.sink.Record("sources[forge].with.token", token)
 	published, _ := f.expectSubscribe()
 
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)

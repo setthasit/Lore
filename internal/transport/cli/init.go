@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
@@ -35,9 +36,10 @@ func newInitCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 		Use:   "init",
 		Short: "Write a lore.yaml scaffold for this workspace",
 		Long: "Writes a commented lore.yaml next to you, generated from the manifests of\n" +
-			"the plugins this build registers: a starter source instance to fill in and\n" +
-			"the secret-variable names it reads. It never touches an index: `lore sync`\n" +
-			"creates that on its first run.",
+			"the plugins this build registers: a starter source instance to fill in,\n" +
+			"whose secret fields hold the credential, scaffolded as " + envx.Form + " of a\n" +
+			"suggested variable; a literal works too. It never touches an index:\n" +
+			"`lore sync` creates that on its first run.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInit(cmd, *configPath, reg)
@@ -124,7 +126,8 @@ func (s *scaffold) render() string {
 	out.WriteString("# index_path: ~/.lore/" + s.workspace + ".db\n\n")
 
 	out.WriteString("# Sources say what to INGEST: one sequence item per instance, in sync order.\n")
-	out.WriteString("# Secrets are never stored here: an *_env key names an environment variable.\n")
+	out.WriteString("# A secret field holds the credential: " + envx.Form + " keeps it out of this file,\n")
+	out.WriteString("# and a literal value works too.\n")
 	out.WriteString("# `lore source add <plugin>` appends another instance; `lore plugin list` names them.\n")
 	out.WriteString("sources:\n")
 	out.WriteString(s.sourceItem())
@@ -187,7 +190,7 @@ func (s *scaffold) variables() []string {
 func withBlock(m lore.Manifest, indent string) string {
 	var out strings.Builder
 	for _, secret := range m.Secrets {
-		out.WriteString(scaffoldLine(indent, secret.ConfigField+": "+scalar(secret.DefaultEnv), secret.Doc))
+		out.WriteString(scaffoldLine(indent, secret.Key+": "+suggestedSecret(secret), secret.Doc))
 	}
 	for _, field := range m.Fields {
 		entry := field.Name + ": " + placeholder(field)
@@ -197,6 +200,13 @@ func withBlock(m lore.Manifest, indent string) string {
 		out.WriteString(scaffoldLine(indent, entry, field.Doc))
 	}
 	return out.String()
+}
+
+func suggestedSecret(secret lore.Secret) string {
+	if secret.DefaultEnv == "" {
+		return scalar("")
+	}
+	return envx.Reference(secret.DefaultEnv)
 }
 
 func placeholder(f lore.Field) string {

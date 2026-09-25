@@ -31,7 +31,7 @@ func publishRelease(t *testing.T, workspace *Workspace, coord Coordinate) {
 }
 
 func stubHandshake(_ context.Context, binary string) (lore.Manifest, error) {
-	return lore.Manifest{Name: filepath.Base(binary), Kind: lore.KindSource, APIVersion: 1}, nil
+	return lore.Manifest{Name: filepath.Base(binary), Kind: lore.KindSource, APIVersion: lore.APIVersion}, nil
 }
 
 type countingHandshake struct {

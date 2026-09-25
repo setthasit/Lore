@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
@@ -138,7 +139,12 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 		{
 			name:   "api version the host does not speak",
 			plugin: sourceWith(func(m *lore.Manifest) { m.APIVersion = lore.APIVersion + 1 }),
-			want:   "speaks api_version 2, host speaks 1",
+			want:   fmt.Sprintf("speaks api_version %d, host speaks %d", lore.APIVersion+1, lore.APIVersion),
+		},
+		{
+			name:   "api version the host no longer speaks",
+			plugin: sourceWith(func(m *lore.Manifest) { m.APIVersion = lore.APIVersion - 1 }),
+			want:   fmt.Sprintf("speaks api_version %d, host speaks %d", lore.APIVersion-1, lore.APIVersion),
 		},
 		{
 			name:   "no summary",
@@ -177,26 +183,33 @@ func TestRegisterRejectsAMisdeclaredManifest(t *testing.T) {
 			want: `with type "hostname"`,
 		},
 		{
-			name: "secret config field does not end in _env",
+			name: "secret key is not snake_case",
 			plugin: sourceWith(func(m *lore.Manifest) {
-				m.Secrets = []lore.Secret{{Key: "token", ConfigField: "token"}}
+				m.Secrets = []lore.Secret{{Key: "apiToken"}}
 			}),
-			want: "must be snake_case and end in _env",
+			want: `declares secret key "apiToken"; a secret key must be snake_case`,
 		},
 		{
 			name: "secret default env is not a variable name",
 			plugin: sourceWith(func(m *lore.Manifest) {
-				m.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "lore-token"}}
+				m.Secrets = []lore.Secret{{Key: "token", DefaultEnv: "lore-token"}}
 			}),
 			want: "which is not an environment variable name",
 		},
 		{
 			name: "a field and a secret claim the same key",
 			plugin: sourceWith(func(m *lore.Manifest) {
-				m.Fields = []lore.Field{{Name: "token_env", Type: lore.FieldString}}
-				m.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env"}}
+				m.Fields = []lore.Field{{Name: "token", Type: lore.FieldString}}
+				m.Secrets = []lore.Secret{{Key: "token"}}
 			}),
-			want: `declares "token_env" twice`,
+			want: `declares "token" twice (field and secret)`,
+		},
+		{
+			name: "two secrets claim the same key",
+			plugin: sourceWith(func(m *lore.Manifest) {
+				m.Secrets = []lore.Secret{{Key: "token"}, {Key: "token"}}
+			}),
+			want: `declares "token" twice (secret and secret)`,
 		},
 		{
 			name:   "provider serves no capability",

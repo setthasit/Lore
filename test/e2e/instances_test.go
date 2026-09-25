@@ -82,15 +82,15 @@ sources:
     with:
       base_url: %[2]s/acme
       projects: [ACME]
-      email_env: LORE_E2E_JIRA_EMAIL
-      token_env: LORE_E2E_JIRA_TOKEN
+      email: ${env:LORE_E2E_JIRA_EMAIL}
+      token: ${env:LORE_E2E_JIRA_TOKEN}
   - id: jira-legacy
     use: jira
     with:
       base_url: %[2]s/legacy
       projects: [OLD]
-      email_env: LORE_E2E_JIRA_EMAIL
-      token_env: LORE_E2E_JIRA_TOKEN
+      email: ${env:LORE_E2E_JIRA_EMAIL}
+      token: ${env:LORE_E2E_JIRA_TOKEN}
 embedder:
   provider: e2e-stub
   model: bag-of-words
@@ -105,15 +105,15 @@ sources:
     with:
       base_url: %[2]s/acme
       projects: [ACME]
-      email_env: LORE_E2E_JIRA_EMAIL
-      token_env: LORE_E2E_JIRA_TOKEN
+      email: ${env:LORE_E2E_JIRA_EMAIL}
+      token: ${env:LORE_E2E_JIRA_TOKEN}
   - id: jira-mirror
     use: jira
     with:
       base_url: %[2]s/acme
       projects: [ACME]
-      email_env: LORE_E2E_JIRA_EMAIL
-      token_env: LORE_E2E_JIRA_TOKEN
+      email: ${env:LORE_E2E_JIRA_EMAIL}
+      token: ${env:LORE_E2E_JIRA_TOKEN}
 embedder:
   provider: e2e-stub
   model: bag-of-words

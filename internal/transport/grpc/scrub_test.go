@@ -15,7 +15,7 @@ import (
 func TestScrubResultRedactsAMapValueHoldingASecret(t *testing.T) {
 	const token = "fake-map-token-8Wd4"
 	sink := &secrets.Sink{}
-	sink.Record("LORE_FORGE_TOKEN (sources[forge].with.token_env)", token)
+	sink.Record("sources[forge].with.token", token)
 
 	stringField := func(name string, number int32) *descriptorpb.FieldDescriptorProto {
 		return &descriptorpb.FieldDescriptorProto{

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -50,10 +51,9 @@ func forgePlugin() lore.Plugin {
 			{Name: "archived", Type: lore.FieldBool, Prompt: "Include archived repositories"},
 		},
 		Secrets: []lore.Secret{{
-			Key:         "token",
-			ConfigField: "token_env",
-			DefaultEnv:  "LORE_FORGE_TOKEN",
-			Doc:         "a read-only token for the listed repositories",
+			Key:        "token",
+			DefaultEnv: "LORE_FORGE_TOKEN",
+			Doc:        "a read-only token for the listed repositories",
 		}},
 	}}
 }
@@ -69,9 +69,8 @@ func trackerPlugin() lore.Plugin {
 			{Name: "projects", Type: lore.FieldStringList, Required: true, Prompt: "Project keys to sync, comma-separated"},
 		},
 		Secrets: []lore.Secret{{
-			Key:         "api_token",
-			ConfigField: "token_env",
-			DefaultEnv:  "LORE_TRACKER_TOKEN",
+			Key:        "api_token",
+			DefaultEnv: "LORE_TRACKER_TOKEN",
 		}},
 	}}
 }
@@ -85,9 +84,8 @@ func vectorsPlugin() lore.Plugin {
 		Capabilities:  lore.Capabilities{Embed: true},
 		DefaultModels: map[lore.Capability]string{lore.CapabilityEmbed: "embed-small"},
 		Secrets: []lore.Secret{{
-			Key:         "api_key",
-			ConfigField: "api_key_env",
-			DefaultEnv:  "VECTORS_API_KEY",
+			Key:        "api_key",
+			DefaultEnv: "VECTORS_API_KEY",
 		}},
 	}}
 }
@@ -101,16 +99,15 @@ func chatterPlugin() lore.Plugin {
 		Capabilities:  lore.Capabilities{Complete: true},
 		DefaultModels: map[lore.Capability]string{lore.CapabilityComplete: "chat-large"},
 		Secrets: []lore.Secret{{
-			Key:         "api_key",
-			ConfigField: "api_key_env",
-			DefaultEnv:  "CHATTER_API_KEY",
+			Key:        "api_key",
+			DefaultEnv: "CHATTER_API_KEY",
 		}},
 	}}
 }
 
 func chatterReading(variable string) lore.Plugin {
 	p := chatterPlugin().(stubProvider)
-	p.manifest.Secrets = []lore.Secret{{Key: "api_key", ConfigField: "api_key_env", DefaultEnv: variable}}
+	p.manifest.Secrets = []lore.Secret{{Key: "api_key", DefaultEnv: variable}}
 	return p
 }
 
@@ -137,10 +134,9 @@ func hostileSourcePlugin() lore.Plugin {
 			},
 		},
 		Secrets: []lore.Secret{{
-			Key:         "api_token",
-			ConfigField: "token_env",
-			DefaultEnv:  "HOSTILE_API_TOKEN",
-			Doc:         "a read-only token\u2028      also_injected: true",
+			Key:        "api_token",
+			DefaultEnv: "HOSTILE_API_TOKEN",
+			Doc:        "a read-only token\u2028      also_injected: true",
 		}},
 	}}
 }
@@ -182,7 +178,7 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 		"workspace: " + filepath.Base(dir),
 		"# index_path: ~/.lore/" + filepath.Base(dir) + ".db",
 		"sources:\n  - use: forge\n    with:\n",
-		"      token_env: LORE_FORGE_TOKEN",
+		"      token: ${env:LORE_FORGE_TOKEN}",
 		"      repos: []",
 		"      # base_url: https://forge.example",
 		"      # since: \"\"",
@@ -207,7 +203,7 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 	if strings.Contains(scaffold, "tracker") {
 		t.Errorf("scaffold names a plugin that is not the starter\n--- scaffold ---\n%s", scaffold)
 	}
-	assertNoSecretValues(t, scaffold)
+	assertSecretsReferenceTheEnvironment(t, scaffold, forgePlugin(), trackerPlugin(), vectorsPlugin(), chatterPlugin())
 
 	cfg := decodeConfigFile(t, scaffold)
 	if len(cfg.Sources) != 1 || cfg.Sources[0].Use != "forge" {
@@ -217,8 +213,8 @@ func TestInitRendersTheStarterPluginsFromTheirManifests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("with: does not decode: %v", err)
 	}
-	if values["token_env"] != "LORE_FORGE_TOKEN" {
-		t.Errorf("with.token_env = %v, want the manifest's default variable", values["token_env"])
+	if values["token"] != "${env:LORE_FORGE_TOKEN}" {
+		t.Errorf("with.token = %v, want an expansion of the manifest's default variable", values["token"])
 	}
 	if repos, ok := values["repos"].([]any); !ok || len(repos) != 0 {
 		t.Errorf("with.repos = %v, want an empty placeholder list", values["repos"])
@@ -362,19 +358,31 @@ func TestInitKeepsTheLanguageModelNoteForAVariableOnlyTheSourceNames(t *testing.
 	}
 }
 
-func assertNoSecretValues(t *testing.T, content string) {
+func assertSecretsReferenceTheEnvironment(t *testing.T, content string, declaring ...lore.Plugin) {
 	t.Helper()
 
+	keys := map[string]bool{}
+	for _, plugin := range declaring {
+		for _, secret := range plugin.Manifest().Secrets {
+			keys[secret.Key] = true
+		}
+	}
+	secrets := 0
 	for _, line := range strings.Split(content, "\n") {
-		key, _, assigns := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), ":")
-		if !assigns {
+		key, value, assigns := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), ":")
+		if !assigns || !keys[key] {
 			continue
 		}
-		for _, secretish := range []string{"token", "key", "secret", "password"} {
-			if strings.HasSuffix(key, secretish) {
-				t.Errorf("line %q assigns a secret directly; only *_env keys are allowed", line)
-			}
+		secrets++
+		value, _, _ = strings.Cut(value, " #")
+		name, expands := strings.CutPrefix(strings.TrimSpace(value), "${env:")
+		name, closed := strings.CutSuffix(name, "}")
+		if !expands || !closed || !envx.ValidName(name) {
+			t.Errorf("line %q holds a credential; a secret must read ${env:VAR}", line)
 		}
+	}
+	if secrets == 0 {
+		t.Errorf("no secret line to check in\n%s", content)
 	}
 }
 
@@ -527,8 +535,8 @@ func TestInitScaffoldsAHostileManifestAsOneCommentPerLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("with: does not decode: %v", err)
 	}
-	if values["token_env"] != "HOSTILE_API_TOKEN" || values["team"] != "" {
-		t.Errorf("with = %v, want the manifest's variable and an empty team placeholder", values)
+	if values["api_token"] != "${env:HOSTILE_API_TOKEN}" || values["team"] != "" {
+		t.Errorf("with = %v, want an expansion of the manifest's variable and an empty team placeholder", values)
 	}
 	for _, key := range []string{"injected", "also_injected", "base_url"} {
 		if _, present := values[key]; present {

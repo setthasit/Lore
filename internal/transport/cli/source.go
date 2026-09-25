@@ -24,7 +24,8 @@ const sourcesKey = "sources"
 const missingInstanceID = "sources[].id must be set"
 
 const externalPromptNotice = "the questions below are the ones this plugin's own manifest declares;" +
-	" answer each one with configuration, and a secret with the NAME of an environment variable, never the value"
+	" answer each one with configuration; a secret's field holds the credential, and for it you give the NAME" +
+	" of the environment variable holding it, written as " + envx.Form + " so the value stays out of lore.yaml"
 
 func newSourceCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	source := &cobra.Command{
@@ -45,8 +46,9 @@ func newSourceAddCommand(configPath *string, reg *registry.Registry) *cobra.Comm
 		Short: "Append a source instance to lore.yaml, asking for the fields its plugin declares",
 		Long: "Asks for exactly what the plugin's manifest declares and appends the answers\n" +
 			"as an item under sources: in lore.yaml, leaving every existing line\n" +
-			"untouched. It asks for the NAME of the environment variable holding each\n" +
-			"credential, never the credential.",
+			"untouched. A secret's field holds the credential: it asks for the NAME of\n" +
+			"the environment variable holding it and writes " + envx.Form + ", so the\n" +
+			"credential itself never lands in the file.",
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSourceAdd(cmd, args, *configPath, reg)
@@ -195,11 +197,11 @@ func promptSource(p *prompter, m lore.Manifest, compiledIn bool, sources []confi
 
 	field := "sources[" + draft.ident() + "].with."
 	for _, secret := range m.Secrets {
-		name, err := p.envName(field+secret.ConfigField, secretHolds(m, secret), defaultEnv(secret, compiledIn))
+		name, err := p.envName(field+secret.Key, secretHolds(m, secret), defaultEnv(secret, compiledIn))
 		if err != nil {
 			return draft, err
 		}
-		draft.entries = append(draft.entries, config.Field{Key: secret.ConfigField, Value: name})
+		draft.entries = append(draft.entries, config.Field{Key: secret.Key, Value: envx.Reference(name)})
 		draft.variables = append(draft.variables, name)
 	}
 	for _, declared := range m.Fields {
@@ -214,7 +216,6 @@ func promptSource(p *prompter, m lore.Manifest, compiledIn bool, sources []confi
 	return draft, nil
 }
 
-// A sync round ignores an external plugin's own default, so offering it here would write a variable nothing reads.
 func defaultEnv(secret lore.Secret, compiledIn bool) string {
 	if !compiledIn {
 		return ""

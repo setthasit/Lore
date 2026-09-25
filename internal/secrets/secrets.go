@@ -10,6 +10,8 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/setthasit/Lore/internal/envx"
 )
 
 const (
@@ -23,9 +25,10 @@ const (
 )
 
 type Sink struct {
-	mu     sync.RWMutex
-	values []string
-	short  []string
+	mu      sync.RWMutex
+	values  []string
+	short   []string
+	literal []string
 }
 
 // A value shorter than MinLength characters once trimmed is not scrubbed; its field is named in Notices.
@@ -47,6 +50,17 @@ func (s *Sink) Record(field, value string) {
 	for _, form := range escapedForms(value) {
 		s.values = appendNew(s.values, form)
 	}
+}
+
+func (s *Sink) RecordLiteral(field, value string) {
+	s.Record(field, value)
+	if s == nil || strings.TrimSpace(value) == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.literal = appendNew(s.literal, cmp.Or(field, unnamedField))
 }
 
 var encodings = []func(string) string{quoteBody, jsonBody, jsonBodyUnescapedHTML}
@@ -183,8 +197,13 @@ func (s *Sink) Notices() []string {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.short) == 0 {
-		return nil
+	var notices []string
+	if len(s.literal) > 0 {
+		notices = append(notices, fmt.Sprintf("secrets written as literal values in the config: %s; write %s to keep a credential out of the file",
+			strings.Join(s.literal, ", "), envx.Form))
 	}
-	return []string{fmt.Sprintf("secrets shorter than %d characters are not scrubbed: %s", MinLength, strings.Join(s.short, ", "))}
+	if len(s.short) > 0 {
+		notices = append(notices, fmt.Sprintf("secrets shorter than %d characters are not scrubbed: %s", MinLength, strings.Join(s.short, ", ")))
+	}
+	return notices
 }

@@ -9,20 +9,26 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	"github.com/setthasit/Lore/internal/urlx"
 	"github.com/setthasit/Lore/sdk"
 )
 
 func (r *Registry) Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
+	with, vars, err := expandWith(manifest, in, origin)
+	if err != nil {
+		return nil, nil, err
+	}
+	in.With = with
+
 	if err := checkInstanceID(in); err != nil {
 		return nil, nil, err
 	}
-	if err := checkKeys(manifest, in); err != nil {
+	if err := checkKeys(manifest, in, vars); err != nil {
 		return nil, nil, err
 	}
 
-	secrets, err := r.resolveSecrets(manifest, in, origin)
+	secrets, err := r.resolveSecrets(manifest, in, origin, vars)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,18 +49,15 @@ func checkInstanceID(in Instance) error {
 		"%s has id %q; %s", in.Field, id, InstanceIDRule), nil)
 }
 
-func checkKeys(manifest lore.Manifest, in Instance) error {
+func checkKeys(manifest lore.Manifest, in Instance, vars map[string][]string) error {
 	known := make(map[string]lore.Field, len(manifest.Fields))
 	for _, f := range manifest.Fields {
 		known[f.Name] = f
 	}
-	secretFields := make(map[string]struct{}, len(manifest.Secrets))
-	for _, s := range manifest.Secrets {
-		secretFields[s.ConfigField] = struct{}{}
-	}
+	secret := secretKeys(manifest)
 
 	for _, key := range slices.Sorted(maps.Keys(in.With)) {
-		if _, ok := secretFields[key]; ok {
+		if secret[key] {
 			continue
 		}
 		field, ok := known[key]
@@ -63,7 +66,7 @@ func checkKeys(manifest lore.Manifest, in Instance) error {
 				"%s.with.%s is not a key plugin %q accepts; it accepts %s",
 				in.Field, key, manifest.Name, accepted(manifest)), nil)
 		}
-		if err := checkType(in.Field+".with."+key, field, in.With[key]); err != nil {
+		if err := checkType(in.Field+".with."+key, fromNote(vars[key]), field, in.With[key]); err != nil {
 			return err
 		}
 	}
@@ -80,6 +83,26 @@ func checkKeys(manifest lore.Manifest, in Instance) error {
 	return nil
 }
 
+func secretKeys(manifest lore.Manifest) map[string]bool {
+	keys := make(map[string]bool, len(manifest.Secrets))
+	for _, s := range manifest.Secrets {
+		keys[s.Key] = true
+	}
+	return keys
+}
+
+func fromNote(vars []string) string {
+	if len(vars) == 0 {
+		return ""
+	}
+	names := slices.Compact(slices.Sorted(slices.Values(vars)))
+	refs := make([]string, len(names))
+	for i, name := range names {
+		refs[i] = envx.Reference(name)
+	}
+	return " (from " + strings.Join(refs, ", ") + ")"
+}
+
 func doc(text string) string {
 	if text == "" {
 		return ""
@@ -93,7 +116,7 @@ func accepted(manifest lore.Manifest) string {
 		keys = append(keys, f.Name)
 	}
 	for _, s := range manifest.Secrets {
-		keys = append(keys, s.ConfigField)
+		keys = append(keys, s.Key)
 	}
 	if len(keys) == 0 {
 		return "no keys at all"
@@ -102,30 +125,32 @@ func accepted(manifest lore.Manifest) string {
 	return strings.Join(keys, ", ")
 }
 
-func checkType(field string, declared lore.Field, value any) error {
+// from notes the variables behind the whole value; a non-string list item was never expanded, so it gets none.
+func checkType(field, from string, declared lore.Field, value any) error {
+	whole := field + from
 	switch declared.Type {
 	case lore.FieldString:
 		if _, ok := value.(string); !ok {
-			return typeError(field, "a string", value)
+			return typeError(whole, "a string")
 		}
 	case lore.FieldURL:
 		raw, ok := value.(string)
 		if !ok {
-			return typeError(field, "an absolute http(s) URL", value)
+			return typeError(whole, "an absolute http(s) URL")
 		}
-		return CheckURL(field, raw, declared.Default)
+		return CheckURL(whole, raw, declared.Default)
 	case lore.FieldInt:
 		if !integral(value) {
-			return typeError(field, "a whole number", value)
+			return typeError(whole, "a whole number")
 		}
 	case lore.FieldBool:
 		if _, ok := value.(bool); !ok {
-			return typeError(field, "true or false", value)
+			return typeError(whole, "true or false")
 		}
 	case lore.FieldStringList:
 		items, ok := value.([]any)
 		if !ok {
-			return typeError(field, "a list of strings", value)
+			return typeError(whole, "a list of strings")
 		}
 		if declared.Required && len(items) == 0 {
 			return internalerror.NewBadRequestError(fmt.Sprintf(
@@ -134,35 +159,33 @@ func checkType(field string, declared lore.Field, value any) error {
 		}
 		for i, item := range items {
 			if _, ok := item.(string); !ok {
-				return typeError(field+"["+strconv.Itoa(i)+"]", "a string", item)
+				return typeError(field+"["+strconv.Itoa(i)+"]", "a string")
 			}
 		}
 	case lore.FieldDuration:
 		raw, ok := value.(string)
-		if !ok {
-			return typeError(field, `a duration like "30m" or "30d"`, value)
-		}
-		if _, err := lore.ParseDuration(raw); err != nil {
-			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s is not a duration: %s", field, raw), err)
+		if !ok || !isDuration(raw) {
+			return typeError(whole, `a duration like "30m" or "30d"`)
 		}
 	}
 	return nil
 }
 
+func isDuration(raw string) bool {
+	_, err := lore.ParseDuration(raw)
+	return err == nil
+}
+
 func CheckURL(field, raw, example string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil {
-		return internalerror.NewBadRequestError(field+" is not a URL", err)
+	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+		return nil
 	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		want := "an absolute http(s) URL"
-		if example != "" {
-			want += " like " + example
-		}
-		return internalerror.NewBadRequestError(fmt.Sprintf("%s must be %s, got %s", field, want, urlx.Redact(parsed)), nil)
+	want := "an absolute http(s) URL"
+	if example != "" {
+		want += " like " + example
 	}
-	return nil
+	return typeError(field, want)
 }
 
 // A JSON decoder yields float64 where YAML yields int; both are whole numbers.
@@ -178,12 +201,10 @@ func integral(value any) bool {
 	return false
 }
 
-func typeError(field, want string, got any) error {
-	return internalerror.NewBadRequestError(fmt.Sprintf(
-		"%s must be %s, got %v", field, want, got), nil)
+func typeError(field, want string) error {
+	return internalerror.NewBadRequestError(field+" must be "+want, nil)
 }
 
-// Secret config fields stay out: a plugin gets values under Secret.Key, never the operator's variable name.
 func configJSON(manifest lore.Manifest, in Instance) ([]byte, error) {
 	declared := make(map[string]any, len(manifest.Fields))
 	for _, f := range manifest.Fields {

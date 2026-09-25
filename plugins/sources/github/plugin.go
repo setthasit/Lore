@@ -24,10 +24,9 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "token",
-				ConfigField: "token_env",
-				DefaultEnv:  "LORE_GITHUB_TOKEN",
-				Doc:         "A fine-grained personal access token with read-only access to the listed repositories.",
+				Key:        "token",
+				DefaultEnv: "LORE_GITHUB_TOKEN",
+				Doc:        "A fine-grained personal access token with read-only access to the listed repositories.",
 			},
 		},
 	}

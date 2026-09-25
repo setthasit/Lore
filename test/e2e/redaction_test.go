@@ -41,13 +41,13 @@ const (
 )
 
 var leakyNotice = "lore: secrets shorter than 8 characters are not scrubbed: " +
-	leakyPinEnv + " (sources[" + leakyPluginName + "].with.pin_env)\n"
+	"sources[" + leakyPluginName + "].with.pin\n"
 
 var leakySourceBlock = "sources:\n" +
 	"  - use: " + leakyPluginName + "\n" +
 	"    with:\n" +
-	"      token_env: " + leakyTokenEnv + "\n" +
-	"      pin_env: " + leakyPinEnv + "\n"
+	"      token: ${env:" + leakyTokenEnv + "}\n" +
+	"      pin: ${env:" + leakyPinEnv + "}\n"
 
 type leakySourcePlugin struct{}
 
@@ -60,8 +60,8 @@ func (leakySourcePlugin) Manifest() lore.Manifest {
 		APIVersion: lore.APIVersion,
 		Summary:    "compiled-in source that logs its own secrets",
 		Secrets: []lore.Secret{
-			{Key: "token", ConfigField: "token_env"},
-			{Key: "pin", ConfigField: "pin_env"},
+			{Key: "token"},
+			{Key: "pin"},
 		},
 	}
 }
@@ -107,8 +107,8 @@ func (plugin) Manifest() lore.Manifest {
 		APIVersion: lore.APIVersion,
 		Summary:    "external source that holds two secrets",
 		Secrets: []lore.Secret{
-			{Key: "token", ConfigField: "token_env"},
-			{Key: "pin", ConfigField: "pin_env"},
+			{Key: "token"},
+			{Key: "pin"},
 		},
 	}
 }
@@ -276,7 +276,7 @@ func (refusingSourcePlugin) Manifest() lore.Manifest {
 		Kind:       lore.KindSource,
 		APIVersion: lore.APIVersion,
 		Summary:    "compiled-in source whose upstream quotes its token in every refusal",
-		Secrets:    []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+		Secrets:    []lore.Secret{{Key: "token"}},
 	}
 }
 
@@ -302,7 +302,7 @@ func TestASyncFailureQuotingASecretReachesStderrRedacted(t *testing.T) {
 			config := leakyWorkspace(t, "sources:\n"+
 				"  - use: "+refusingPluginName+"\n"+
 				"    with:\n"+
-				"      token_env: "+refusingTokenEnv+"\n")
+				"      token: ${env:"+refusingTokenEnv+"}\n")
 
 			run := runLoreWith(t, []lore.Plugin{refusingSourcePlugin{}, stubEmbedderPlugin{}}, "sync", "--config", config)
 
@@ -327,8 +327,8 @@ func TestAFailedStartupNoticesAShortSecretBeforeItsError(t *testing.T) {
 		"  - id: unset\n"+
 		"    use: "+leakyPluginName+"\n"+
 		"    with:\n"+
-		"      token_env: "+unsetTokenEnv+"\n"+
-		"      pin_env: "+leakyPinEnv+"\n")
+		"      token: ${env:"+unsetTokenEnv+"}\n"+
+		"      pin: ${env:"+leakyPinEnv+"}\n")
 
 	run := runLoreWith(t, []lore.Plugin{leakySourcePlugin{}, stubEmbedderPlugin{}}, "status", "--config", config)
 
@@ -424,7 +424,7 @@ func TestAnExternalPluginsStderrReachesTheHostLogRedacted(t *testing.T) {
 	}
 	connectors, err := reg.BuildSources([]registry.Instance{{
 		Use:   leakyPluginName,
-		With:  map[string]any{"token_env": leakyTokenEnv, "pin_env": leakyPinEnv},
+		With:  map[string]any{"token": "${env:" + leakyTokenEnv + "}", "pin": "${env:" + leakyPinEnv + "}"},
 		Field: "sources[" + leakyPluginName + "]",
 	}})
 	if err != nil {
@@ -481,7 +481,7 @@ func (echoingEmbedderPlugin) Manifest() lore.Manifest {
 		Summary:       "embedder whose upstream echoes its token in every refusal",
 		Capabilities:  lore.Capabilities{Embed: true},
 		DefaultModels: map[lore.Capability]string{lore.CapabilityEmbed: stubEmbedderModelName},
-		Secrets:       []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+		Secrets:       []lore.Secret{{Key: "token"}},
 	}
 }
 
@@ -508,7 +508,7 @@ func TestAnMCPToolFailureCarryingASecretReachesStderrRedacted(t *testing.T) {
 		"providers:\n"+
 		"  - use: "+echoingProviderName+"\n"+
 		"    with:\n"+
-		"      token_env: "+echoingTokenEnv+"\n"+
+		"      token: ${env:"+echoingTokenEnv+"}\n"+
 		"embedder:\n"+
 		"  provider: "+echoingProviderName+"\n"+
 		"  model: "+stubEmbedderModelName+"\n")
@@ -545,7 +545,7 @@ func (misfilingSourcePlugin) Manifest() lore.Manifest {
 		Kind:       lore.KindSource,
 		APIVersion: lore.APIVersion,
 		Summary:    "compiled-in source that files a document holding its token under another namespace",
-		Secrets:    []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+		Secrets:    []lore.Secret{{Key: "token"}},
 	}
 }
 
@@ -571,7 +571,7 @@ func TestAnMCPSyncFailureNamingASecretReachesStdoutRedacted(t *testing.T) {
 	config := leakyWorkspace(t, "sources:\n"+
 		"  - use: "+misfilingPluginName+"\n"+
 		"    with:\n"+
-		"      token_env: "+misfilingTokenEnv+"\n")
+		"      token: ${env:"+misfilingTokenEnv+"}\n")
 
 	response, _ := callMCPTool(t, []lore.Plugin{misfilingSourcePlugin{}, stubEmbedderPlugin{}}, config, syncNowTool, `{}`)
 

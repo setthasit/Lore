@@ -54,7 +54,7 @@ func completerOf(t *testing.T, text string) lore.Completer {
 }
 
 func embedLine(vectors, dimensions string) string {
-	return `embed emit {"v":1,"id":"$ID","ok":true,"vectors":` + vectors + `,"dimensions":` + dimensions + `}`
+	return `embed emit {"v":$V,"id":"$ID","ok":true,"vectors":` + vectors + `,"dimensions":` + dimensions + `}`
 }
 
 func TestEachProviderInstanceLogsUnderTheHostItsConfigSupplied(t *testing.T) {
@@ -198,7 +198,7 @@ func TestEmbeddingNoTextsCostsNoProcess(t *testing.T) {
 
 func TestCompleteReturnsTheAnswer(t *testing.T) {
 	text := script(providerManifest,
-		`complete emit {"v":1,"id":"$ID","ok":true,"text":"B was chosen because Redis survives a restart."}`,
+		`complete emit {"v":$V,"id":"$ID","ok":true,"text":"B was chosen because Redis survives a restart."}`,
 		shutdownOK)
 
 	got, err := completerOf(t, text).Complete(context.Background(), "answer from evidence", "why B over A?")
@@ -212,9 +212,9 @@ func TestCompleteReturnsTheAnswer(t *testing.T) {
 
 func TestAnEmptyCompletionIsAnError(t *testing.T) {
 	for name, frame := range map[string]string{
-		"empty":           `complete emit {"v":1,"id":"$ID","ok":true,"text":""}`,
-		"whitespace-only": `complete emit {"v":1,"id":"$ID","ok":true,"text":"  \t\n "}`,
-		"absent":          `complete emit {"v":1,"id":"$ID","ok":true}`,
+		"empty":           `complete emit {"v":$V,"id":"$ID","ok":true,"text":""}`,
+		"whitespace-only": `complete emit {"v":$V,"id":"$ID","ok":true,"text":"  \t\n "}`,
+		"absent":          `complete emit {"v":$V,"id":"$ID","ok":true}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := completerOf(t, script(providerManifest, frame, shutdownOK)).
@@ -234,7 +234,7 @@ func TestAnEmptyCompletionIsAnError(t *testing.T) {
 }
 
 func TestACapabilityTheManifestWithheldIsRefused(t *testing.T) {
-	embedOnly := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"provider","api_version":1,` +
+	embedOnly := `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"provider","api_version":$V,` +
 		`"summary":"s","capabilities":{"embed":true,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`
 
 	plugin := mustOpenScript(t, script(embedOnly, shutdownOK))

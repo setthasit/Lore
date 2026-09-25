@@ -61,10 +61,9 @@ func (stubSourcePlugin) Manifest() lore.Manifest {
 			Doc:      "the repo remotes this instance ingests",
 		}},
 		Secrets: []lore.Secret{{
-			Key:         "token",
-			ConfigField: "token_env",
-			DefaultEnv:  sourceTokenEnv,
-			Doc:         "token this instance authenticates with",
+			Key:        "token",
+			DefaultEnv: sourceTokenEnv,
+			Doc:        "token this instance authenticates with",
 		}},
 	}
 }
@@ -609,10 +608,10 @@ func scriptedPlugin(t *testing.T, manifestName string) string {
 		t.Fatalf("place the scripted plugin beside its script: %v", err)
 	}
 
-	script := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"` + manifestName +
-		`","kind":"source","api_version":1,"summary":"a scripted external source",` +
+	script := `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"` + manifestName +
+		`","kind":"source","api_version":$V,"summary":"a scripted external source",` +
 		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}` +
-		"\n\n" + `shutdown emit {"v":1,"id":"$ID","ok":true}` + "\n"
+		"\n\n" + `shutdown emit {"v":$V,"id":"$ID","ok":true}` + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "script.txt"), []byte(script), 0o600); err != nil {
 		t.Fatalf("write the plugin script: %v", err)
 	}

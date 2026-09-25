@@ -12,6 +12,8 @@ const Form = "${env:VAR}"
 
 const NameRule = "upper-case letters, digits and underscores, not starting with a digit"
 
+const EscapeRule = escapedOpen + " writes a literal " + open
+
 const (
 	open        = "${"
 	escapedOpen = "$${"
@@ -25,30 +27,41 @@ func ValidName(name string) bool {
 	return namePattern.MatchString(name)
 }
 
+func Reference(name string) string {
+	return envOpen + name + envClose
+}
+
 func Holds(raw string) bool {
 	return unescapedOpen(raw) >= 0
 }
 
 // The error never quotes an expanded value, and quotes raw only up to the variable name.
 func Expand(field, raw string) (string, error) {
+	value, _, err := ExpandNames(field, raw)
+	return value, err
+}
+
+// names lists the variables read, in order; none means raw held no expansion.
+func ExpandNames(field, raw string) (value string, names []string, err error) {
 	at := unescapedOpen(raw)
 	if at < 0 {
-		return unescape(raw), nil
+		return unescape(raw), nil, nil
 	}
 
 	var out strings.Builder
 	for at >= 0 {
 		out.WriteString(unescape(raw[:at]))
-		value, rest, err := expandOne(field, raw[at:])
+		name, expanded, rest, err := expandOne(field, raw[at:])
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		out.WriteString(value)
+		out.WriteString(expanded)
+		names = append(names, name)
 		raw = rest
 		at = unescapedOpen(raw)
 	}
 	out.WriteString(unescape(raw))
-	return out.String(), nil
+	return out.String(), names, nil
 }
 
 func unescapedOpen(raw string) int {
@@ -67,17 +80,17 @@ func unescape(literal string) string {
 	return strings.ReplaceAll(literal, escapedOpen, open)
 }
 
-func expandOne(field, expansion string) (value, rest string, err error) {
+func expandOne(field, expansion string) (name, value, rest string, err error) {
 	body, isEnv := strings.CutPrefix(expansion, envOpen)
 	name, rest, closed := strings.Cut(body, envClose)
 	if !isEnv || !closed || !ValidName(name) {
-		return "", "", internalerror.NewBadRequestError(field+" holds a "+open+" that is not "+Form+"; "+Form+
-			" is the only accepted form, with VAR made of "+NameRule+", and "+escapedOpen+" writes a literal "+open, nil)
+		return "", "", "", internalerror.NewBadRequestError(field+" holds a "+open+" that is not "+Form+"; "+Form+
+			" is the only accepted form, with VAR made of "+NameRule+", and "+EscapeRule, nil)
 	}
 
 	value, set := os.LookupEnv(name)
 	if !set {
-		return "", "", internalerror.NewBadRequestError(field+" expands "+name+", but "+name+" is not set", nil)
+		return "", "", "", internalerror.NewBadRequestError(field+" expands "+name+", but "+name+" is not set", nil)
 	}
-	return value, rest, nil
+	return name, value, rest, nil
 }

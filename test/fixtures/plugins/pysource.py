@@ -27,7 +27,7 @@ import json
 import os
 import sys
 
-API_VERSION = 1
+API_VERSION = 2
 NAME = "pysource"
 BATCH_SIZE = 2
 DOCUMENTS = 7

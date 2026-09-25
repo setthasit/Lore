@@ -19,10 +19,9 @@ func (plugin) Manifest() lore.Manifest {
 			Doc:    "Each entry is a page id or an exact page title; the sync covers those pages and their descendants. An empty list syncs every page shared with the integration.",
 		}},
 		Secrets: []lore.Secret{{
-			Key:         "token",
-			ConfigField: "token_env",
-			DefaultEnv:  "LORE_NOTION_TOKEN",
-			Doc:         "Notion internal integration token; the integration must be shared with the pages to ingest.",
+			Key:        "token",
+			DefaultEnv: "LORE_NOTION_TOKEN",
+			Doc:        "Notion internal integration token; the integration must be shared with the pages to ingest.",
 		}},
 	}
 }

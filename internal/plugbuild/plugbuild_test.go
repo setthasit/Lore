@@ -3,6 +3,7 @@ package plugbuild
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type recordedRun struct {
@@ -160,7 +162,8 @@ func TestBuildFailsWhenTheArtifactCannotListItsPlugins(t *testing.T) {
 
 	runner := &fakeRunner{answer: func(run recordedRun) (string, error) {
 		if run.program == output {
-			return "lore: plugin \"linear\" speaks api_version 2, host speaks 1", errors.New("exit status 3")
+			return fmt.Sprintf("lore: plugin \"linear\" speaks api_version %d, host speaks %d", lore.APIVersion+1, lore.APIVersion),
+				errors.New("exit status 3")
 		}
 		return "", nil
 	}}

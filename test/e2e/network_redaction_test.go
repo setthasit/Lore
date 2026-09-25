@@ -53,7 +53,7 @@ func (citingSourcePlugin) Manifest() lore.Manifest {
 		Kind:       lore.KindSource,
 		APIVersion: lore.APIVersion,
 		Summary:    "compiled-in source whose document ids carry its token",
-		Secrets:    []lore.Secret{{Key: "token", ConfigField: "token_env"}},
+		Secrets:    []lore.Secret{{Key: "token"}},
 	}
 }
 
@@ -95,7 +95,7 @@ func (c citingConnector) page(stem, url string) lore.Document {
 func sourceReadingNetworkToken(plugin string) string {
 	return "  - use: " + plugin + "\n" +
 		"    with:\n" +
-		"      token_env: " + networkTokenEnv + "\n"
+		"      token: ${env:" + networkTokenEnv + "}\n"
 }
 
 type servedLore struct {

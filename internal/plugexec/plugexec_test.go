@@ -75,16 +75,16 @@ func newReader(text string) *bufio.Reader {
 }
 
 const (
-	sourceManifest = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
+	sourceManifest = `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":$V,` +
 		`"summary":"scripted fixture","capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`
 
-	providerManifest = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"provider","api_version":1,` +
+	providerManifest = `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"provider","api_version":$V,` +
 		`"summary":"scripted fixture","capabilities":{"embed":true,"complete":true,"repo_remotes":false},"fields":[],"secrets":[]}}`
 
-	codeManifest = `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"code","api_version":1,` +
+	codeManifest = `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"code","api_version":$V,` +
 		`"summary":"scripted fixture","capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`
 
-	shutdownOK = `shutdown emit {"v":1,"id":"$ID","ok":true}`
+	shutdownOK = `shutdown emit {"v":$V,"id":"$ID","ok":true}`
 )
 
 func script(groups ...string) string {
@@ -238,7 +238,7 @@ func drain(conn lore.Connector, cursor lore.Cursor) ([]lore.Batch, error) {
 }
 
 func batchLine(docs, cursor string) string {
-	return fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[%s],"cursor":%s}}`, docs, cursor)
+	return fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","batch":{"docs":[%s],"cursor":%s}}`, docs, cursor)
 }
 
 func ticket(instance, external string) string {
@@ -248,7 +248,7 @@ func ticket(instance, external string) string {
 		instance, external, instance, external)
 }
 
-const doneLine = `changes emit {"v":1,"id":"$ID","done":true}`
+const doneLine = `changes emit {"v":$V,"id":"$ID","done":true}`
 
 func announcedPID(t *testing.T, logs *syncBuffer) int {
 	t.Helper()
@@ -315,21 +315,22 @@ func TestOpenReturnsOnlyTheKindTheManifestDeclares(t *testing.T) {
 }
 
 func TestAPIVersionMismatchNamesBothVersions(t *testing.T) {
-	mismatch := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"future","kind":"source","api_version":2,` +
-		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`
+	future := lore.APIVersion + 1
+	mismatch := fmt.Sprintf(`manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"future","kind":"source","api_version":%d,`+
+		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":false},"fields":[],"secrets":[]}}`, future)
 
 	_, err := openScript(t, script(mismatch, shutdownOK))
 	if err == nil {
-		t.Fatal("opened a plugin speaking api_version 2")
+		t.Fatalf("opened a plugin speaking api_version %d", future)
 	}
-	want := fmt.Sprintf("plugin %q speaks api_version 2, host speaks %d", "future", lore.APIVersion)
+	want := fmt.Sprintf("plugin %q speaks api_version %d, host speaks %d", "future", future, lore.APIVersion)
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err, want)
 	}
 }
 
 func TestAnErrorFrameOnManifestRefusesToOpen(t *testing.T) {
-	refuse := `manifest emit {"v":1,"id":"$ID","error":{"message":"cannot read my own manifest","kind":"internal"}}`
+	refuse := `manifest emit {"v":$V,"id":"$ID","error":{"message":"cannot read my own manifest","kind":"internal"}}`
 
 	_, err := openScript(t, script(refuse, shutdownOK))
 	var pluginErr *pluginError
@@ -342,7 +343,7 @@ func TestAnErrorFrameOnManifestRefusesToOpen(t *testing.T) {
 }
 
 func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
-	claims := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
+	claims := `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":$V,` +
 		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[]}}`
 
 	tests := []struct {
@@ -350,11 +351,11 @@ func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 		answer  string
 		matches bool
 	}{
-		{name: "the instance ingests it", answer: `{"v":1,"id":"$ID","ok":true,"matches":true}`, matches: true},
-		{name: "the instance does not", answer: `{"v":1,"id":"$ID","ok":true,"matches":false}`, matches: false},
+		{name: "the instance ingests it", answer: `{"v":$V,"id":"$ID","ok":true,"matches":true}`, matches: true},
+		{name: "the instance does not", answer: `{"v":$V,"id":"$ID","ok":true,"matches":false}`, matches: false},
 		{
 			name:    "the plugin cannot answer",
-			answer:  `{"v":1,"id":"$ID","error":{"message":"no idea","kind":"internal"}}`,
+			answer:  `{"v":$V,"id":"$ID","error":{"message":"no idea","kind":"internal"}}`,
 			matches: false,
 		},
 	}
@@ -377,7 +378,7 @@ func TestRepoRemotesIsAnsweredOverItsOwnOp(t *testing.T) {
 }
 
 func TestAnEmptyRemoteMatchesNothing(t *testing.T) {
-	claims := `manifest emit {"v":1,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":1,` +
+	claims := `manifest emit {"v":$V,"id":"$ID","ok":true,"manifest":{"name":"scripted","kind":"source","api_version":$V,` +
 		`"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[]}}`
 
 	conn := connectorOf(t, script(claims, shutdownOK), lore.SourceConfig{Instance: "scripted"})
@@ -391,7 +392,7 @@ func TestASourceWithoutRepoRemotesIsNeverAsked(t *testing.T) {
 	text := script(
 		sourceManifest,
 		"matches_remote stderr "+reached+"\n"+
-			`matches_remote emit {"v":1,"id":"$ID","ok":true,"matches":true}`,
+			`matches_remote emit {"v":$V,"id":"$ID","ok":true,"matches":true}`,
 		shutdownOK,
 	)
 
@@ -435,7 +436,7 @@ func TestChangesStreamsBatchesThenDone(t *testing.T) {
 
 func TestBatchWithoutACursorIsRefused(t *testing.T) {
 	for name, batch := range map[string]string{
-		"absent": fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[%s]}}`, ticket("linear", "1")),
+		"absent": fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","batch":{"docs":[%s]}}`, ticket("linear", "1")),
 		"empty":  batchLine(ticket("linear", "1"), `{}`),
 		"null":   batchLine(ticket("linear", "1"), `null`),
 	} {
@@ -468,7 +469,7 @@ func TestAFrameCarryingBothABatchAndDoneIsRefused(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			frame := fmt.Sprintf(`changes emit {"v":1,"id":"$ID","done":true,"batch":{"docs":[%s],"cursor":{"after":"9"}}}`, tt.docs)
+			frame := fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","done":true,"batch":{"docs":[%s],"cursor":{"after":"9"}}}`, tt.docs)
 			text := script(sourceManifest, frame, shutdownOK)
 
 			batches, err := drain(connectorOf(t, text, lore.SourceConfig{Instance: "linear"}), nil)
@@ -512,7 +513,7 @@ func TestStrayNonProtocolLineFailsTheOperation(t *testing.T) {
 func TestAFieldTheHostCannotDecodeIsNamedWithTheShapeExpected(t *testing.T) {
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","batch":{"docs":"one ticket","cursor":{"after":"1"}}}`,
+		`changes emit {"v":$V,"id":"$ID","batch":{"docs":"one ticket","cursor":{"after":"1"}}}`,
 		shutdownOK,
 	)
 
@@ -542,7 +543,7 @@ func TestAFrameThatIsNotAnObjectKeepsTheNotAFrameMessage(t *testing.T) {
 func TestAFieldPathThePluginChoseIsBounded(t *testing.T) {
 	text := script(
 		sourceManifest,
-		fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[],"cursor":{"%s":1}}}`, strings.Repeat("K", 1<<20)),
+		fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","batch":{"docs":[],"cursor":{"%s":1}}}`, strings.Repeat("K", 1<<20)),
 		shutdownOK,
 	)
 
@@ -585,9 +586,9 @@ func TestLineOverTheLimitFailsTheOperationNamingInstanceAndOp(t *testing.T) {
 
 func TestFrameWithTheWrongIDIsRefused(t *testing.T) {
 	for name, stream := range map[string]string{
-		"the first frame": `changes emit {"v":1,"id":"borrowed-from-the-docs","done":true}`,
+		"the first frame": `changes emit {"v":$V,"id":"borrowed-from-the-docs","done":true}`,
 		"a later batch": batchLine(ticket("linear", "1"), `{"after":"1"}`) + "\n" +
-			`changes emit {"v":1,"id":"borrowed-from-the-docs","batch":{"docs":[],"cursor":{"after":"2"}}}` + "\n" + doneLine,
+			`changes emit {"v":$V,"id":"borrowed-from-the-docs","batch":{"docs":[],"cursor":{"after":"2"}}}` + "\n" + doneLine,
 	} {
 		t.Run(name, func(t *testing.T) {
 			text := script(sourceManifest, stream, shutdownOK)
@@ -625,7 +626,7 @@ func TestAnErrorFrameKeepsTheKindThePluginReported(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			text := script(
 				sourceManifest,
-				`changes emit {"v":1,"id":"$ID","error":`+tt.frame+`}`,
+				`changes emit {"v":$V,"id":"$ID","error":`+tt.frame+`}`,
 				shutdownOK,
 			)
 
@@ -647,7 +648,7 @@ func TestAnErrorFrameKeepsTheKindThePluginReported(t *testing.T) {
 func TestUnknownKindKeepsWhatThePluginClaimed(t *testing.T) {
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","error":{"message":"tea leaves unreadable","kind":"astrological"}}`,
+		`changes emit {"v":$V,"id":"$ID","error":{"message":"tea leaves unreadable","kind":"astrological"}}`,
 		shutdownOK,
 	)
 
@@ -660,7 +661,7 @@ func TestUnknownKindKeepsWhatThePluginClaimed(t *testing.T) {
 func TestAnOversizedPluginMessageIsCutToTheExcerpt(t *testing.T) {
 	text := script(
 		sourceManifest,
-		fmt.Sprintf(`changes emit {"v":1,"id":"$ID","error":{"message":"%s","kind":"internal"}}`, strings.Repeat("A", 1<<20)),
+		fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","error":{"message":"%s","kind":"internal"}}`, strings.Repeat("A", 1<<20)),
 		shutdownOK,
 	)
 
@@ -679,7 +680,7 @@ func TestAnOversizedPluginMessageIsCutToTheExcerpt(t *testing.T) {
 func TestControlCharactersInAPluginMessageAreEscaped(t *testing.T) {
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","error":{"message":"\u001b[31mfake\u001b[0m\nlinear: all is well","kind":"internal"}}`,
+		`changes emit {"v":$V,"id":"$ID","error":{"message":"\u001b[31mfake\u001b[0m\nlinear: all is well","kind":"internal"}}`,
 		shutdownOK,
 	)
 
@@ -698,7 +699,7 @@ func TestControlCharactersInAPluginMessageAreEscaped(t *testing.T) {
 func TestAnErrorFrameEndsTheRoundWithTheOrderedShutdown(t *testing.T) {
 	text := script(
 		sourceManifest,
-		`changes emit {"v":1,"id":"$ID","error":{"message":"slow down","kind":"rate_limit"}}`,
+		`changes emit {"v":$V,"id":"$ID","error":{"message":"slow down","kind":"rate_limit"}}`,
 		shutdownOK+"\nshutdown exit 0",
 	)
 
@@ -840,7 +841,7 @@ func TestSecretsTravelInThePayloadAndTheEnvironmentIsNotInherited(t *testing.T) 
 
 	text := script(
 		providerManifest,
-		`complete emit {"v":1,"id":"$ID","ok":true,"text":"secret=[$SECRET{api_key}] env=[$ENV{`+probe+`}]"}`,
+		`complete emit {"v":$V,"id":"$ID","ok":true,"text":"secret=[$SECRET{api_key}] env=[$ENV{`+probe+`}]"}`,
 		shutdownOK,
 	)
 
@@ -1033,10 +1034,10 @@ func TestTheHandshakeRunsOnEveryProcessBeforeTheOperation(t *testing.T) {
 
 func TestUnknownResponseFieldsAreIgnored(t *testing.T) {
 	// Ignoring unknown fields is the compatibility rule: a plugin built against a newer host works against this one.
-	future := `manifest emit {"v":1,"id":"$ID","ok":true,"trailer":{"deadline":"soon"},"manifest":{"name":"scripted",` +
-		`"kind":"source","api_version":1,"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
+	future := `manifest emit {"v":$V,"id":"$ID","ok":true,"trailer":{"deadline":"soon"},"manifest":{"name":"scripted",` +
+		`"kind":"source","api_version":$V,"summary":"s","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
 		`"fields":[],"secrets":[],"telemetry":true}}`
-	batch := fmt.Sprintf(`changes emit {"v":1,"id":"$ID","batch":{"docs":[%s],"cursor":{"after":"1"},"partial":false},"eta":3}`,
+	batch := fmt.Sprintf(`changes emit {"v":$V,"id":"$ID","batch":{"docs":[%s],"cursor":{"after":"1"},"partial":false},"eta":3}`,
 		ticket("linear", "1"))
 
 	batches, err := drain(connectorOf(t, script(future, batch+"\n"+doneLine, shutdownOK),

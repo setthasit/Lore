@@ -2,6 +2,8 @@ package wire_test
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 func assertEncodesTo(t *testing.T, value any, want string) {
 	t.Helper()
+	want = strings.ReplaceAll(want, "$V", strconv.Itoa(lore.APIVersion))
 
 	got, err := json.Marshal(value)
 	if err != nil {
@@ -35,12 +38,12 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 		{
 			name:    "manifest",
 			request: wire.ManifestRequest{Envelope: envelope("p-1", wire.OpManifest)},
-			want:    `{"v":1,"id":"p-1","op":"manifest"}`,
+			want:    `{"v":$V,"id":"p-1","op":"manifest"}`,
 		},
 		{
 			name:    "shutdown",
 			request: wire.ShutdownRequest{Envelope: envelope("p-2", wire.OpShutdown)},
-			want:    `{"v":1,"id":"p-2","op":"shutdown"}`,
+			want:    `{"v":$V,"id":"p-2","op":"shutdown"}`,
 		},
 		{
 			name: "changes",
@@ -51,7 +54,7 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 				Secrets:  secrets,
 				Cursor:   lore.Cursor{"since": "42"},
 			},
-			want: `{"v":1,"id":"p-3","op":"changes","instance":"github-main","config":{"repo":"owner/name"},"secrets":{"token":"value"},"cursor":{"since":"42"}}`,
+			want: `{"v":$V,"id":"p-3","op":"changes","instance":"github-main","config":{"repo":"owner/name"},"secrets":{"token":"value"},"cursor":{"since":"42"}}`,
 		},
 		{
 			name: "embed",
@@ -62,7 +65,7 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 				Model:    "text-embed-3",
 				Texts:    []string{"first", "second"},
 			},
-			want: `{"v":1,"id":"p-4","op":"embed","config":{},"secrets":{},"model":"text-embed-3","texts":["first","second"]}`,
+			want: `{"v":$V,"id":"p-4","op":"embed","config":{},"secrets":{},"model":"text-embed-3","texts":["first","second"]}`,
 		},
 		{
 			name: "complete",
@@ -74,7 +77,7 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 				System:   "be terse",
 				User:     "why",
 			},
-			want: `{"v":1,"id":"p-5","op":"complete","config":{},"secrets":{"token":"value"},"model":"gpt-mini","system":"be terse","user":"why"}`,
+			want: `{"v":$V,"id":"p-5","op":"complete","config":{},"secrets":{"token":"value"},"model":"gpt-mini","system":"be terse","user":"why"}`,
 		},
 		{
 			name: "blame",
@@ -84,17 +87,17 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 				StartLine: 3,
 				EndLine:   9,
 			},
-			want: `{"v":1,"id":"p-6","op":"blame","path":"internal/app/app.go","start_line":3,"end_line":9}`,
+			want: `{"v":$V,"id":"p-6","op":"blame","path":"internal/app/app.go","start_line":3,"end_line":9}`,
 		},
 		{
 			name:    "log",
 			request: wire.PathRequest{Envelope: envelope("p-7", wire.OpLog), Path: "README.md"},
-			want:    `{"v":1,"id":"p-7","op":"log","path":"README.md"}`,
+			want:    `{"v":$V,"id":"p-7","op":"log","path":"README.md"}`,
 		},
 		{
 			name:    "has_file",
 			request: wire.PathRequest{Envelope: envelope("p-8", wire.OpHasFile), Path: "README.md"},
-			want:    `{"v":1,"id":"p-8","op":"has_file","path":"README.md"}`,
+			want:    `{"v":$V,"id":"p-8","op":"has_file","path":"README.md"}`,
 		},
 		{
 			name: "matches_remote",
@@ -105,7 +108,7 @@ func TestRequestsEncodeTheProtocolFieldNames(t *testing.T) {
 				Secrets:  map[string]string{},
 				Remote:   "github:owner/name",
 			},
-			want: `{"v":1,"id":"p-9","op":"matches_remote","instance":"github-main","config":{},"secrets":{},"remote":"github:owner/name"}`,
+			want: `{"v":$V,"id":"p-9","op":"matches_remote","instance":"github-main","config":{},"secrets":{},"remote":"github:owner/name"}`,
 		},
 	}
 
@@ -140,8 +143,8 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 					Capabilities: lore.Capabilities{RepoRemotes: true},
 				},
 			},
-			want: `{"v":1,"id":"p-1","ok":true,"done":false,"error":null,` +
-				`"manifest":{"name":"github","kind":"source","api_version":1,"summary":"issues and pull requests",` +
+			want: `{"v":$V,"id":"p-1","ok":true,"done":false,"error":null,` +
+				`"manifest":{"name":"github","kind":"source","api_version":$V,"summary":"issues and pull requests",` +
 				`"capabilities":{"embed":false,"complete":false,"repo_remotes":true},"fields":[],"secrets":[],"default_models":{}},` +
 				`"batch":null,"vectors":[],"dimensions":0,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
@@ -168,7 +171,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 					Cursor: &cursor,
 				},
 			},
-			want: `{"v":1,"id":"p-3","ok":true,"done":false,"error":null,"manifest":null,` +
+			want: `{"v":$V,"id":"p-3","ok":true,"done":false,"error":null,"manifest":null,` +
 				`"batch":{"docs":[{"id":"github-main:issue:7","source":"github-main","type":"issue","repo_ref":"github:owner/name",` +
 				`"title":"flaky test","body":"it fails","author":"ann","url":"https://example.test/7",` +
 				`"created_at":"2026-08-30T14:02:11Z","updated_at":"2026-09-01T07:45:03+02:00",` +
@@ -185,7 +188,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Vectors:    [][]float32{{0.5, -1.25}},
 				Dimensions: 2,
 			},
-			want: `{"v":1,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
+			want: `{"v":$V,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
 				`"vectors":[[0.5,-1.25]],"dimensions":2,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 		{
@@ -198,7 +201,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Vectors:    [][]float32{nil},
 				Dimensions: 2,
 			},
-			want: `{"v":1,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
+			want: `{"v":$V,"id":"p-4","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
 				`"vectors":[[]],"dimensions":2,"text":"","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 		{
@@ -220,7 +223,7 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Present: true,
 				Matches: true,
 			},
-			want: `{"v":1,"id":"p-6","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
+			want: `{"v":$V,"id":"p-6","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
 				`"vectors":[],"dimensions":0,"text":"",` +
 				`"spans":[{"sha":"deadbeef","line_start":3,"line_end":4,"author":"ann","time":"2026-08-30T14:02:11Z","lines":["package app",""]}],` +
 				`"commits":[{"sha":"deadbeef","author":"ann","time":"2026-08-30T14:02:11Z","subject":"init"}],` +
@@ -234,14 +237,14 @@ func TestFrameEncodesEveryAnswerFieldOnEveryFrame(t *testing.T) {
 				Done:  true,
 				Error: &wire.Error{Message: "rate limited", Kind: "transient"},
 			},
-			want: `{"v":1,"id":"p-3","ok":false,"done":true,"error":{"message":"rate limited","kind":"transient"},` +
+			want: `{"v":$V,"id":"p-3","ok":false,"done":true,"error":{"message":"rate limited","kind":"transient"},` +
 				`"manifest":null,"batch":null,"vectors":[],"dimensions":0,"text":"","spans":[],"commits":[],` +
 				`"present":false,"matches":false}`,
 		},
 		{
 			name:  "completion text",
 			frame: wire.Frame{V: lore.APIVersion, ID: "p-5", OK: true, Done: true, Text: "an answer"},
-			want: `{"v":1,"id":"p-5","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
+			want: `{"v":$V,"id":"p-5","ok":true,"done":true,"error":null,"manifest":null,"batch":null,` +
 				`"vectors":[],"dimensions":0,"text":"an answer","spans":[],"commits":[],"present":false,"matches":false}`,
 		},
 	}

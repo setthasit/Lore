@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -19,7 +18,7 @@ func providerManifest(name string, caps lore.Capabilities) lore.Manifest {
 		Summary:      "a provider that exists only in this test",
 		Capabilities: caps,
 		Fields:       []lore.Field{{Name: "base_url", Type: lore.FieldURL, Default: "https://api.acme.dev"}},
-		Secrets:      []lore.Secret{{Key: "api_key", ConfigField: "api_key_env", DefaultEnv: "ACME_API_KEY"}},
+		Secrets:      []lore.Secret{{Key: "api_key", DefaultEnv: "ACME_API_KEY"}},
 	}
 }
 
@@ -113,7 +112,9 @@ func TestBuildProviderBuildsAnImplicitInstanceFromPluginDefaults(t *testing.T) {
 }
 
 func TestBuildProviderPrefersADeclaredInstanceOverThePluginDefaults(t *testing.T) {
-	t.Setenv("LORE_OPENROUTER_KEY", "sk-example")
+	const declared = "fake-token-123456789"
+	t.Setenv("ACME_API_KEY", "fake-default-key-987654321")
+	t.Setenv("LORE_OPENROUTER_KEY", declared)
 
 	var got lore.ProviderConfig
 	r := newRegistry(t, stubProvider{
@@ -128,8 +129,8 @@ func TestBuildProviderPrefersADeclaredInstanceOverThePluginDefaults(t *testing.T
 		ID:  "openrouter",
 		Use: "acme",
 		With: map[string]any{
-			"base_url":    "https://openrouter.ai/api",
-			"api_key_env": "LORE_OPENROUTER_KEY",
+			"base_url": "https://openrouter.ai/api",
+			"api_key":  "${env:LORE_OPENROUTER_KEY}",
 		},
 		Field: "providers[openrouter]",
 	}}
@@ -143,19 +144,91 @@ func TestBuildProviderPrefersADeclaredInstanceOverThePluginDefaults(t *testing.T
 		t.Fatalf("BuildProvider: %v", err)
 	}
 
-	if got.Secret("api_key") != "sk-example" {
-		t.Errorf("api_key = %q, want the value of the named variable", got.Secret("api_key"))
+	if got.Secret("api_key") != declared {
+		t.Errorf("api_key = %q, want the declared field's value", got.Secret("api_key"))
 	}
+	if want := `{"base_url":"https://openrouter.ai/api"}`; string(got.Config) != want {
+		t.Errorf("config = %s, want %s with no secret key or value", got.Config, want)
+	}
+}
 
-	var decoded map[string]any
-	if err := json.Unmarshal(got.Config, &decoded); err != nil {
-		t.Fatalf("decode the delivered config: %v", err)
+func TestBuildSourcesDeliversASecretWrittenAsALiteralOrAnExpansion(t *testing.T) {
+	const jiraURL = "https://jira.acme.dev"
+	values := map[string]string{"token": "fake-token-123456789", "email": "dev@acme.dev"}
+	t.Setenv("LORE_ACME_TOKEN", values["token"])
+	t.Setenv("LORE_ACME_EMAIL", values["email"])
+	t.Setenv("ACME_TOKEN", "fake-default-token-987654321")
+
+	forms := map[string]map[string]any{
+		"literal":   {"token": values["token"], "email": values["email"]},
+		"expansion": {"token": "${env:LORE_ACME_TOKEN}", "email": "${env:LORE_ACME_EMAIL}"},
 	}
-	if _, leaked := decoded["api_key_env"]; leaked {
-		t.Errorf("config %s carries the operator's variable name", got.Config)
+	manifests := map[string][]lore.Secret{
+		"one secret":                    {{Key: "token", DefaultEnv: "ACME_TOKEN"}},
+		"two secrets, as jira declares": {{Key: "token", DefaultEnv: "ACME_TOKEN"}, {Key: "email"}},
 	}
-	if decoded["base_url"] != "https://openrouter.ai/api" {
-		t.Errorf("config %s does not carry base_url", got.Config)
+	for manifestName, declared := range manifests {
+		for form, held := range forms {
+			t.Run(manifestName+" as a "+form, func(t *testing.T) {
+				var got lore.SourceConfig
+				plugin := tokenSource(&got)
+				plugin.manifest.Fields = []lore.Field{{Name: "base_url", Type: lore.FieldURL}}
+				plugin.manifest.Secrets = declared
+
+				with := map[string]any{"base_url": jiraURL}
+				for _, s := range declared {
+					with[s.Key] = held[s.Key]
+				}
+				if _, err := newRegistry(t, plugin).BuildSources([]Instance{{Use: "acme", With: with, Field: "sources[acme]"}}); err != nil {
+					t.Fatalf("BuildSources: %v", err)
+				}
+
+				for _, s := range declared {
+					if got.Secret(s.Key) != values[s.Key] {
+						t.Errorf("%s = %q, want %q", s.Key, got.Secret(s.Key), values[s.Key])
+					}
+				}
+				if want := `{"base_url":"` + jiraURL + `"}`; string(got.Config) != want {
+					t.Errorf("config = %s, want %s with no secret key or value", got.Config, want)
+				}
+			})
+		}
+	}
+}
+
+func TestBuildProviderRefusesADeclaredKeyExpandingAnUnsetVariable(t *testing.T) {
+	t.Setenv("ACME_API_KEY", "fake-default-key-987654321")
+	unsetEnv(t, "OPENAI_API_KEY")
+
+	built := false
+	r := newRegistry(t, stubProvider{
+		manifest: providerManifest("acme", lore.Capabilities{Complete: true}),
+		build: func(lore.ProviderConfig) (lore.Provider, error) {
+			built = true
+			return completeOnly{}, nil
+		},
+	})
+
+	_, err := r.BuildProvider(Binding{
+		Provider:   "openai",
+		Model:      "gpt-4o-mini",
+		Capability: lore.CapabilityComplete,
+		Field:      "llm",
+	}, []Instance{{
+		ID:    "openai",
+		Use:   "acme",
+		With:  map[string]any{"api_key": "${env:OPENAI_API_KEY}"},
+		Field: "providers[openai]",
+	}})
+	if err == nil {
+		t.Fatal("BuildProvider: want a refusal rather than the plugin's default variable")
+	}
+	want := "providers[openai].with.api_key expands OPENAI_API_KEY, but OPENAI_API_KEY is not set"
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+	if built {
+		t.Error("the plugin was built without its declared credential")
 	}
 }
 
@@ -172,13 +245,16 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 			{Name: "verbose", Type: lore.FieldBool},
 			{Name: "window", Type: lore.FieldDuration},
 		},
-		Secrets: []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "ACME_TOKEN"}},
+		Secrets: []lore.Secret{{Key: "token", DefaultEnv: "ACME_TOKEN"}},
 	}
 
+	const windowVar = "LORE_ACME_WINDOW"
+
 	tests := []struct {
-		name string
-		with map[string]any
-		want []string
+		name   string
+		with   map[string]any
+		want   []string
+		absent string
 	}{
 		{
 			name: "unknown key",
@@ -191,40 +267,51 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 			want: []string{"sources[acme].with.base_url", "must be set"},
 		},
 		{
-			name: "url that no request can be built from",
-			with: map[string]any{"base_url": "acme.dev"},
-			want: []string{"sources[acme].with.base_url", "must be an absolute http(s) URL"},
+			name:   "url that no request can be built from",
+			with:   map[string]any{"base_url": "intranet.acme"},
+			want:   []string{"sources[acme].with.base_url must be an absolute http(s) URL like https://acme.dev"},
+			absent: "intranet.acme",
 		},
 		{
 			name: "list holding something that is not a string",
 			with: map[string]any{"base_url": "https://acme.dev", "projects": []any{"P", 7}},
-			want: []string{"sources[acme].with.projects[1]", "must be a string"},
+			want: []string{"sources[acme].with.projects[1] must be a string"},
 		},
 		{
-			name: "scalar where a list is declared",
-			with: map[string]any{"base_url": "https://acme.dev", "projects": "P"},
-			want: []string{"sources[acme].with.projects", "must be a list of strings"},
+			name:   "scalar where a list is declared",
+			with:   map[string]any{"base_url": "https://acme.dev", "projects": "PROJ-ALPHA"},
+			want:   []string{"sources[acme].with.projects must be a list of strings"},
+			absent: "PROJ-ALPHA",
 		},
 		{
 			name: "fractional value for a whole number",
 			with: map[string]any{"base_url": "https://acme.dev", "page_size": 1.5},
-			want: []string{"sources[acme].with.page_size", "must be a whole number"},
+			want: []string{"sources[acme].with.page_size must be a whole number"},
 		},
 		{
-			name: "string where a boolean is declared",
-			with: map[string]any{"base_url": "https://acme.dev", "verbose": "yes"},
-			want: []string{"sources[acme].with.verbose", "must be true or false"},
+			name:   "string where a boolean is declared",
+			with:   map[string]any{"base_url": "https://acme.dev", "verbose": "affirmative"},
+			want:   []string{"sources[acme].with.verbose must be true or false"},
+			absent: "affirmative",
 		},
 		{
-			name: "unparseable duration",
-			with: map[string]any{"base_url": "https://acme.dev", "window": "a fortnight"},
-			want: []string{"sources[acme].with.window", "is not a duration"},
+			name:   "unparseable duration",
+			with:   map[string]any{"base_url": "https://acme.dev", "window": "a fortnight"},
+			want:   []string{`sources[acme].with.window must be a duration like "30m" or "30d"`},
+			absent: "fortnight",
+		},
+		{
+			name:   "unparseable duration read from a variable",
+			with:   map[string]any{"base_url": "https://acme.dev", "window": "${env:" + windowVar + "}"},
+			want:   []string{`sources[acme].with.window (from ${env:` + windowVar + `}) must be a duration like "30m" or "30d"`},
+			absent: "fortnight",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("ACME_TOKEN", "t-example")
+			t.Setenv(windowVar, "a fortnight")
 
 			r := newRegistry(t, stubSource{manifest: manifest})
 			_, err := r.BuildSources([]Instance{{Use: "acme", With: tt.with, Field: "sources[acme]"}})
@@ -235,6 +322,9 @@ func TestPrepareRejectsBrokenWithBlocks(t *testing.T) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not contain %q", err, want)
 				}
+			}
+			if tt.absent != "" && strings.Contains(err.Error(), tt.absent) {
+				t.Errorf("error %q quotes the refused value %q", err, tt.absent)
 			}
 		})
 	}
@@ -272,12 +362,12 @@ func TestCheckURL(t *testing.T) {
 		{
 			name: "a scheme without a host names no server",
 			raw:  "http:///v1",
-			want: "base_url must be an absolute http(s) URL like https://acme.dev, got http:///v1",
+			want: "base_url must be an absolute http(s) URL like https://acme.dev",
 		},
 		{
 			name: "a host no parser accepts",
 			raw:  "http:// acme.dev",
-			want: "base_url is not a URL",
+			want: "base_url must be an absolute http(s) URL like https://acme.dev",
 		},
 	}
 
@@ -293,8 +383,8 @@ func TestCheckURL(t *testing.T) {
 			if err == nil {
 				t.Fatalf("CheckURL(%q): want an error", tt.raw)
 			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("error %q does not contain %q", err, tt.want)
+			if message := internalerror.MessageOf(err); message != tt.want {
+				t.Errorf("refusal %q, want %q with no quoted value", message, tt.want)
 			}
 			if !internalerror.IsBadRequest(err) {
 				t.Errorf("error %q is not a bad request", err)
@@ -335,43 +425,39 @@ func TestCheckURLRefusalDoesNotEchoURLCredentials(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsAnUnsetSecretVariable(t *testing.T) {
-	r := newRegistry(t, tokenSource(nil))
+func TestPrepareRefusesAnOmittedSecretWhoseDefaultVariableHoldsNothing(t *testing.T) {
+	cases := map[string]func(t *testing.T){
+		"unset": func(t *testing.T) { unsetEnv(t, "ACME_TOKEN") },
+		"blank": func(t *testing.T) { t.Setenv("ACME_TOKEN", " \t") },
+	}
+	for name, empty := range cases {
+		t.Run(name, func(t *testing.T) {
+			empty(t)
 
-	t.Run("named explicitly", func(t *testing.T) {
-		t.Setenv("LORE_ACME_TOKEN", "")
-
-		_, err := r.BuildSources([]Instance{{
-			Use:   "acme",
-			With:  map[string]any{"token_env": "LORE_ACME_TOKEN"},
-			Field: "sources[acme]",
-		}})
-		if err == nil {
-			t.Fatal("BuildSources: want an error")
-		}
-		want := "sources[acme].with.token_env names LORE_ACME_TOKEN, but that environment variable is not set"
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err, want)
-		}
-	})
-
-	t.Run("left to the manifest default", func(t *testing.T) {
-		t.Setenv("ACME_TOKEN", "")
-
-		_, err := r.BuildSources([]Instance{{Use: "acme", Field: "sources[acme]"}})
-		if err == nil {
-			t.Fatal("BuildSources: want an error")
-		}
-		if !strings.Contains(err.Error(), "names ACME_TOKEN, but that environment variable is not set") {
-			t.Errorf("error %q does not fall back to the manifest's variable", err)
-		}
-	})
+			_, err := newRegistry(t, tokenSource(nil)).BuildSources([]Instance{{Use: "acme", Field: "sources[acme]"}})
+			if err == nil {
+				t.Fatal("BuildSources: want an error")
+			}
+			want := "sources[acme].with.token is not set, and its default variable ACME_TOKEN is not set or is blank; " +
+				"export ACME_TOKEN, or set the field, as a value or as `${env:VAR}`"
+			if message := internalerror.MessageOf(err); !strings.Contains(message, want) {
+				t.Errorf("refusal %q does not contain %q", message, want)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+		})
+	}
 }
 
 func TestBuildSourcesRecordsEachResolvedSecretWithTheSink(t *testing.T) {
-	const long = "t-example-acme-token"
-	t.Setenv("ACME_TOKEN", long)
-	t.Setenv("LORE_LEGACY_TOKEN", "t-short")
+	const (
+		literalToken  = "fake-token-literal-123456789"
+		expanded      = "fake-token-expanded-123456789"
+		fallbackToken = "fake-token-default-123456789"
+	)
+	t.Setenv(tokenVar, expanded)
+	t.Setenv("ACME_TOKEN", fallbackToken)
 
 	sink := &secrets.Sink{}
 	r := New(lore.Host{}, sink)
@@ -379,44 +465,67 @@ func TestBuildSourcesRecordsEachResolvedSecretWithTheSink(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if _, err := r.BuildSources([]Instance{
-		{ID: "acme", Use: "acme", Field: "sources[acme]"},
-		{ID: "legacy", Use: "acme", With: map[string]any{"token_env": "LORE_LEGACY_TOKEN"}, Field: "sources[legacy]"},
-	}); err != nil {
-		t.Fatalf("BuildSources: %v", err)
+	instances := []Instance{
+		{ID: "pasted", Use: "acme", With: map[string]any{"token": literalToken}, Field: "sources[pasted]"},
+		{ID: "expanded", Use: "acme", With: map[string]any{"token": "${env:" + tokenVar + "}"}, Field: "sources[expanded]"},
+		{ID: "fallback", Use: "acme", Field: "sources[fallback]"},
+	}
+	for range 2 {
+		if _, err := r.BuildSources(instances); err != nil {
+			t.Fatalf("BuildSources: %v", err)
+		}
 	}
 
-	if got := sink.Scrub("auth " + long); got != "auth "+secrets.Placeholder {
-		t.Errorf("Scrub = %q, want the resolved value redacted", got)
+	for _, value := range []string{literalToken, expanded, fallbackToken} {
+		if got := sink.Scrub("auth " + value); got != "auth "+secrets.Placeholder {
+			t.Errorf("Scrub = %q, want the resolved value redacted", got)
+		}
 	}
-	notices := strings.Join(sink.Notices(), "\n")
-	if !strings.Contains(notices, "LORE_LEGACY_TOKEN (sources[legacy].with.token_env)") {
-		t.Errorf("notices = %q, want the short value named by its variable and field", notices)
+	notices := sink.Notices()
+	if len(notices) != 1 {
+		t.Fatalf("notices = %q, want one line for the literal", notices)
 	}
-	if strings.Contains(notices, "sources[acme]") {
-		t.Errorf("notices = %q, want the scrubbed value left unnamed", notices)
+	notice := notices[0]
+	if got := strings.Count(notice, "sources[pasted].with.token"); got != 1 {
+		t.Errorf("notice %q names the literal field %d times, want once", notice, got)
+	}
+	if !strings.Contains(notice, "${env:VAR}") {
+		t.Errorf("notice %q does not point at the expansion form", notice)
+	}
+	for _, unnamed := range []string{"sources[expanded]", "sources[fallback]", "ACME_TOKEN", literalToken} {
+		if strings.Contains(notice, unnamed) {
+			t.Errorf("notice %q names %q, want only the literal field", notice, unnamed)
+		}
 	}
 }
 
-func TestPrepareRejectsAWhitespaceOnlySecretVariable(t *testing.T) {
-	t.Setenv("LORE_ACME_TOKEN", " \t")
+func TestPrepareRefusesASecretFieldHoldingNoCredential(t *testing.T) {
+	t.Setenv("ACME_TOKEN", "fake-token-default-123456789")
+	t.Setenv(tokenVar, " \t")
 
-	_, err := newRegistry(t, tokenSource(nil)).BuildSources([]Instance{{
-		Use:   "acme",
-		With:  map[string]any{"token_env": "LORE_ACME_TOKEN"},
-		Field: "sources[acme]",
-	}})
-	if err == nil {
-		t.Fatal("BuildSources: want a refusal of a value holding only whitespace")
+	const mustHold = "sources[acme].with.token must hold the token as a value or as `${env:VAR}`"
+	cases := map[string]struct {
+		held any
+		want string
+	}{
+		"blank literal":                   {held: " \t", want: mustHold},
+		"expansion of a blank variable":   {held: "${env:" + tokenVar + "}", want: "sources[acme].with.token expands " + tokenVar + ", but it is blank"},
+		"number where a string is needed": {held: 123456789, want: mustHold},
 	}
-	message := internalerror.MessageOf(err)
-	for _, want := range []string{"sources[acme].with.token_env", "LORE_ACME_TOKEN"} {
-		if !strings.Contains(message, want) {
-			t.Errorf("refusal %q does not contain %q", message, want)
-		}
-	}
-	if !strings.HasSuffix(message, "is not set or is blank") {
-		t.Errorf("refusal %q does not say the variable is blank", message)
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := newRegistry(t, tokenSource(nil)).BuildSources([]Instance{{
+				Use:   "acme",
+				With:  map[string]any{"token": tt.held},
+				Field: "sources[acme]",
+			}})
+			if err == nil {
+				t.Fatal("BuildSources: want a refusal rather than the default variable")
+			}
+			if message := internalerror.MessageOf(err); message != tt.want {
+				t.Errorf("refusal %q, want %q", message, tt.want)
+			}
+		})
 	}
 }
 
@@ -488,7 +597,7 @@ func TestBuildLendsAPluginALoggerEvenWhenTheHostCarriesNone(t *testing.T) {
 
 func tokenSource(capture *lore.SourceConfig) stubSource {
 	manifest := sourceManifest("acme")
-	manifest.Secrets = []lore.Secret{{Key: "token", ConfigField: "token_env", DefaultEnv: "ACME_TOKEN"}}
+	manifest.Secrets = []lore.Secret{{Key: "token", DefaultEnv: "ACME_TOKEN"}}
 	return stubSource{manifest: manifest, build: func(c lore.SourceConfig) (lore.Connector, error) {
 		if capture != nil {
 			*capture = c
@@ -508,7 +617,8 @@ func externalRegistry(t *testing.T, plugin lore.Plugin) *Registry {
 }
 
 func TestPrepareIgnoresAnExternallyInstalledPluginsSecretDefault(t *testing.T) {
-	t.Setenv("ACME_TOKEN", "t-example")
+	const granted = "fake-token-123456789"
+	t.Setenv("ACME_TOKEN", granted)
 
 	r := externalRegistry(t, tokenSource(nil))
 
@@ -516,13 +626,18 @@ func TestPrepareIgnoresAnExternallyInstalledPluginsSecretDefault(t *testing.T) {
 	if err == nil {
 		t.Fatal("BuildSources: want an error even though the declared variable holds a value")
 	}
+	message := internalerror.MessageOf(err)
 	for _, want := range []string{
-		"sources[acme].with.token_env",
-		"must name the environment variable holding the token",
-		"a plugin installed from outside the binary cannot choose it",
+		"sources[acme].with.token must hold the token as a value or as `${env:VAR}`",
+		"a plugin installed from outside the binary cannot choose a default",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not contain %q", err, want)
+		if !strings.Contains(message, want) {
+			t.Errorf("refusal %q does not contain %q", message, want)
+		}
+	}
+	for _, suggested := range []string{"ACME_TOKEN", granted} {
+		if strings.Contains(message, suggested) {
+			t.Errorf("refusal %q steers the operator onto the plugin's default: %q", message, suggested)
 		}
 	}
 	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
@@ -546,7 +661,7 @@ func TestPrepareUsesACompiledInPluginsSecretDefault(t *testing.T) {
 
 func keylessProvider(capture *lore.ProviderConfig) stubProvider {
 	manifest := providerManifest("acme", lore.Capabilities{Complete: true})
-	manifest.Secrets = []lore.Secret{{Key: "api_key", ConfigField: "api_key_env", Optional: true}}
+	manifest.Secrets = []lore.Secret{{Key: "api_key", Optional: true}}
 	return stubProvider{manifest: manifest, build: func(c lore.ProviderConfig) (lore.Provider, error) {
 		if capture != nil {
 			*capture = c
@@ -555,7 +670,7 @@ func keylessProvider(capture *lore.ProviderConfig) stubProvider {
 	}}
 }
 
-func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
+func TestBuildProviderNeedsACredentialOnlyForANonOptionalSecret(t *testing.T) {
 	instances := []Instance{{ID: "local", Use: "acme", Field: "providers[local]"}}
 	binding := Binding{
 		Provider:   "local",
@@ -581,7 +696,7 @@ func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
 		return got
 	}
 
-	t.Run("optional and no variable named", func(t *testing.T) {
+	t.Run("optional and no default variable", func(t *testing.T) {
 		if key := buildKeyless(t, "").Secret("api_key"); key != "" {
 			t.Errorf("api_key = %q, want the plugin to receive no value", key)
 		}
@@ -590,19 +705,16 @@ func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
 	t.Run("the same manifest without the optional marker", func(t *testing.T) {
 		plugin := keylessProvider(nil)
 		plugin.manifest.Secrets[0].Optional = false
+		plugin.manifest.Secrets[0].Doc = "a key for the local gateway."
 		r := newRegistry(t, plugin)
 
 		_, err := r.BuildProvider(binding, instances)
 		if err == nil {
 			t.Fatal("BuildProvider: want an error")
 		}
-		for _, want := range []string{
-			"providers[local].with.api_key_env",
-			"must name the environment variable holding the api_key",
-		} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error %q does not contain %q", err, want)
-			}
+		want := "providers[local].with.api_key must hold the api_key as a value or as `${env:VAR}` — a key for the local gateway"
+		if message := internalerror.MessageOf(err); message != want {
+			t.Errorf("refusal %q, want %q", message, want)
 		}
 		if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
 			t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
@@ -626,42 +738,80 @@ func TestBuildProviderNeedsAVariableOnlyForANonOptionalSecret(t *testing.T) {
 			t.Errorf("api_key = %q, want the value of the manifest's declared variable", key)
 		}
 	})
+
+	t.Run("optional but written blank", func(t *testing.T) {
+		declared := []Instance{{ID: "local", Use: "acme", Field: "providers[local]", With: map[string]any{"api_key": " \t"}}}
+
+		_, err := newRegistry(t, keylessProvider(nil)).BuildProvider(binding, declared)
+		if err == nil {
+			t.Fatal("BuildProvider: want a refusal of a blank value rather than skipping the secret")
+		}
+		if want := "providers[local].with.api_key must hold the api_key as a value or as `${env:VAR}`"; internalerror.MessageOf(err) != want {
+			t.Errorf("refusal %q, want %q", internalerror.MessageOf(err), want)
+		}
+	})
 }
 
-func TestPrepareRefusalDoesNotEchoACredentialPastedAsAVariableName(t *testing.T) {
-	const pasted = "ghp_9zQ4XmT7pLvB2sNc"
+func TestPrepareRefusalsNeverEchoTheCredential(t *testing.T) {
+	const pasted = "fk-9zQ4XmT7pLvB2sNc"
+	unsetEnv(t, missingVar)
 
-	t.Setenv("ACME_TOKEN", "t-example")
+	plugin := tokenSource(nil)
+	plugin.manifest.Secrets = []lore.Secret{{Key: "token"}, {Key: "email"}}
+	r := newRegistry(t, plugin)
 
-	r := newRegistry(t, tokenSource(nil))
-
-	_, err := r.BuildSources([]Instance{{
-		Use:   "acme",
-		With:  map[string]any{"token_env": pasted},
-		Field: "sources[acme]",
-	}})
-	if err == nil {
-		t.Fatal("BuildSources: want an error")
+	tests := []struct {
+		name string
+		with map[string]any
+		want string
+	}{
+		{
+			name: "the other secret omitted",
+			with: map[string]any{"token": pasted},
+			want: "sources[acme].with.email must hold the email as a value or as `${env:VAR}`",
+		},
+		{
+			name: "the other secret expands an unset variable",
+			with: map[string]any{"token": pasted, "email": "${env:" + missingVar + "}"},
+			want: "sources[acme].with.email expands " + missingVar + ", but " + missingVar + " is not set",
+		},
+		{
+			name: "the credential under a key the plugin does not accept",
+			with: map[string]any{"tokne": pasted, "email": "dev@acme.dev"},
+			want: "sources[acme].with.tokne is not a key plugin \"acme\" accepts",
+		},
+		{
+			name: "the credential inside a list",
+			with: map[string]any{"token": []any{pasted}, "email": "dev@acme.dev"},
+			want: "sources[acme].with.token must hold the token",
+		},
+		{
+			name: "the credential beside a malformed expansion",
+			with: map[string]any{"token": pasted + "${" + missingVar + "}", "email": "dev@acme.dev"},
+			want: "sources[acme].with.token holds a ${ that is not ${env:VAR}",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := r.BuildSources([]Instance{{Use: "acme", With: tt.with, Field: "sources[acme]"}})
+			if err == nil {
+				t.Fatal("BuildSources: want an error")
+			}
 
-	message := internalerror.MessageOf(err)
-	const fragment = 4
-	for i := 0; i+fragment <= len(pasted); i++ {
-		if part := pasted[i : i+fragment]; strings.Contains(message, part) {
-			t.Errorf("refusal %q echoes %q from the pasted value", message, part)
-		}
-	}
-	for _, want := range []string{
-		"sources[acme].with.token_env",
-		"must be an environment variable name",
-		"upper-case letters, digits and underscores, not starting with a digit",
-	} {
-		if !strings.Contains(message, want) {
-			t.Errorf("refusal %q does not state the accepted shape: %q is missing", message, want)
-		}
-	}
-	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
-		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			message := internalerror.MessageOf(err)
+			if !strings.Contains(message, tt.want) {
+				t.Errorf("refusal %q does not contain %q", message, tt.want)
+			}
+			const fragment = 4
+			for i := 0; i+fragment <= len(pasted); i++ {
+				if part := pasted[i : i+fragment]; strings.Contains(message, part) {
+					t.Errorf("refusal %q echoes %q from the credential", message, part)
+				}
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+		})
 	}
 }
 
@@ -809,8 +959,8 @@ func TestBuildProviderRefusesAnImplicitInstanceWithConfigurationTheOperatorCanAd
 				t.Errorf("suggested instance has id %q and use %q, want both %q so %s still resolves",
 					suggested.ID, suggested.Use, binding.Provider, binding.Field)
 			}
-			if named, ok := with["api_key_env"].(string); !ok || named == "" {
-				t.Errorf("suggested with block %v leaves the operator nowhere to name the variable", with)
+			if got, want := with["api_key"], "${env:YOUR_VARIABLE}"; got != want {
+				t.Errorf("suggested with block %v sets api_key to %v, want the expansion %q", with, got, want)
 			}
 			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
 				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)

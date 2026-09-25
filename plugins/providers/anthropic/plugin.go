@@ -29,10 +29,9 @@ func (plugin) Manifest() lore.Manifest {
 		},
 		Secrets: []lore.Secret{
 			{
-				Key:         "api_key",
-				ConfigField: "api_key_env",
-				DefaultEnv:  "ANTHROPIC_API_KEY",
-				Doc:         "Anthropic API key, sent in the x-api-key header",
+				Key:        "api_key",
+				DefaultEnv: "ANTHROPIC_API_KEY",
+				Doc:        "Anthropic API key, sent in the x-api-key header",
 			},
 		},
 	}

@@ -27,7 +27,7 @@ func codeOf(t *testing.T, text, root string) lore.CodeRepo {
 
 func TestACloneLogsUnderTheHostItsConfigSupplied(t *testing.T) {
 	text := script(codeManifest,
-		"log stderr reading history\n"+`log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`,
+		"log stderr reading history\n"+`log emit {"v":$V,"id":"$ID","ok":true,"commits":[]}`,
 		shutdownOK)
 	plugin := mustOpenScript(t, text)
 	host, logs := instanceHost("git")
@@ -48,7 +48,7 @@ func TestACloneLogsUnderTheHostItsConfigSupplied(t *testing.T) {
 func TestBlameReturnsSpansForAWorkspaceAbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	text := script(codeManifest,
-		`blame emit {"v":1,"id":"$ID","ok":true,"spans":[{"sha":"9c1f0ab3e5d4","line_start":40,"line_end":42,`+
+		`blame emit {"v":$V,"id":"$ID","ok":true,"spans":[{"sha":"9c1f0ab3e5d4","line_start":40,"line_end":42,`+
 			`"author":"Ada Lovelace","time":"2026-05-14T08:31:02Z","lines":["if !tok.Valid() {","\treturn errUnauthorized","}"]}],`+
 			`"text":"$PATH"}`,
 		shutdownOK)
@@ -73,7 +73,7 @@ func TestBlameReturnsSpansForAWorkspaceAbsolutePath(t *testing.T) {
 
 func TestTheHostResolvesThePathAgainstTheCloneRoot(t *testing.T) {
 	root := t.TempDir()
-	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`, shutdownOK)
+	text := script(codeManifest, `log emit {"v":$V,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`, shutdownOK)
 
 	commits, err := codeOf(t, text, root).Log(context.Background(), "internal/auth/auth.go")
 	if err != nil {
@@ -87,7 +87,7 @@ func TestTheHostResolvesThePathAgainstTheCloneRoot(t *testing.T) {
 
 func TestAPathThatClimbsOutOfTheCloneIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "clone")
-	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
+	text := script(codeManifest, `log emit {"v":$V,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
 	repo := codeOf(t, text, root)
 
 	for _, path := range []string{"../secrets.env", "internal/../../etc/passwd"} {
@@ -102,7 +102,7 @@ func TestAPathThatClimbsOutOfTheCloneIsRefused(t *testing.T) {
 func TestAnAbsolutePathIsRefusedInsteadOfReRootedUnderTheClone(t *testing.T) {
 	root := t.TempDir()
 	text := script(codeManifest,
-		`log emit {"v":1,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`,
+		`log emit {"v":$V,"id":"$ID","ok":true,"commits":[{"sha":"$PATH","author":"a","time":"2026-05-14T08:31:02Z","subject":"s"}]}`,
 		shutdownOK)
 	repo := codeOf(t, text, root)
 
@@ -127,7 +127,7 @@ func TestAnAbsolutePathIsRefusedInsteadOfReRootedUnderTheClone(t *testing.T) {
 }
 
 func TestLogWithNoHistoryIsAnAnswerNotAnError(t *testing.T) {
-	text := script(codeManifest, `log emit {"v":1,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
+	text := script(codeManifest, `log emit {"v":$V,"id":"$ID","ok":true,"commits":[]}`, shutdownOK)
 
 	commits, err := codeOf(t, text, t.TempDir()).Log(context.Background(), "untracked.go")
 	if err != nil {
@@ -143,9 +143,9 @@ func TestHasFileAtHEADAnswersPresenceWithoutFailing(t *testing.T) {
 		frame string
 		want  bool
 	}{
-		"present":  {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":true}`, want: true},
-		"absent":   {frame: `has_file emit {"v":1,"id":"$ID","ok":true,"present":false}`},
-		"unstated": {frame: `has_file emit {"v":1,"id":"$ID","ok":true}`},
+		"present":  {frame: `has_file emit {"v":$V,"id":"$ID","ok":true,"present":true}`, want: true},
+		"absent":   {frame: `has_file emit {"v":$V,"id":"$ID","ok":true,"present":false}`},
+		"unstated": {frame: `has_file emit {"v":$V,"id":"$ID","ok":true}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := codeOf(t, script(codeManifest, tt.frame, shutdownOK), t.TempDir()).
@@ -162,7 +162,7 @@ func TestHasFileAtHEADAnswersPresenceWithoutFailing(t *testing.T) {
 
 func TestAFailureToReadTheCloneIsAnError(t *testing.T) {
 	text := script(codeManifest,
-		`has_file emit {"v":1,"id":"$ID","error":{"message":"not a git repository","kind":"invalid_config"}}`,
+		`has_file emit {"v":$V,"id":"$ID","error":{"message":"not a git repository","kind":"invalid_config"}}`,
 		shutdownOK)
 
 	if _, err := codeOf(t, text, t.TempDir()).HasFileAtHEAD(context.Background(), "auth.go"); err == nil {

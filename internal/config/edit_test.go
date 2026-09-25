@@ -23,11 +23,11 @@ var sourcesSpec = keySpec{
 	fields: []Field{{Key: "use", Value: "tracker"}},
 	item:   func(indent string) string { return indent + "- use: tracker\n" },
 	existing: func(indent string) string {
-		return indent + "- use: forge\n" + indent + "  with:\n" + indent + "    token_env: LORE_FORGE_TOKEN\n" +
+		return indent + "- use: forge\n" + indent + "  with:\n" + indent + "    token: ${env:LORE_FORGE_TOKEN}\n" +
 			indent + "    repos:\n" + indent + "      - acme/app\n"
 	},
 	bare:   "  -\n    use: forge\n",
-	inline: "[{use: forge, with: {token_env: LORE_FORGE_TOKEN}}]",
+	inline: `[{use: forge, with: {token: "${env:LORE_FORGE_TOKEN}"}}]`,
 	multiline: []struct{ shape, item string }{
 		{"literal", "  - use: forge\n    with:\n      note: |\n        one\n        two\n"},
 		{"folded", "  - use: forge\n    with:\n      note: >\n        one\n        two\n"},

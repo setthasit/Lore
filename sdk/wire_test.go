@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -319,17 +320,17 @@ func TestManifestEncodesTheHandshakeShape(t *testing.T) {
 		Summary:      "Linear issues and comments; created_at is the issue createdAt",
 		Capabilities: lore.Capabilities{},
 		Fields:       []lore.Field{{Name: "teams", Type: lore.FieldStringList, Required: true}},
-		Secrets:      []lore.Secret{{Key: "api_key", ConfigField: "token_env", DefaultEnv: "LORE_LINEAR_TOKEN"}},
+		Secrets:      []lore.Secret{{Key: "api_key", DefaultEnv: "LORE_LINEAR_TOKEN"}},
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
 	for _, want := range []string{
-		`"api_version":1`,
+		`"api_version":` + strconv.Itoa(lore.APIVersion),
 		`"capabilities":{"embed":false,"complete":false,"repo_remotes":false}`,
 		`"fields":[{"name":"teams","type":"string_list","required":true}]`,
-		`"secrets":[{"key":"api_key","config_field":"token_env","default_env":"LORE_LINEAR_TOKEN"}]`,
+		`"secrets":[{"key":"api_key","default_env":"LORE_LINEAR_TOKEN"}]`,
 	} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("encoded manifest %s is missing %s", raw, want)

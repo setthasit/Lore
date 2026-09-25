@@ -2,6 +2,7 @@ package envx_test
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -79,6 +80,40 @@ func TestExpand(t *testing.T) {
 			}
 			if got != c.want {
 				t.Errorf("Expand(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+func TestExpandNamesListsTheVariablesReadInOrder(t *testing.T) {
+	setFakeEnv(t)
+
+	cases := map[string]struct {
+		raw  string
+		want []string
+	}{
+		"several expansions, in the order written": {
+			raw:  "${env:LORE_ENVX_TENANT}/v1/${env:LORE_ENVX_HOST}",
+			want: []string{"LORE_ENVX_TENANT", "LORE_ENVX_HOST"},
+		},
+		"an escaped expansion reads nothing": {
+			raw:  "$${env:" + missingVar + "}",
+			want: nil,
+		},
+		"an escape beside a real expansion names only the real one": {
+			raw:  "${env:LORE_ENVX_HOST}/$${env:" + missingVar + "}",
+			want: []string{"LORE_ENVX_HOST"},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, got, err := envx.ExpandNames(field, c.raw)
+			if err != nil {
+				t.Fatalf("ExpandNames(%q) error = %v", c.raw, err)
+			}
+			if !slices.Equal(got, c.want) {
+				t.Errorf("ExpandNames(%q) names = %q, want %q", c.raw, got, c.want)
 			}
 		})
 	}
