@@ -21,8 +21,8 @@ const pluginsKey = "plugins"
 type Workspace struct {
 	path      string
 	dir       string
-	content   string // kept beside the parsed config: every edit to a hand-written lore.yaml is a splice
-	config    *config.Config // raw: edits locate their text through it
+	content   string            // kept beside the parsed config: every edit to a hand-written lore.yaml is a splice
+	config    *config.Config    // raw: edits locate their text through it
 	refs      config.PluginRefs // expanded, index for index with config
 	lock      *Lock
 	store     *Store
