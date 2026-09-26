@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
+	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
@@ -974,4 +976,256 @@ func TestPrepareRejectsAnEmptyListForARequiredScopeKey(t *testing.T) {
 			t.Errorf("built %d connectors, want the instance to start and scope itself to everything", len(built))
 		}
 	})
+}
+
+const roleBoundKey = "sk-live-abc"
+
+func embedderBinding(with map[string]any) Binding {
+	return Binding{
+		Provider:   "acme",
+		Model:      "acme-embed",
+		Capability: lore.CapabilityEmbed,
+		Field:      "embedder",
+		With:       with,
+	}
+}
+
+func capturingEmbedder(capture *lore.ProviderConfig) stubProvider {
+	plugin := honest(lore.Capabilities{Embed: true})
+	plugin.build = func(c lore.ProviderConfig) (lore.Provider, error) {
+		*capture = c
+		return embedOnly{dims: 1536}, nil
+	}
+	return plugin
+}
+
+func recordingEmbedder(built *bool) stubProvider {
+	plugin := honest(lore.Capabilities{Embed: true})
+	plugin.build = func(lore.ProviderConfig) (lore.Provider, error) {
+		*built = true
+		return embedOnly{dims: 1536}, nil
+	}
+	return plugin
+}
+
+func TestBuildProviderDeliversARoleBoundSecretWrittenAsALiteralOrAnExpansion(t *testing.T) {
+	const expandedKey = "sk-live-expanded"
+	t.Setenv("ACME_API_KEY", "sk-live-default")
+	t.Setenv("LORE_EMBEDDER_KEY", expandedKey)
+
+	forms := map[string]struct {
+		held string
+		want string
+	}{
+		"literal":   {held: roleBoundKey, want: roleBoundKey},
+		"expansion": {held: "${env:LORE_EMBEDDER_KEY}", want: expandedKey},
+	}
+	for form, tt := range forms {
+		t.Run(form, func(t *testing.T) {
+			var got lore.ProviderConfig
+			r := newRegistry(t, capturingEmbedder(&got))
+
+			if _, err := r.BuildProvider(embedderBinding(map[string]any{"api_key": tt.held}), nil); err != nil {
+				t.Fatalf("BuildProvider: %v", err)
+			}
+			if key := got.Secret("api_key"); key != tt.want {
+				t.Errorf("api_key = %q, want %q", key, tt.want)
+			}
+			if string(got.Config) != "{}" {
+				t.Errorf("config = %s, want {} with no secret key or value", got.Config)
+			}
+		})
+	}
+}
+
+func TestBuildProviderFallsBackToTheDefaultVariableForARoleBindingCarryingNothing(t *testing.T) {
+	t.Run("the default variable holds a value", func(t *testing.T) {
+		t.Setenv("ACME_API_KEY", "sk-live-default")
+
+		var got lore.ProviderConfig
+		if _, err := newRegistry(t, capturingEmbedder(&got)).BuildProvider(embedderBinding(nil), nil); err != nil {
+			t.Fatalf("BuildProvider: %v", err)
+		}
+		if key := got.Secret("api_key"); key != "sk-live-default" {
+			t.Errorf("api_key = %q, want the value of ACME_API_KEY", key)
+		}
+	})
+
+	t.Run("the default variable is unset", func(t *testing.T) {
+		unsetEnv(t, "ACME_API_KEY")
+
+		_, err := newRegistry(t, honest(lore.Capabilities{Embed: true})).BuildProvider(embedderBinding(nil), nil)
+		if err == nil {
+			t.Fatal("BuildProvider: want an error")
+		}
+		want := "embedder.api_key is not set, and its default variable ACME_API_KEY is not set or is blank; " +
+			"export ACME_API_KEY, or set the field, as a value or as `${env:VAR}`"
+		if message := internalerror.MessageOf(err); message != want {
+			t.Errorf("refusal %q, want %q", message, want)
+		}
+	})
+}
+
+const suggestion = "providers: [{id: acme, use: acme}]"
+
+func buildFromSuggestion(t *testing.T, r *Registry, b Binding) {
+	t.Helper()
+
+	cfg, err := config.Decode(strings.NewReader(suggestion))
+	if err != nil {
+		t.Fatalf("decode the suggested %q: %v", suggestion, err)
+	}
+	if len(cfg.Providers) != 1 {
+		t.Fatalf("suggested %q declares %d providers, want one", suggestion, len(cfg.Providers))
+	}
+	declared := cfg.Providers[0]
+	with := maps.Clone(b.With)
+	with["base_url"] = gatewayURL
+	b.With = nil
+
+	instance := Instance{ID: declared.ID, Use: declared.Use, With: with, Field: "providers[" + declared.Ident() + "]"}
+	if _, err := r.BuildProvider(b, []Instance{instance}); err != nil {
+		t.Fatalf("BuildProvider from the suggested %q: %v", suggestion, err)
+	}
+}
+
+func TestBuildProviderRefusesAnOrdinaryFieldOnARoleBinding(t *testing.T) {
+	unsetEnv(t, "ACME_API_KEY")
+
+	var got lore.ProviderConfig
+	r := newRegistry(t, capturingEmbedder(&got))
+	binding := embedderBinding(map[string]any{"api_key": roleBoundKey, "base_url": gatewayURL})
+
+	_, err := r.BuildProvider(binding, nil)
+	if err == nil {
+		t.Fatal("BuildProvider: want an error")
+	}
+	want := `embedder.base_url is not a secret plugin "acme" declares, and embedder carries only its provider's secrets, ` +
+		"so declare `" + suggestion + "` with base_url in its with: block, " +
+		`move every key embedder carries besides provider, model and dimensions into that block, and keep embedder.provider naming "acme"`
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+	if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+		t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+	}
+
+	buildFromSuggestion(t, r, binding)
+	if key := got.Secret("api_key"); key != roleBoundKey {
+		t.Errorf("api_key = %q, want the key the binding carried", key)
+	}
+	if want := `{"base_url":"` + gatewayURL + `"}`; string(got.Config) != want {
+		t.Errorf("config = %s, want %s", got.Config, want)
+	}
+}
+
+func TestBuildProviderRefusesARoleBoundKeyThePluginDoesNotKnow(t *testing.T) {
+	t.Setenv("ACME_API_KEY", "sk-live-default")
+
+	_, err := newRegistry(t, honest(lore.Capabilities{Embed: true})).BuildProvider(embedderBinding(map[string]any{"api_kye": roleBoundKey}), nil)
+	if err == nil {
+		t.Fatal("BuildProvider: want an error")
+	}
+	want := `embedder.api_kye is not a key embedder accepts for plugin "acme"; it accepts api_key`
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+}
+
+func TestBuildProviderRefusesARoleBindingWhosePluginRequiresAField(t *testing.T) {
+	var got lore.ProviderConfig
+	plugin := capturingEmbedder(&got)
+	plugin.manifest.Fields = []lore.Field{{Name: "base_url", Type: lore.FieldURL, Required: true, Doc: "the gateway URL"}}
+	r := newRegistry(t, plugin)
+	binding := embedderBinding(map[string]any{"api_key": roleBoundKey})
+
+	_, err := r.BuildProvider(binding, nil)
+	if err == nil {
+		t.Fatal("BuildProvider: want an error")
+	}
+	want := `plugin "acme" requires base_url — the gateway URL; embedder carries only its provider's secrets, ` +
+		"so declare `" + suggestion + "` with base_url in its with: block, " +
+		`move every key embedder carries besides provider, model and dimensions into that block, and keep embedder.provider naming "acme"`
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+
+	buildFromSuggestion(t, r, binding)
+	if key := got.Secret("api_key"); key != roleBoundKey {
+		t.Errorf("api_key = %q, want the key the binding carried", key)
+	}
+	if want := `{"base_url":"` + gatewayURL + `"}`; string(got.Config) != want {
+		t.Errorf("config = %s, want %s", got.Config, want)
+	}
+}
+
+func TestBuildProviderRefusesARoleBoundSecretExpandingAnUnsetVariable(t *testing.T) {
+	t.Setenv("ACME_API_KEY", "sk-live-default")
+	unsetEnv(t, missingVar)
+
+	built := false
+	plugin := recordingEmbedder(&built)
+
+	_, err := newRegistry(t, plugin).BuildProvider(embedderBinding(map[string]any{"api_key": "${env:" + missingVar + "}"}), nil)
+	if err == nil {
+		t.Fatal("BuildProvider: want a refusal rather than the plugin's default variable")
+	}
+	want := "embedder.api_key expands " + missingVar + ", but " + missingVar + " is not set"
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+	if built {
+		t.Error("the plugin was built without the credential its binding named")
+	}
+}
+
+func TestBuildProviderGivesAnExternalRoleBoundPluginNoDefault(t *testing.T) {
+	const granted = "sk-live-default"
+	t.Setenv("ACME_API_KEY", granted)
+
+	_, err := externalRegistry(t, honest(lore.Capabilities{Embed: true})).BuildProvider(embedderBinding(nil), nil)
+	if err == nil {
+		t.Fatal("BuildProvider: want an error even though the declared variable holds a value")
+	}
+	want := "embedder.api_key must hold the api_key as a value or as `${env:VAR}`; a plugin installed from outside the binary cannot choose a default"
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
+	}
+}
+
+func TestBuildProviderRefusesKeysOnARoleBindingNamingADeclaredInstance(t *testing.T) {
+	t.Setenv("ACME_API_KEY", "sk-live-default")
+
+	const refused = `embedder.provider names the declared provider instance "acme", so embedder cannot carry keys of its own; `
+	cases := map[string]struct {
+		carried map[string]any
+		want    string
+	}{
+		"a secret alone": {
+			carried: map[string]any{"api_key": roleBoundKey},
+			want:    refused + "move embedder.api_key to providers[acme].with.api_key",
+		},
+		"a secret and an ordinary field": {
+			carried: map[string]any{"api_key": roleBoundKey, "base_url": gatewayURL},
+			want:    refused + "move embedder.api_key, embedder.base_url to providers[acme].with.api_key, providers[acme].with.base_url",
+		},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			built := false
+			plugin := recordingEmbedder(&built)
+			instances := []Instance{{ID: "acme", Use: "acme", With: map[string]any{"api_key": "sk-live-declared"}, Field: "providers[acme]"}}
+
+			_, err := newRegistry(t, plugin).BuildProvider(embedderBinding(tt.carried), instances)
+			if err == nil {
+				t.Fatal("BuildProvider: want an error")
+			}
+			if message := internalerror.MessageOf(err); message != tt.want {
+				t.Errorf("refusal %q, want %q", message, tt.want)
+			}
+			if built {
+				t.Error("the plugin was built while the binding's own keys went unused")
+			}
+		})
+	}
 }
