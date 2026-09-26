@@ -68,7 +68,7 @@ func checkRoleKeys(manifest lore.Manifest, in Instance) error {
 		default:
 			return internalerror.NewBadRequestError(fmt.Sprintf(
 				"%s is not a key %s accepts for plugin %q; it accepts %s",
-				in.keyField(key), in.Role, manifest.Name, listKeys(slices.Collect(maps.Keys(secret)))), nil)
+				in.keyField(key), in.Role, manifest.Name, roleAccepts(secret)), nil)
 		}
 	}
 	return nil
@@ -168,6 +168,12 @@ func listKeys(keys []string) string {
 	}
 	slices.Sort(keys)
 	return strings.Join(keys, ", ")
+}
+
+var roleBindingKeys = []string{"provider", "model", "dimensions"}
+
+func roleAccepts(secret map[string]bool) string {
+	return strings.Join(slices.Concat(roleBindingKeys, slices.Sorted(maps.Keys(secret))), ", ")
 }
 
 // from notes the variables behind the whole value; a non-string list item was never expanded, so it gets none.

@@ -103,8 +103,8 @@ Rules that hold for all four:
   `sources[github].with.reposs is not a key plugin "github" accepts; it accepts
   repos, token` for one the plugin does not
   (`internal/registry/with.go:87-125`), and
-  `embedder.api_kye is not a key embedder accepts for plugin "openai"; it accepts api_key`
-  for one a role binding does not (`internal/registry/with.go:55-75`).
+  `embedder.api_kye is not a key embedder accepts for plugin "openai"; it accepts provider, model, dimensions, api_key`
+  for one a role binding does not (`internal/registry/with.go:55-75`, `internal/registry/with.go:173-177`).
 - **DocIDs are `<instance id>:<type>:<external_id>`**
   (`sdk/document.go:9-15`), and `Document.URL` is always the
   canonical web URL — the thing a citation points a human at
@@ -919,7 +919,7 @@ is what the code does.
    `Authorization` for GitHub, Notion and Jira, `PRIVATE-TOKEN` for GitLab.
    A plugin never finds a secret in the configuration it decodes: the secret
    fields are left out of it, and the resolved values arrive under the
-   plugin's own secret keys (`internal/registry/with.go:253-267`). Every
+   plugin's own secret keys (`internal/registry/with.go:259-273`). Every
    resolved value is replaced by `[redacted]` in the errors, logs and plugin
    output Lore emits (`internal/secrets/secrets.go:141-168`). A value shorter
    than 8 characters is not scrubbed; startup names its field instead

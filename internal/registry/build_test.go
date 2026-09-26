@@ -2,6 +2,8 @@ package registry
 
 import (
 	"maps"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1122,13 +1124,64 @@ func TestBuildProviderRefusesAnOrdinaryFieldOnARoleBinding(t *testing.T) {
 func TestBuildProviderRefusesARoleBoundKeyThePluginDoesNotKnow(t *testing.T) {
 	t.Setenv("ACME_API_KEY", "sk-live-default")
 
-	_, err := newRegistry(t, honest(lore.Capabilities{Embed: true})).BuildProvider(embedderBinding(map[string]any{"api_kye": roleBoundKey}), nil)
-	if err == nil {
-		t.Fatal("BuildProvider: want an error")
+	secretless := honest(lore.Capabilities{Embed: true})
+	secretless.manifest.Secrets = nil
+
+	tests := []struct {
+		name   string
+		plugin stubProvider
+		with   map[string]any
+		want   string
+	}{
+		{
+			name:   "a mistyped secret",
+			plugin: honest(lore.Capabilities{Embed: true}),
+			with:   map[string]any{"api_kye": roleBoundKey},
+			want:   `embedder.api_kye is not a key embedder accepts for plugin "acme"; it accepts provider, model, dimensions, api_key`,
+		},
+		{
+			name:   "a mistyped binding key on a plugin that declares a secret",
+			plugin: honest(lore.Capabilities{Embed: true}),
+			with:   map[string]any{"dimension": 768},
+			want:   `embedder.dimension is not a key embedder accepts for plugin "acme"; it accepts provider, model, dimensions, api_key`,
+		},
+		{
+			name:   "a mistyped binding key on a plugin that declares no secret",
+			plugin: secretless,
+			with:   map[string]any{"dimension": 768},
+			want:   `embedder.dimension is not a key embedder accepts for plugin "acme"; it accepts provider, model, dimensions`,
+		},
 	}
-	want := `embedder.api_kye is not a key embedder accepts for plugin "acme"; it accepts api_key`
-	if message := internalerror.MessageOf(err); message != want {
-		t.Errorf("refusal %q, want %q", message, want)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newRegistry(t, tt.plugin).BuildProvider(embedderBinding(tt.with), nil)
+			if err == nil {
+				t.Fatal("BuildProvider: want an error")
+			}
+			if message := internalerror.MessageOf(err); message != tt.want {
+				t.Errorf("refusal %q, want %q", message, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoleBindingKeysAreTheKeysTheDecoderTakes(t *testing.T) {
+	for _, key := range roleBindingKeys {
+		cfg, err := config.Decode(strings.NewReader("embedder: {" + key + ": 1}\n"))
+		if err != nil {
+			t.Fatalf("decode a binding naming %s: %v", key, err)
+		}
+		if cfg.Embedder.With != nil {
+			t.Errorf("the decoder carried %s to the plugin, want it taken as a binding key", key)
+		}
+	}
+
+	for field := range reflect.TypeFor[config.RoleBinding]().Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		if name != "" && name != "-" && !slices.Contains(roleBindingKeys, name) {
+			t.Errorf("config.RoleBinding takes %s, but the refusal's accepted keys %v leave it out", name, roleBindingKeys)
+		}
 	}
 }
 
