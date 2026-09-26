@@ -89,7 +89,7 @@ Rules that hold for all four:
   `${` is refused. A plugin name may come from the environment, and an expanded
   `index_path` still expands a leading `~`. An unset variable stops startup:
   `lore: index_path expands LORE_INDEX, but LORE_INDEX is not set` (exit 2)
-  (`internal/envx/envx.go:45-96`). Inside `with:`, a plugin compiled into this
+  (`internal/envx/envx.go:49-100`). Inside `with:`, a plugin compiled into this
   build expands every string. A plugin installed from outside the binary
   expands its declared secret fields and the fields its manifest marks
   `expandable`. An expansion in any other field it declares is refused,

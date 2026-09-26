@@ -163,11 +163,16 @@ lore source add jira
 lore source add notion
 ```
 
-Both prompt for the **name** of the variable holding each credential, never the
-credential, write it as `${env:VAR}`, and finish with ``next: export LORE_JIRA_EMAIL
-and LORE_JIRA_TOKEN, then run `lore sync` ``. Adding a plugin the file already has
-an instance of is not refused: it asks for an `id` first, because that id is the
-cursor key and the document-id prefix, and two instances may not share one.
+Each asks, per credential, which form to write: `env or value [env]`. `env` asks
+for a variable name and writes `${env:VAR}`; `value` takes the credential and
+writes it into `lore.yaml` as a literal, in plain text. The terminal echoes it as
+it is typed; Lore itself never prints it back. Any other answer is refused
+without echoing it. Taking the defaults for both Jira secrets finishes with
+``next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN, then run `lore sync` ``, and
+a secret answered with `value` is left out of that line.
+Adding a plugin the file already has an instance of is not refused: it asks for an
+`id` first, because that id is the cursor key and the document-id prefix, and two
+instances may not share one.
 
 ## 4. Sync
 
