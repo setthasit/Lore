@@ -129,7 +129,7 @@ the `with:` block of a `providers:` entry that the binding names. A
 `` embedder.base_url is not a secret plugin "openai" declares, and embedder carries only its provider's secrets, so declare `providers: [{id: openai, use: openai}]` with base_url in its with: block, move every key embedder carries besides provider, model and dimensions into that block, and keep embedder.provider naming "openai" ``
 (`internal/registry/with.go:55-85`). A binding that names a declared
 `providers:` entry carries no keys of its own, so its secret goes in that
-entry's `with:` block (`internal/registry/build.go:165-179`).
+entry's `with:` block (`internal/registry/build.go:180-183`).
 
 ## GitHub
 
