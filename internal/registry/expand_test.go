@@ -2,6 +2,7 @@ package registry
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,12 +30,15 @@ func unsetEnv(t *testing.T, name string) {
 }
 
 // built stays nil until the plugin is asked to build, so a refusal can prove the plugin never saw the config.
-func expandingSource(built **lore.SourceConfig) stubSource {
+func expandingSource(built **lore.SourceConfig, expandable ...string) stubSource {
 	manifest := sourceManifest("acme")
 	manifest.Fields = []lore.Field{
 		{Name: "base_url", Type: lore.FieldURL},
 		{Name: "labels", Type: lore.FieldStringList},
 		{Name: "query", Type: lore.FieldString},
+	}
+	for i := range manifest.Fields {
+		manifest.Fields[i].Expandable = slices.Contains(expandable, manifest.Fields[i].Name)
 	}
 	manifest.Secrets = []lore.Secret{{Key: "token"}}
 	return stubSource{manifest: manifest, build: func(c lore.SourceConfig) (lore.Connector, error) {
@@ -186,7 +190,7 @@ var sourceEntryPoints = map[string]func(*Registry, []Instance) error{
 	},
 }
 
-func TestExternalPluginRefusesAnExpansionOutsideItsSecretFields(t *testing.T) {
+func TestExternalPluginRefusesAnExpansionInAnUnmarkedField(t *testing.T) {
 	const leaked = "https://leaked.acme.dev"
 
 	fields := []struct {
@@ -247,6 +251,133 @@ func TestExternalPluginRefusesAnExpansionOutsideItsSecretFields(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestExternalPluginExpandsAFieldItsManifestMarksExpandable(t *testing.T) {
+	t.Setenv(urlVar, gatewayURL)
+	t.Setenv(teamVar, "support")
+
+	instances := []Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+		"base_url": "${env:" + urlVar + "}",
+		"labels":   []any{"crm", "team-${env:" + teamVar + "}"},
+		"token":    "fake-token",
+	}}}
+
+	var built *lore.SourceConfig
+	r := externalRegistry(t, expandingSource(&built, "base_url", "labels"))
+	if err := r.CheckDeclarations(instances, lore.KindSource); err != nil {
+		t.Fatalf("CheckDeclarations: %v", err)
+	}
+	if _, err := r.BuildSources(instances); err != nil {
+		t.Fatalf("BuildSources: %v", err)
+	}
+	if got, want := string(built.Config), `{"base_url":"`+gatewayURL+`","labels":["crm","team-support"]}`; got != want {
+		t.Errorf("config = %s, want %s", got, want)
+	}
+}
+
+func TestExternalPluginRefusesAnExpansionInAnUnmarkedFieldBesideAMarkedOne(t *testing.T) {
+	t.Setenv(urlVar, gatewayURL)
+	t.Setenv(teamVar, "support")
+
+	instances := []Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+		"base_url": "${env:" + urlVar + "}",
+		"query":    "team:${env:" + teamVar + "}",
+		"token":    "fake-token",
+	}}}
+
+	for entry, call := range sourceEntryPoints {
+		t.Run(entry, func(t *testing.T) {
+			var built *lore.SourceConfig
+			r := externalRegistry(t, expandingSource(&built, "base_url"))
+
+			err := call(r, instances)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			for _, want := range []string{
+				"sources[acme].with.query holds an expansion", `plugin "acme"`, "does not mark query expandable",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+			if built != nil {
+				t.Error("the plugin was built from a refused configuration")
+			}
+		})
+	}
+}
+
+func TestExternalPluginRefusesAMarkedFieldsExpansionOfAnUnsetVariable(t *testing.T) {
+	unsetEnv(t, missingVar)
+
+	instances := []Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+		"base_url": "${env:" + missingVar + "}",
+		"token":    "fake-token",
+	}}}
+
+	for entry, call := range sourceEntryPoints {
+		t.Run(entry, func(t *testing.T) {
+			var built *lore.SourceConfig
+			r := externalRegistry(t, expandingSource(&built, "base_url"))
+
+			err := call(r, instances)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if want := "sources[acme].with.base_url expands " + missingVar + ", but " + missingVar + " is not set"; !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+			if built != nil {
+				t.Error("the plugin was built from a configuration holding an unset expansion")
+			}
+		})
+	}
+}
+
+func TestExternalPluginRefusesAMarkedURLFieldWhoseExpandedValueIsNotAnHTTPURL(t *testing.T) {
+	const ftpURL = "ftp://gateway.acme.dev"
+
+	instances := []Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+		"base_url": "${env:" + urlVar + "}",
+		"token":    "fake-token",
+	}}}
+
+	for entry, call := range sourceEntryPoints {
+		t.Run(entry, func(t *testing.T) {
+			var built *lore.SourceConfig
+			r := externalRegistry(t, expandingSource(&built, "base_url"))
+
+			t.Setenv(urlVar, gatewayURL)
+			if err := call(r, instances); err != nil {
+				t.Fatalf("with %s=%s: %v", urlVar, gatewayURL, err)
+			}
+			built = nil
+
+			t.Setenv(urlVar, ftpURL)
+			err := call(r, instances)
+			if err == nil {
+				t.Fatalf("with %s=%s: want an error", urlVar, ftpURL)
+			}
+			want := "sources[acme].with.base_url (from ${env:" + urlVar + "}) must be an absolute http(s) URL"
+			if got := internalerror.MessageOf(err); got != want {
+				t.Errorf("refusal = %q, want %q", got, want)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+			if built != nil {
+				t.Error("the plugin was built from a refused configuration")
+			}
+		})
 	}
 }
 

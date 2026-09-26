@@ -337,3 +337,34 @@ func TestManifestEncodesTheHandshakeShape(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestCarriesTheExpandableMarkOnlyOnAMarkedField(t *testing.T) {
+	want := lore.Manifest{
+		Name:       "linear",
+		Kind:       lore.KindSource,
+		APIVersion: lore.APIVersion,
+		Summary:    "Linear issues and comments",
+		Fields: []lore.Field{
+			{Name: "base_url", Type: lore.FieldURL, Expandable: true},
+			{Name: "teams", Type: lore.FieldStringList, Required: true},
+		},
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	fields := `"fields":[{"name":"base_url","type":"url","required":false,"expandable":true},` +
+		`{"name":"teams","type":"string_list","required":true}]`
+	if !strings.Contains(string(raw), fields) {
+		t.Errorf("encoded manifest %s is missing %s", raw, fields)
+	}
+
+	var got lore.Manifest
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(got.Fields, want.Fields) {
+		t.Errorf("round-tripped fields = %+v, want %+v", got.Fields, want.Fields)
+	}
+}
