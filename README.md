@@ -107,6 +107,19 @@ Leave a secret field out and a plugin compiled into the binary falls back to the
 variable its manifest suggests — `OPENAI_API_KEY` for the embedder above. A plugin
 installed from outside the binary gets no such fallback.
 
+The embedder can also hold its key itself, beside `provider` and `model`:
+
+```yaml
+embedder:
+  provider: openai
+  model: text-embedding-3-small
+  api_key: sk-live-abc                     # or ${env:OPENAI_API_KEY}
+```
+
+A role binding accepts only the secrets its provider declares. Any other setting, such as
+`base_url`, goes on a `providers:` entry that the binding names. A binding that names a
+declared `providers:` entry carries no key of its own.
+
 `lore source add <plugin>` appends another instance of any source plugin this build
 registers, asking only for the fields that plugin's manifest declares; two Jira sites
 are two instances of one plugin, each with its own `id`. `lore --version` prints the

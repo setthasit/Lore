@@ -6,7 +6,7 @@ it read, and the command that proves the credential works.
 Lore is **read-only toward every external source**. No source plugin
 package contains a write verb: GitLab and Jira are `GET`-only, and the only
 non-GET requests among the four source plugins this build ships are GitHub's
-GraphQL *query* POST (`plugins/sources/github/client.go:138`) and Notion's
+GraphQL *query* POST (`plugins/sources/github/client.go:136`) and Notion's
 `POST /v1/search` (`plugins/sources/notion/client.go:212`), both read
 endpoints. There is no `mutation`, `PUT`, `PATCH` or `DELETE` in any source
 plugin. (The embedder and LLM clients do POST — to their model
@@ -33,7 +33,7 @@ See also: [Quickstart — MCP](quickstart-mcp.md) ·
 item per configured use of a plugin, `use:` naming the plugin and `with:`
 holding that plugin's own keys. Two Jira sites are two items, told apart by an
 `id:`; an instance with no `id:` is identified by its `use:`
-(`internal/config/config.go:97-102`). That identity is what `--source` takes,
+(`internal/config/config.go:100-105`). That identity is what `--source` takes,
 what every document's `source` field carries, and what prefixes its DocID.
 `lore plugin list` names the plugins this build has.
 
@@ -57,7 +57,7 @@ Rules that hold for all four:
   `token` for GitHub, GitLab and Notion, `email` and `token` for Jira. Write
   it as `${env:VAR}` to keep the credential out of the file, or as a literal
   value. It is resolved when the instance is built, before it issues a
-  request (`resolveSecrets` — `internal/registry/secrets.go:13-65`). A refusal
+  request (`resolveSecrets` — `internal/registry/secrets.go:13-60`). A refusal
   names the field, and the variable when there is one, never the value. An
   unset variable stops startup with
   `sources[github].with.token expands LORE_GITHUB_TOKEN, but LORE_GITHUB_TOKEN is not set`
@@ -79,7 +79,7 @@ Rules that hold for all four:
   whatever its manifest suggests, because the operator never granted that
   variable: its secret field must be written, and the refusal ends
   `a plugin installed from outside the binary cannot choose a default`
-  (`internal/registry/secrets.go:40-46, 67-80`).
+  (`internal/registry/secrets.go:40-46, 62-68`).
 - **Any `lore.yaml` string may read `${env:VAR}`**, a `with:` value included
   (`internal/config/expand.go:68-98`, `internal/registry/expand.go:15-30`);
   durations and whole numbers outside `with:` are not expanded, and `VAR`
@@ -99,14 +99,16 @@ Rules that hold for all four:
   `${env:VAR}` (`internal/plugindist/workspace.go:401-414`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
   silently ignored setting: `invalid configuration at ./lore.yaml: …` for a key
-  the engine does not have (`internal/config/config.go:223-226`), and
+  the engine does not have (`internal/config/config.go:280-283`),
   `sources[github].with.reposs is not a key plugin "github" accepts; it accepts
   repos, token` for one the plugin does not
-  (`internal/registry/with.go:52-84`).
+  (`internal/registry/with.go:87-125`), and
+  `embedder.api_kye is not a key embedder accepts for plugin "openai"; it accepts api_key`
+  for one a role binding does not (`internal/registry/with.go:55-75`).
 - **DocIDs are `<instance id>:<type>:<external_id>`**
-  (`sdk/document.go:5-13`), and `Document.URL` is always the
+  (`sdk/document.go:9-15`), and `Document.URL` is always the
   canonical web URL — the thing a citation points a human at
-  (`sdk/document.go:43`).
+  (`sdk/document.go:42`).
 - All examples below use obviously fake placeholders: `acme/myproject`,
   `https://acme.atlassian.net`, `PROJ`. Substitute your own.
 - Every claim about *what Lore requests* is read out of this repository and
@@ -114,6 +116,20 @@ Rules that hold for all four:
   status code **means** are that provider's documentation, marked **[vendor]**
   — re-check those against the provider's own console, since only Lore's side
   is pinned by tests here.
+
+**A model provider's secret may sit on its role binding.** Beside
+`provider`, `model` and `dimensions`, `embedder:` and `llm:` accept each
+secret key their provider's manifest declares, and nothing else. The key
+holds a literal, as in `api_key: sk-live-abc`, or an expansion, as in
+`api_key: ${env:OPENAI_API_KEY}`, and the rules above apply to it under the
+name `embedder.api_key` or `llm.api_key` (`internal/registry/build.go:120-145`,
+`internal/registry/secrets.go:75-80`). Every other plugin setting belongs in
+the `with:` block of a `providers:` entry that the binding names. A
+`base_url` on an `openai` binding stops startup with
+`` embedder.base_url is not a secret plugin "openai" declares, and embedder carries only its provider's secrets, so declare `providers: [{id: openai, use: openai}]` with base_url in its with: block, move every key embedder carries besides provider, model and dimensions into that block, and keep embedder.provider naming "openai" ``
+(`internal/registry/with.go:55-85`). A binding that names a declared
+`providers:` entry carries no keys of its own, so its secret goes in that
+entry's `with:` block (`internal/registry/build.go:165-179`).
 
 ## GitHub
 
@@ -128,10 +144,10 @@ Rules that hold for all four:
 | Issue | `issue` | issue body | `github:owner/name` |
 | Issue comment | `issue_comment` | comment body | `github:owner/name` |
 
-Evidence: `plugins/sources/github/connector.go:282-424`, with `RepoRef` staying
-forge-scoped rather than instance-scoped (`connector.go:426-435`); the default-branch
+Evidence: `plugins/sources/github/connector.go:279-421`, with `RepoRef` staying
+forge-scoped rather than instance-scoped (`connector.go:423-430`); the default-branch
 restriction is `defaultBranchRef` in the commits query
-(`plugins/sources/github/client.go:524-547`).
+(`plugins/sources/github/client.go:522-545`).
 
 ### What does not
 
@@ -139,7 +155,7 @@ File contents and diffs (only the *touched path list* of a commit is read),
 releases, tags, discussions, wikis, project boards, Actions runs and logs,
 deployments, org and user profiles, and branches other than the default. None
 of them appears in any query the client issues
-(`plugins/sources/github/client.go:524-665, 826-851`).
+(`plugins/sources/github/client.go:522-663, 824-849`).
 
 ### Minimum credential
 
@@ -149,11 +165,11 @@ list in `repos:`**, and exactly four read-only repository permissions:
 
 | What Lore calls | Where | Permission needed |
 |---|---|---|
-| `POST /graphql` — every query is rooted at `repository(owner:, name:)` | `client.go:74-79`, `client.go:131-155` | **Metadata: Read-only** (mandatory for every repository endpoint) [vendor] |
-| `repository.defaultBranchRef.target.history` — oid, message, dates, author, `changedFilesIfAvailable` | `client.go:524-547` | **Contents: Read-only** [vendor] |
-| `GET /repos/{owner}/{repo}/commits/{sha}` — the one REST call, for `filename` + `previous_filename` | `client.go:826-851` | **Contents: Read-only** [vendor] |
-| `repository.pullRequests`, `pullRequest.reviews`, review `comments`, `pullRequest.commits`, commit `associatedPullRequests` | `client.go:549-633`, `client.go:540` | **Pull requests: Read-only** [vendor] |
-| `repository.issues`, `issue.comments`, `pullRequest.closingIssuesReferences` | `client.go:635-665`, `client.go:562` | **Issues: Read-only** [vendor] |
+| `POST /graphql` — every query is rooted at `repository(owner:, name:)` | `client.go:72-77`, `client.go:129-153` | **Metadata: Read-only** (mandatory for every repository endpoint) [vendor] |
+| `repository.defaultBranchRef.target.history` — oid, message, dates, author, `changedFilesIfAvailable` | `client.go:522-545` | **Contents: Read-only** [vendor] |
+| `GET /repos/{owner}/{repo}/commits/{sha}` — the one REST call, for `filename` + `previous_filename` | `client.go:824-849` | **Contents: Read-only** [vendor] |
+| `repository.pullRequests`, `pullRequest.reviews`, review `comments`, `pullRequest.commits`, commit `associatedPullRequests` | `client.go:547-631`, `client.go:538` | **Pull requests: Read-only** [vendor] |
+| `repository.issues`, `issue.comments`, `pullRequest.closingIssuesReferences` | `client.go:633-663`, `client.go:560` | **Issues: Read-only** [vendor] |
 
 Paths are relative to `plugins/sources/github/`. The endpoint and field
 lists are read out of the repository; the mapping from those to GitHub's
@@ -164,9 +180,9 @@ GitHub can retire or rename a permission without Lore noticing.
 Nothing beyond those four is used. The token reaches only the `Authorization:
 Bearer` header, alongside `Accept: application/vnd.github+json` and
 `X-GitHub-Api-Version: 2022-11-28`
-(`plugins/sources/github/client.go:197-199`); no code path logs a header,
+(`plugins/sources/github/client.go:195-197`); no code path logs a header,
 and error strings carry a status plus the API's own message, never a
-credential (`plugins/sources/github/client.go:221`, `:286-309`).
+credential (`plugins/sources/github/client.go:219`, `:286-307`).
 
 A classic PAT also authenticates — the client only sends a bearer token, so it
 cannot tell the two apart — but the narrowest classic scope that reaches
@@ -267,9 +283,9 @@ lore: 1 source did not finish this round: connector github could not read change
 The `connector github could not read changes` prefix is Lore's, naming the
 instance (`syncConnector` in `internal/services/sync.go`), `github acme/myproject`
 names the repository being walked
-(`plugins/sources/github/connector.go:132`), and
+(`plugins/sources/github/connector.go:119`), and
 the rest is the request line, the HTTP status and GitHub's own message
-(`plugins/sources/github/client.go:221`). Read it as:
+(`plugins/sources/github/client.go:219`). Read it as:
 
 | Status | Almost always means |
 |---|---|
@@ -294,7 +310,7 @@ changes in `lore.yaml`, which holds only the variable name. With a literal
 the old token — the step that counts for a literal, since any committed or
 shared copy of the file still holds it. The index survives either way, since
 cursors are per-instance and per-repo, not per-credential
-(`plugins/sources/github/connector.go:492-507`). Revoking is enough to stop
+(`plugins/sources/github/connector.go:489-504`). Revoking is enough to stop
 all ingestion: with no valid token the connector cannot read, and Lore has no
 cached credential anywhere.
 
@@ -319,7 +335,7 @@ were introduced for it.
 own `id:` — while `RepoRef` stays `gitlab:<group>/<project>`,
 so a subgroup path (`acme/platform/myproject`) round-trips intact. Each URL is
 GitLab's own `web_url` when the payload carries one, falling back to the
-constructed form above (`plugins/sources/gitlab/connector.go:301, 338, 448`).
+constructed form above (`plugins/sources/gitlab/connector.go:290, 327, 432`).
 The sync watermark is GitLab's own filter on each list
 endpoint — `updated_after` for merge requests and issues, `since` for commit
 history — checkpointed per batch like every other connector.
@@ -394,7 +410,7 @@ sources:
 
 Validation happens when the instance is built from the plugin's manifest — the
 first rule broken is the one reported, before any request goes out (exit 2 —
-`internal/registry/with.go:52-84`, `internal/registry/secrets.go:13-65`):
+`internal/registry/with.go:87-125`, `internal/registry/secrets.go:13-60`):
 
 | Wrong | Message |
 |---|---|
@@ -405,7 +421,7 @@ first rule broken is the one reported, before any request goes out (exit 2 —
 | `base_url` not an absolute http(s) URL | `sources[gitlab].with.base_url must be an absolute http(s) URL like https://gitlab.com` |
 
 The remedy text on a "must be set" line is the manifest's own `Doc` for that
-field (`internal/registry/with.go:74-82`), so it is the plugin, not this
+field (`internal/registry/with.go:109-123`), so it is the plugin, not this
 page, that says what the key wants.
 
 Unlike Jira, `base_url` is optional here: absent means `https://gitlab.com`.
@@ -478,7 +494,7 @@ sync lock: free
 
 Failure carries the same three parts as GitHub — Lore's prefix
 (`syncConnector` in `internal/services/sync.go`), the project being walked
-(`plugins/sources/gitlab/connector.go:110`), then the request line, status
+(`plugins/sources/gitlab/connector.go:124`), then the request line, status
 and GitLab's own message (`plugins/sources/gitlab/client.go:129`,
 `:196-213`):
 
@@ -517,14 +533,14 @@ several tokens.
 
 Pages only — one `page` document per page, its title from whichever property
 has type `title`, its body the page's block tree flattened to text
-(`plugins/sources/notion/connector.go:155-187`). Blocks are walked
+(`plugins/sources/notion/connector.go:152-184`). Blocks are walked
 recursively but a `child_page` block is not descended into, because that page
 arrives as its own document (`plugins/sources/notion/client.go:236-240`).
-Trashed pages are skipped (`connector.go:115`,
+Trashed pages are skipped (`connector.go:112`,
 `plugins/sources/notion/client.go:109-110`).
 
 Notion documents carry **no** `RepoRef` and **no** `Author`
-(`plugins/sources/notion/connector.go:176-186`) — the connector never
+(`plugins/sources/notion/connector.go:173-183`) — the connector never
 asks Notion who anybody is.
 
 ### What does not
@@ -559,19 +575,19 @@ Paths are relative to `plugins/sources/notion/`. Every request sends
 
 `root_pages` is a **filter, not a grant**: it narrows an already-granted
 subtree. Entries may be page ids or exact page titles
-(`connector.go:66-69, 220-250`); a page is in scope when it *is* a root or
+(`connector.go:65-67, 217-247`); a page is in scope when it *is* a root or
 has one as an ancestor, found by walking parents up to 32 levels
-(`connector.go:20-21, 263-299`). Consequences worth knowing before you rely
+(`connector.go:19-20, 260-296`). Consequences worth knowing before you rely
 on it:
 
 - An **empty `root_pages` syncs every page shared with the integration**
-  (`connector.go:263-266`). The share list is then your only boundary.
+  (`connector.go:260-262`). The share list is then your only boundary.
 - A title that matches two live pages is an error, not a guess:
   `notion: root page "Decisions" matches the live pages <id> and <id>: configure it by id`
-  (`connector.go:248-249`). Ids are the durable choice — a renamed page breaks
+  (`connector.go:245-246`). Ids are the durable choice — a renamed page breaks
   a title entry with `notion: root page "Decisions" matches no page title`
-  (`connector.go:244`).
-- Dashes and case in ids do not matter (`connector.go:301-302`).
+  (`connector.go:241`).
+- Dashes and case in ids do not matter (`connector.go:299-301`).
 
 Notion's API host is not configurable: the manifest declares no `base_url`
 field, the plugin passes an empty base URL and the client defaults to
@@ -695,12 +711,12 @@ Data Center do not expose, so this connector does not support them [vendor].
 Only five fields are requested per issue — `summary,description,created,updated,reporter`
 (`plugins/sources/jira/client.go:35`) — plus its comments. Description and
 comment bodies arrive as Atlassian Document Format and are flattened to plain
-text (`connector.go:195, 211`; `plugins/sources/jira/adf.go`). Jira
-documents carry no `RepoRef` (`connector.go:223-231`).
+text (`connector.go:192, 208`; `plugins/sources/jira/adf.go`). Jira
+documents carry no `RepoRef` (`connector.go:220-226`).
 
 The bare issue key is the document's external id on purpose: it is what makes
 a `PROJ-123` mention in a commit, PR or Notion page resolve to this ticket
-(`connector.go:190-193`).
+(`connector.go:188-190`).
 
 ### What does not
 
@@ -708,7 +724,7 @@ Every other field: status, assignee, labels, components, sprints, story
 points, custom fields, attachments, worklogs, changelog/history, transitions,
 watchers, and issue links. Also no boards, no projects metadata, no users.
 Nothing outside `projects:` is queried, because the project filter is a JQL
-clause (`connector.go:235-247`).
+clause (`connector.go:232-244`).
 
 ### Minimum credential
 
@@ -731,19 +747,19 @@ dedicated integration user whose only relevant grant is:
 Paths are relative to `plugins/sources/jira/`. Both are GET; the
 connector issues no other request. The JQL it builds is
 `project IN (PROJ, PLATFORM) AND updated >= "<watermark - 24h>" ORDER BY updated ASC`
-(`connector.go:26, 235-247`) — the 24-hour slack absorbs JQL's
+(`connector.go:25, 232-244`) — the 24-hour slack absorbs JQL's
 minute-granular, requester-timezone datetime literals, and the connector
 refilters the overlap.
 
 Two scoping cautions:
 
 - **An empty `projects` list ingests every project the account can browse**
-  — `jql()` emits no `project IN` clause without it (`connector.go:237-239`).
+  — `jql()` emits no `project IN` clause without it (`connector.go:234-236`).
   List the projects explicitly; that way the config, not the account's
   permission scheme, is the boundary you review.
 - Project keys are validated before any request:
   `jira: invalid project key "proj-1": want uppercase letters, digits and underscores`
-  (`connector.go:249-269`).
+  (`connector.go:246-266`).
 
 ### `lore.yaml`
 
@@ -769,7 +785,7 @@ the manifest declares it as a secret alongside the token
 a literal, an expansion, or, left out, its suggested variable
 (`LORE_JIRA_EMAIL`, `LORE_JIRA_TOKEN`). They need not share a form, so a
 literal `email:` beside `token: ${env:LORE_JIRA_TOKEN}` works
-(`internal/registry/secrets.go:13-65`).
+(`internal/registry/secrets.go:13-60`).
 
 A second Jira site is a second item, and the `id:` is what tells them apart —
 it becomes that site's cursor key, its documents' `source` and their DocID
@@ -898,12 +914,12 @@ is what the code does.
    (`internal/transport/cli/source.go:355-369`).
 3. **Lore writes no secret to disk or logs.** A credential is resolved when
    the instance is built, against the secrets its manifest declares
-   (`resolveSecrets` — `internal/registry/secrets.go:13-65`), and lives only
+   (`resolveSecrets` — `internal/registry/secrets.go:13-60`), and lives only
    in a request header —
    `Authorization` for GitHub, Notion and Jira, `PRIVATE-TOKEN` for GitLab.
    A plugin never finds a secret in the configuration it decodes: the secret
    fields are left out of it, and the resolved values arrive under the
-   plugin's own secret keys (`internal/registry/with.go:208-222`). Every
+   plugin's own secret keys (`internal/registry/with.go:253-267`). Every
    resolved value is replaced by `[redacted]` in the errors, logs and plugin
    output Lore emits (`internal/secrets/secrets.go:141-168`). A value shorter
    than 8 characters is not scrubbed; startup names its field instead
@@ -911,10 +927,10 @@ is what the code does.
    `lore: secrets shorter than 8 characters are not scrubbed: sources[github].with.token`.
    The index schema has nowhere to put one:
    its tables are `documents`, `chunks`, `edges`, `pending_refs`, `cursors`,
-   `sync_lock` and `meta` (`internal/repositories/sqlite/schema.go:19-95`).
+   `sync_lock` and `meta` (`internal/repositories/sqlite/schema.go:19-96`).
    Error strings carry a method, a URL, an HTTP status and the API's own
    message — bounded to 512 bytes so an HTML error page cannot flood a log
-   (`plugins/sources/github/client.go:36`,
+   (`plugins/sources/github/client.go:34`,
    `plugins/sources/notion/client.go:35`,
    `plugins/sources/jira/client.go:30`) — and never a header. The GitLab
    connector additionally scrubs `private_token` and `access_token` query

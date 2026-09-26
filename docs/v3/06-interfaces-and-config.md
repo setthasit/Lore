@@ -199,6 +199,7 @@ providers:                                  # OPTIONAL — a provider id that na
 embedder:                                   # role binding: provider instance + model
   provider: openai
   model: text-embedding-3-small
+  api_key: ${env:OPENAI_API_KEY}            # OPTIONAL: only the provider's declared secrets, a literal like sk-live-abc works too
 # dimensions: 768                           # REQUIRED for ollama; `ollama show <model>` reports it
 
 llm:                                        # OPTIONAL — synthesis for CLI/gRPC only
@@ -217,15 +218,18 @@ server:                                     # used by `lore serve`
     client_ca: ./certs/ca.pem
 ```
 
-Loading is two-stage: the skeleton above decodes strictly, then each `with:`
-block is validated against its plugin's manifest and decoded strictly by the
-plugin itself. Validation at load:
+Loading is two-stage. First the skeleton above decodes strictly, except for
+the keys a role binding carries beside `provider`, `model` and `dimensions`.
+Then each `with:` block and each role binding's keys are validated against the
+plugin's manifest, and a `with:` block is decoded strictly by the plugin itself.
+Validation at load:
 
-- Unknown keys rejected at three points: the top level by the schema
+- Unknown keys rejected at four points: the top level by the schema
   (`internal/config/config.go`, `parse`, which sets `KnownFields(true)`),
   inside `with:` first against the manifest (`internal/registry/with.go`,
   `checkKeys`) and then by the plugin's own decoder (`sdk/host.go`,
-  `SourceConfig.Decode`).
+  `SourceConfig.Decode`), and in a role binding against the provider's
+  declared secrets (`internal/registry/with.go`, `checkRoleKeys`).
 - Every `use:` resolves to a compiled plugin or a `plugins:` declaration, and
   an unresolved one names what this build has (`internal/registry/build.go`,
   `Registry.resolve` and `Registry.unresolved`).
@@ -245,11 +249,23 @@ plugin itself. Validation at load:
   `resolveSecrets`).
 - A plugin installed from outside the binary gets no fallback. Its declared
   default would steer the host onto a variable the operator never granted, so
-  its `with:` block holds every required secret itself
+  its `with:` block, or the role binding that names it, holds every required
+  secret itself
   (`internal/registry/secrets.go`, `resolveSecrets`).
 - A secret never reaches the plugin's configuration JSON, which is built from
   the declared fields alone; its value travels only in the secrets map
   (`internal/registry/with.go`, `configJSON`).
+- A role binding carries its provider's secrets and nothing else. Beside
+  `provider`, `model` and `dimensions`, `embedder:` and `llm:` accept each
+  secret key the provider's manifest declares, written as in a `with:` block:
+  a literal such as `api_key: sk-live-abc`, or `${env:VAR}`. The secret rules
+  above apply to it, and a refusal names it as `embedder.api_key` or
+  `llm.api_key`. Every other
+  plugin setting, `base_url` or `preset` among them, belongs in the `with:`
+  block of a `providers:` entry that the binding names. A binding that names a
+  declared `providers:` entry carries no keys of its own
+  (`internal/registry/with.go`, `checkRoleKeys`, and
+  `internal/registry/build.go`, `checkCarriesNothing`).
 - At least one of `sources` / `repos` non-empty
   (`internal/config/validate.go`, `Config.Validate`).
 - `embedder.provider` and `llm.provider` resolve to provider instances whose
