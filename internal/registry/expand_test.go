@@ -176,36 +176,40 @@ func TestBuildSourcesExpandsAnExternalPluginsSecretField(t *testing.T) {
 	}
 }
 
+var sourceEntryPoints = map[string]func(*Registry, []Instance) error{
+	"BuildSources": func(r *Registry, instances []Instance) error {
+		_, err := r.BuildSources(instances)
+		return err
+	},
+	"CheckDeclarations": func(r *Registry, instances []Instance) error {
+		return r.CheckDeclarations(instances, lore.KindSource)
+	},
+}
+
 func TestExternalPluginRefusesAnExpansionOutsideItsSecretFields(t *testing.T) {
 	const leaked = "https://leaked.acme.dev"
 
-	entryPoints := map[string]func(*Registry, []Instance) error{
-		"BuildSources": func(r *Registry, instances []Instance) error {
-			_, err := r.BuildSources(instances)
-			return err
-		},
-		"CheckDeclarations": func(r *Registry, instances []Instance) error {
-			return r.CheckDeclarations(instances, lore.KindSource)
-		},
-	}
 	fields := []struct {
 		name  string
 		with  map[string]any
 		field string
+		key   string
 	}{
 		{
 			name:  "scalar",
 			with:  map[string]any{"base_url": "${env:" + urlVar + "}", "token": "fake-token"},
 			field: "sources[acme].with.base_url",
+			key:   "base_url",
 		},
 		{
 			name:  "string list entry",
 			with:  map[string]any{"labels": []any{"crm", "team-${env:" + urlVar + "}"}, "token": "fake-token"},
 			field: "sources[acme].with.labels[1]",
+			key:   "labels",
 		},
 	}
 
-	for entry, call := range entryPoints {
+	for entry, call := range sourceEntryPoints {
 		for _, f := range fields {
 			t.Run(entry+"/"+f.name, func(t *testing.T) {
 				var built *lore.SourceConfig
@@ -220,7 +224,10 @@ func TestExternalPluginRefusesAnExpansionOutsideItsSecretFields(t *testing.T) {
 				if withValue == nil {
 					t.Fatal("want an error")
 				}
-				for _, want := range []string{f.field, `plugin "acme"`, "installed from outside the binary"} {
+				for _, want := range []string{
+					f.field, `plugin "acme"`, "installed from outside the binary",
+					"does not mark " + f.key + " expandable", "only the plugin's author can mark it",
+				} {
 					if !strings.Contains(withValue.Error(), want) {
 						t.Errorf("error %q does not contain %q", withValue, want)
 					}
@@ -240,6 +247,39 @@ func TestExternalPluginRefusesAnExpansionOutsideItsSecretFields(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestExternalPluginRefusesAnExpansionInAnUndeclaredKeyAsAnUnknownKey(t *testing.T) {
+	unsetEnv(t, urlVar)
+
+	instances := []Instance{{Use: "acme", Field: "sources[acme]", With: map[string]any{
+		"base_ur": "${env:" + urlVar + "}",
+		"token":   "fake-token",
+	}}}
+
+	for entry, call := range sourceEntryPoints {
+		t.Run(entry, func(t *testing.T) {
+			var built *lore.SourceConfig
+			r := externalRegistry(t, expandingSource(&built))
+
+			err := call(r, instances)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if strings.Contains(err.Error(), urlVar) {
+				t.Errorf("error %q names %s; the undeclared key's expansion was read", err, urlVar)
+			}
+			if want := `sources[acme].with.base_ur is not a key plugin "acme" accepts`; !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+			if built != nil {
+				t.Error("the plugin was built from a refused configuration")
+			}
+		})
 	}
 }
 

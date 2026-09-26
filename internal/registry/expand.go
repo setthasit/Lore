@@ -11,14 +11,19 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-// vars lists, per with: key, the variables its value expanded; none means the operator wrote a literal.
+// vars lists, per with: key, the variables its value expanded.
 func expandWith(manifest lore.Manifest, in Instance, origin string) (
 	with map[string]any, vars map[string][]string, err error) {
 	secret := secretKeys(manifest)
 	with = make(map[string]any, len(in.With))
 	vars = make(map[string][]string, len(in.With))
 	for _, key := range slices.Sorted(maps.Keys(in.With)) {
-		x := withExpander{plugin: manifest.Name, allowed: origin == OriginBuiltin || secret[key]}
+		allowed := origin == OriginBuiltin || secret[key] || marksExpandable(manifest, key)
+		if !allowed && !declaresField(manifest, key) {
+			with[key] = in.With[key]
+			continue
+		}
+		x := withExpander{plugin: manifest.Name, key: key, allowed: allowed}
 		expanded, err := x.expand(in.keyField(key), in.With[key])
 		if err != nil {
 			return nil, nil, err
@@ -29,8 +34,13 @@ func expandWith(manifest lore.Manifest, in Instance, origin string) (
 	return with, vars, nil
 }
 
+func marksExpandable(manifest lore.Manifest, key string) bool {
+	return slices.ContainsFunc(manifest.Fields, func(f lore.Field) bool { return f.Name == key && f.Expandable })
+}
+
 type withExpander struct {
 	plugin  string
+	key     string
 	allowed bool
 	names   []string
 }
@@ -67,9 +77,10 @@ func (x *withExpander) expand(field string, value any) (any, error) {
 func (x *withExpander) leaf(field, raw string) (string, error) {
 	if envx.Holds(raw) && !x.allowed {
 		return "", internalerror.NewBadRequestError(fmt.Sprintf(
-			"%s holds an expansion, but plugin %q is installed from outside the binary, "+
-				"and such a plugin expands %s only in its declared secret fields; %s",
-			field, x.plugin, envx.Form, envx.EscapeRule), nil)
+			"%s holds an expansion, but plugin %q is installed from outside the binary "+
+				"and its manifest does not mark %s expandable; only the plugin's author can mark it, "+
+				"so until then write the value itself; %s",
+			field, x.plugin, x.key, envx.EscapeRule), nil)
 	}
 	value, names, err := envx.ExpandNames(field, raw)
 	x.names = append(x.names, names...)
