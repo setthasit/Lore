@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/sdk"
@@ -901,30 +900,7 @@ func TestCheckDeclarationsChecksAnInstanceNoRoleBinds(t *testing.T) {
 	})
 }
 
-func suggestedProvider(t *testing.T, message string) (config.Instance, map[string]any) {
-	t.Helper()
-
-	_, quoted, opened := strings.Cut(message, "`")
-	snippet, _, closed := strings.Cut(quoted, "`")
-	if !opened || !closed {
-		t.Fatalf("refusal %q quotes no configuration to add", message)
-	}
-
-	cfg, err := config.Decode(strings.NewReader(snippet))
-	if err != nil {
-		t.Fatalf("the suggested %q is not loadable configuration: %v", snippet, err)
-	}
-	if len(cfg.Providers) != 1 {
-		t.Fatalf("the suggested %q declares %d provider instances, want one", snippet, len(cfg.Providers))
-	}
-	with, err := cfg.Providers[0].WithValues()
-	if err != nil {
-		t.Fatalf("the suggested %q carries an unreadable with block: %v", snippet, err)
-	}
-	return cfg.Providers[0], with
-}
-
-func TestBuildProviderRefusesAnImplicitInstanceWithConfigurationTheOperatorCanAdd(t *testing.T) {
+func TestBuildProviderRefusesARoleBoundProviderMissingItsSecretNamingAFieldTheBindingAccepts(t *testing.T) {
 	binding := Binding{
 		Provider:   "acme",
 		Model:      "acme-embed",
@@ -949,21 +925,18 @@ func TestBuildProviderRefusesAnImplicitInstanceWithConfigurationTheOperatorCanAd
 				t.Fatal("BuildProvider: want an error")
 			}
 
-			message := internalerror.MessageOf(err)
-			if strings.Contains(message, "embedder.provider.with") {
-				t.Errorf("refusal %q names a key no role binding accepts", message)
-			}
-
-			suggested, with := suggestedProvider(t, message)
-			if suggested.ID != binding.Provider || suggested.Use != binding.Provider {
-				t.Errorf("suggested instance has id %q and use %q, want both %q so %s still resolves",
-					suggested.ID, suggested.Use, binding.Provider, binding.Field)
-			}
-			if got, want := with["api_key"], "${env:YOUR_VARIABLE}"; got != want {
-				t.Errorf("suggested with block %v sets api_key to %v, want the expansion %q", with, got, want)
-			}
 			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
 				t.Errorf("kind = %s, want %s", got, internalerror.KindBadRequest)
+			}
+			message := internalerror.MessageOf(err)
+			if !strings.HasPrefix(message, "embedder.api_key ") {
+				t.Fatalf("refusal %q does not lead with embedder.api_key", message)
+			}
+
+			binding := binding
+			binding.With = map[string]any{"api_key": "sk-live-abc"}
+			if _, err := newRegistry(t, plugin).BuildProvider(binding, nil); err != nil {
+				t.Errorf("BuildProvider with embedder.api_key set: %v", err)
 			}
 		})
 	}

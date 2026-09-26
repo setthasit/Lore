@@ -31,6 +31,7 @@ type Binding struct {
 	Model      string
 	Dimensions int
 	Capability lore.Capability
+	With       map[string]any
 
 	// Configuration path of the role, "embedder" or "llm".
 	Field string
@@ -116,12 +117,17 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 		return BuiltProvider{}, internalerror.NewBadRequestError(b.Field+".model must name a model", nil)
 	}
 
+	role := Instance{Use: b.Provider, With: b.With, Field: b.Field + ".provider", Role: b.Field}
 	in, declared := findInstance(instances, b.Provider)
-	if !declared {
+	if declared {
+		if err := checkCarriesNothing(role, in); err != nil {
+			return BuiltProvider{}, err
+		}
+	} else {
 		if _, known := r.entries[b.Provider]; !known {
 			return BuiltProvider{}, r.unresolved(b.Field+".provider", b.Provider, lore.KindProvider, instances)
 		}
-		in = Instance{Use: b.Provider, Field: b.Field + ".provider", Role: b.Field}
+		in = role
 	}
 
 	id, plugin, manifest, origin, err := r.resolve(in, lore.KindProvider)
@@ -154,6 +160,22 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 		return BuiltProvider{}, err
 	}
 	return BuiltProvider{Plugin: manifest.Name, Instance: id, Value: built}, nil
+}
+
+func checkCarriesNothing(role, instance Instance) error {
+	if len(role.With) == 0 {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(role.With))
+	carried := make([]string, len(keys))
+	targets := make([]string, len(keys))
+	for i, key := range keys {
+		carried[i] = role.keyField(key)
+		targets[i] = instance.keyField(key)
+	}
+	return internalerror.NewBadRequestError(fmt.Sprintf(
+		"%s names the declared provider instance %q, so %s cannot carry keys of its own; move %s to %s",
+		role.Field, instance.Ident(), role.Role, strings.Join(carried, ", "), strings.Join(targets, ", ")), nil)
 }
 
 func assertCapability(b Binding, id string, manifest lore.Manifest, built lore.Provider) error {

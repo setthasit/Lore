@@ -19,7 +19,7 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 	compiledIn := origin == OriginBuiltin
 	for _, s := range manifest.Secrets {
 		if held, set := in.With[s.Key]; set {
-			field := in.secretField(s.Key)
+			field := in.keyField(s.Key)
 			value, ok := held.(string)
 			if ok && strings.TrimSpace(value) == "" && len(vars[s.Key]) > 0 {
 				return nil, internalerror.NewBadRequestError(fmt.Sprintf(
@@ -50,8 +50,8 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 				continue
 			}
 			return nil, internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s is not set, and its default variable %s is not set or is blank; export %s, or %s",
-				in.secretField(s.Key), s.DefaultEnv, s.DefaultEnv, supplySecret(in, s)), nil)
+				"%s is not set, and its default variable %s is not set or is blank; export %s, or set the field, as a value or as `%s`",
+				in.keyField(s.Key), s.DefaultEnv, s.DefaultEnv, envx.Form), nil)
 		}
 		r.sink.Record(s.DefaultEnv+" ("+in.Field+")", value)
 		secrets[s.Key] = value
@@ -60,17 +60,9 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 }
 
 func unnamedSecret(in Instance, s lore.Secret, compiledIn bool) error {
-	field := in.secretField(s.Key)
-	message := mustHold(field, s)
-	if in.Role != "" {
-		message = fmt.Sprintf("%s is not set, and no providers: entry declares plugin %q to supply it%s",
-			field, in.Use, secretDoc(s))
-	}
+	message := mustHold(in.keyField(s.Key), s)
 	if !compiledIn && s.DefaultEnv != "" {
 		message += "; a plugin installed from outside the binary cannot choose a default"
-	}
-	if in.Role != "" {
-		message += "; " + declareProvider(in, s)
 	}
 	return internalerror.NewBadRequestError(message, nil)
 }
@@ -80,23 +72,11 @@ func mustHold(field string, s lore.Secret) string {
 		field, s.Key, envx.Form, secretDoc(s))
 }
 
-func supplySecret(in Instance, s lore.Secret) string {
-	if in.Role != "" {
-		return declareProvider(in, s)
-	}
-	return "set the field, as a value or as `" + envx.Form + "`"
-}
-
-func (in Instance) secretField(key string) string {
+func (in Instance) keyField(key string) string {
 	if in.Role != "" {
 		return in.Role + "." + key
 	}
 	return in.Field + ".with." + key
-}
-
-func declareProvider(in Instance, s lore.Secret) string {
-	return fmt.Sprintf("declare `providers: [{id: %s, use: %s, with: {%s: %q}}]` and keep %s naming %q",
-		in.Use, in.Use, s.Key, envx.Reference("YOUR_VARIABLE"), in.Field, in.Use)
 }
 
 func secretDoc(s lore.Secret) string {

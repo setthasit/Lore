@@ -15,6 +15,9 @@ import (
 )
 
 func (r *Registry) Prepare(manifest lore.Manifest, in Instance, origin string) ([]byte, map[string]string, error) {
+	if err := checkRoleKeys(manifest, in); err != nil {
+		return nil, nil, err
+	}
 	with, vars, err := expandWith(manifest, in, origin)
 	if err != nil {
 		return nil, nil, err
@@ -49,6 +52,38 @@ func checkInstanceID(in Instance) error {
 		"%s has id %q; %s", in.Field, id, InstanceIDRule), nil)
 }
 
+func checkRoleKeys(manifest lore.Manifest, in Instance) error {
+	if in.Role == "" {
+		return nil
+	}
+	secret := secretKeys(manifest)
+	for _, key := range slices.Sorted(maps.Keys(in.With)) {
+		switch {
+		case secret[key]:
+			continue
+		case declaresField(manifest, key):
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"%s is not a secret plugin %q declares, and %s",
+				in.keyField(key), manifest.Name, declareProvider(in, key)), nil)
+		default:
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"%s is not a key %s accepts for plugin %q; it accepts %s",
+				in.keyField(key), in.Role, manifest.Name, listKeys(slices.Collect(maps.Keys(secret)))), nil)
+		}
+	}
+	return nil
+}
+
+func declaresField(manifest lore.Manifest, key string) bool {
+	return slices.ContainsFunc(manifest.Fields, func(f lore.Field) bool { return f.Name == key })
+}
+
+func declareProvider(in Instance, key string) string {
+	return fmt.Sprintf("%s carries only its provider's secrets, so declare `providers: [{id: %s, use: %s}]` with %s in its with: block, "+
+		"move every key %s carries besides provider, model and dimensions into that block, and keep %s naming %q",
+		in.Role, in.Use, in.Use, key, in.Role, in.Field, in.Use)
+}
+
 func checkKeys(manifest lore.Manifest, in Instance, vars map[string][]string) error {
 	known := make(map[string]lore.Field, len(manifest.Fields))
 	for _, f := range manifest.Fields {
@@ -63,10 +98,10 @@ func checkKeys(manifest lore.Manifest, in Instance, vars map[string][]string) er
 		field, ok := known[key]
 		if !ok {
 			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s is not a key plugin %q accepts; it accepts %s",
-				in.Field, key, manifest.Name, accepted(manifest)), nil)
+				"%s is not a key plugin %q accepts; it accepts %s",
+				in.keyField(key), manifest.Name, accepted(manifest)), nil)
 		}
-		if err := checkType(in.Field+".with."+key, fromNote(vars[key]), field, in.With[key]); err != nil {
+		if err := checkType(in.keyField(key), fromNote(vars[key]), field, in.With[key]); err != nil {
 			return err
 		}
 	}
@@ -75,10 +110,16 @@ func checkKeys(manifest lore.Manifest, in Instance, vars map[string][]string) er
 		if !f.Required {
 			continue
 		}
-		if _, set := in.With[f.Name]; !set {
-			return internalerror.NewBadRequestError(fmt.Sprintf(
-				"%s.with.%s must be set%s", in.Field, f.Name, doc(f.Doc)), nil)
+		if _, set := in.With[f.Name]; set {
+			continue
 		}
+		if in.Role != "" {
+			return internalerror.NewBadRequestError(fmt.Sprintf(
+				"plugin %q requires %s%s; %s",
+				manifest.Name, f.Name, doc(f.Doc), declareProvider(in, f.Name)), nil)
+		}
+		return internalerror.NewBadRequestError(fmt.Sprintf(
+			"%s must be set%s", in.keyField(f.Name), doc(f.Doc)), nil)
 	}
 	return nil
 }
@@ -118,6 +159,10 @@ func accepted(manifest lore.Manifest) string {
 	for _, s := range manifest.Secrets {
 		keys = append(keys, s.Key)
 	}
+	return listKeys(keys)
+}
+
+func listKeys(keys []string) string {
 	if len(keys) == 0 {
 		return "no keys at all"
 	}

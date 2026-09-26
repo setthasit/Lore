@@ -19,7 +19,7 @@ func expandWith(manifest lore.Manifest, in Instance, origin string) (
 	vars = make(map[string][]string, len(in.With))
 	for _, key := range slices.Sorted(maps.Keys(in.With)) {
 		x := withExpander{plugin: manifest.Name, allowed: origin == OriginBuiltin || secret[key]}
-		expanded, err := x.expand(in.Field+".with."+key, in.With[key])
+		expanded, err := x.expand(in.keyField(key), in.With[key])
 		if err != nil {
 			return nil, nil, err
 		}
