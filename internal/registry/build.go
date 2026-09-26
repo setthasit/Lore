@@ -120,7 +120,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 	role := Instance{Use: b.Provider, With: b.With, Field: b.Field + ".provider", Role: b.Field}
 	in, declared := findInstance(instances, b.Provider)
 	if declared {
-		if err := checkCarriesNothing(role, in); err != nil {
+		if err := checkCarriesNothing(role, in, r.entries[in.Use].Manifest); err != nil {
 			return BuiltProvider{}, err
 		}
 	} else {
@@ -162,11 +162,16 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 	return BuiltProvider{Plugin: manifest.Name, Instance: id, Value: built}, nil
 }
 
-func checkCarriesNothing(role, instance Instance) error {
+func checkCarriesNothing(role, instance Instance, manifest lore.Manifest) error {
 	if len(role.With) == 0 {
 		return nil
 	}
 	keys := slices.Sorted(maps.Keys(role.With))
+	if key, found := undeclaredProviderKey(manifest, keys); found {
+		return internalerror.NewBadRequestError(fmt.Sprintf(
+			"%s is not a key %s accepts for the declared provider instance %q; it accepts %s",
+			role.keyField(key), role.Role, instance.Ident(), roleAccepts(nil)), nil)
+	}
 	carried := make([]string, len(keys))
 	targets := make([]string, len(keys))
 	for i, key := range keys {
@@ -176,6 +181,19 @@ func checkCarriesNothing(role, instance Instance) error {
 	return internalerror.NewBadRequestError(fmt.Sprintf(
 		"%s names the declared provider instance %q, so %s cannot carry keys of its own; move %s to %s",
 		role.Field, instance.Ident(), role.Role, strings.Join(carried, ", "), strings.Join(targets, ", ")), nil)
+}
+
+func undeclaredProviderKey(manifest lore.Manifest, keys []string) (string, bool) {
+	if manifest.Kind != lore.KindProvider {
+		return "", false
+	}
+	secret := secretKeys(manifest)
+	for _, key := range keys {
+		if !secret[key] && !declaresField(manifest, key) {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 func assertCapability(b Binding, id string, manifest lore.Manifest, built lore.Provider) error {

@@ -1262,6 +1262,14 @@ func TestBuildProviderRefusesKeysOnARoleBindingNamingADeclaredInstance(t *testin
 			carried: map[string]any{"api_key": roleBoundKey, "base_url": gatewayURL},
 			want:    refused + "move embedder.api_key, embedder.base_url to providers[acme].with.api_key, providers[acme].with.base_url",
 		},
+		"a mistyped binding key": {
+			carried: map[string]any{"dimension": 768},
+			want:    `embedder.dimension is not a key embedder accepts for the declared provider instance "acme"; it accepts provider, model, dimensions`,
+		},
+		"a mistyped binding key beside a secret": {
+			carried: map[string]any{"api_key": roleBoundKey, "dimension": 768},
+			want:    `embedder.dimension is not a key embedder accepts for the declared provider instance "acme"; it accepts provider, model, dimensions`,
+		},
 	}
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1280,5 +1288,19 @@ func TestBuildProviderRefusesKeysOnARoleBindingNamingADeclaredInstance(t *testin
 				t.Error("the plugin was built while the binding's own keys went unused")
 			}
 		})
+	}
+}
+
+func TestBuildProviderRefusesKeysOnARoleBindingNamingADeclaredInstanceWhoseUseNamesNoPlugin(t *testing.T) {
+	instances := []Instance{{ID: "acme", Use: "nosuch", Field: "providers[acme]"}}
+
+	_, err := newRegistry(t, honest(lore.Capabilities{Embed: true})).BuildProvider(embedderBinding(map[string]any{"dimension": 768}), instances)
+	if err == nil {
+		t.Fatal("BuildProvider: want an error")
+	}
+	want := `embedder.provider names the declared provider instance "acme", so embedder cannot carry keys of its own; ` +
+		"move embedder.dimension to providers[acme].with.dimension"
+	if message := internalerror.MessageOf(err); message != want {
+		t.Errorf("refusal %q, want %q", message, want)
 	}
 }
