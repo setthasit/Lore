@@ -33,8 +33,10 @@ const (
 	dualPlugin   = "abacus"     // a provider that both embeds and completes
 	widthPlugin  = "slide-rule" // a provider that embeds at the width it is given
 	codePlugin   = "chisel"     // a code plugin over a clone that tracks nothing
+	keyedPlugin  = "strongbox"  // a provider that embeds and completes with the api_key it is handed
 
 	sourceTokenEnv = "LORE_TEST_PIGEON_TOKEN"
+	keyedKeyEnv    = "LORE_TEST_STRONGBOX_KEY"
 	embedderModel  = "beads-v2"
 	completerModel = "chalk-v1"
 
@@ -168,6 +170,50 @@ func (e stubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, err
 
 func (e stubEmbedder) Dimensions() int { return e.dims }
 
+type stubKeyedPlugin struct{}
+
+var _ lore.ProviderPlugin = stubKeyedPlugin{}
+
+func (stubKeyedPlugin) Manifest() lore.Manifest {
+	return lore.Manifest{
+		Name:         keyedPlugin,
+		Kind:         lore.KindProvider,
+		APIVersion:   lore.APIVersion,
+		Summary:      "a keyed provider that exists only in this package's tests",
+		Capabilities: lore.Capabilities{Embed: true, Complete: true},
+		DefaultModels: map[lore.Capability]string{
+			lore.CapabilityEmbed:    embedderModel,
+			lore.CapabilityComplete: completerModel,
+		},
+		Secrets: []lore.Secret{
+			{
+				Key:        "api_key",
+				DefaultEnv: keyedKeyEnv,
+				Doc:        "key this provider authenticates with",
+			},
+			{
+				Key:      "account",
+				Optional: true,
+				Doc:      "account the key is billed to",
+			},
+		},
+	}
+}
+
+func (stubKeyedPlugin) NewProvider(c lore.ProviderConfig) (lore.Provider, error) {
+	return stubKeyedModel{keyedSecrets: keyedSecrets{apiKey: c.Secret("api_key"), account: c.Secret("account")}}, nil
+}
+
+type keyedSecrets struct {
+	apiKey  string
+	account string
+}
+
+type stubKeyedModel struct {
+	stubModel
+	keyedSecrets
+}
+
 type stubCodePlugin struct{}
 
 var _ lore.CodePlugin = stubCodePlugin{}
@@ -199,7 +245,7 @@ func stubRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 
 	reg := registry.New(lore.Host{}, nil)
-	if err := reg.Register(stubSourcePlugin{}, stubDualPlugin{}, stubWidthPlugin{}, stubCodePlugin{}); err != nil {
+	if err := reg.Register(stubSourcePlugin{}, stubDualPlugin{}, stubWidthPlugin{}, stubCodePlugin{}, stubKeyedPlugin{}); err != nil {
 		t.Fatalf("register the stub plugins: %v", err)
 	}
 
@@ -470,6 +516,130 @@ llm:
 	}
 	if got != dualReply {
 		t.Errorf("Complete = %q, want %q, the answer the bound instance gives", got, dualReply)
+	}
+}
+
+func TestWorkspaceHandsEachRoleTheSecretItsBindingCarries(t *testing.T) {
+	const (
+		referencedKeyEnv     = "LORE_TEST_STRONGBOX_REFERENCED_KEY"
+		referencedAccountEnv = "LORE_TEST_STRONGBOX_REFERENCED_ACCOUNT"
+	)
+
+	tests := []struct {
+		name          string
+		embedderKey   string
+		llmKey        string
+		env           map[string]string
+		wantEmbedder  keyedSecrets
+		wantCompleter keyedSecrets
+	}{
+		{
+			name:          "a literal in each binding outranks the default variable",
+			embedderKey:   "  api_key: sk-live-abc\n",
+			llmKey:        "  api_key: sk-live-xyz\n",
+			env:           map[string]string{keyedKeyEnv: "sk-live-default"},
+			wantEmbedder:  keyedSecrets{apiKey: "sk-live-abc"},
+			wantCompleter: keyedSecrets{apiKey: "sk-live-xyz"},
+		},
+		{
+			name:          "a reference expands to the variable it names",
+			embedderKey:   "  api_key: ${env:" + referencedKeyEnv + "}\n",
+			llmKey:        "  api_key: sk-live-xyz\n",
+			env:           map[string]string{keyedKeyEnv: "", referencedKeyEnv: "sk-live-referenced"},
+			wantEmbedder:  keyedSecrets{apiKey: "sk-live-referenced"},
+			wantCompleter: keyedSecrets{apiKey: "sk-live-xyz"},
+		},
+		{
+			name:          "every declared secret reaches the provider, as a literal or a reference",
+			embedderKey:   "  api_key: sk-live-abc\n  account: ${env:" + referencedAccountEnv + "}\n",
+			llmKey:        "  api_key: ${env:" + referencedKeyEnv + "}\n  account: acct-literal\n",
+			env:           map[string]string{keyedKeyEnv: "", referencedKeyEnv: "sk-live-referenced", referencedAccountEnv: "acct-referenced"},
+			wantEmbedder:  keyedSecrets{apiKey: "sk-live-abc", account: "acct-referenced"},
+			wantCompleter: keyedSecrets{apiKey: "sk-live-referenced", account: "acct-literal"},
+		},
+		{
+			name:          "a binding with no keys falls back to the default variable",
+			env:           map[string]string{keyedKeyEnv: "sk-live-default"},
+			wantEmbedder:  keyedSecrets{apiKey: "sk-live-default"},
+			wantCompleter: keyedSecrets{apiKey: "sk-live-default"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, value := range test.env {
+				t.Setenv(name, value)
+			}
+			path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+embedder:
+  provider: `+keyedPlugin+`
+  model: `+embedderModel+`
+`+test.embedderKey+`llm:
+  provider: `+keyedPlugin+`
+  model: `+completerModel+`
+`+test.llmKey)
+
+			var (
+				embedder  lore.Embedder
+				completer lore.Completer
+			)
+			if err := startWorkspace(t, path, &embedder, &completer); err != nil {
+				t.Fatalf("resolve workspace: %v", err)
+			}
+			if got := embedder.(stubKeyedModel).keyedSecrets; got != test.wantEmbedder {
+				t.Errorf("embedder secrets = %+v, want %+v", got, test.wantEmbedder)
+			}
+			if got := completer.(stubKeyedModel).keyedSecrets; got != test.wantCompleter {
+				t.Errorf("llm secrets = %+v, want %+v", got, test.wantCompleter)
+			}
+		})
+	}
+}
+
+func TestWorkspaceRefusesARoleBindingWhoseKeysDoNotDecode(t *testing.T) {
+	const unreadable = "  ? [api, key]\n  : sk-live-abc\n"
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "embedder",
+			body: "embedder:\n  provider: " + keyedPlugin + "\n  model: " + embedderModel + "\n" + unreadable,
+		},
+		{
+			name: "llm",
+			body: embedderBlock + "llm:\n  provider: " + keyedPlugin + "\n  model: " + completerModel + "\n" + unreadable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfig(t, `repos:
+  - path: `+gitClone(t)+`
+    use: `+codePlugin+`
+`+test.body)
+
+			var (
+				embedder  lore.Embedder
+				completer lore.Completer
+			)
+			err := startWorkspace(t, path, &embedder, &completer)
+			if err == nil {
+				t.Fatal("resolve workspace: want an error rather than a binding whose keys were dropped")
+			}
+			if got := internalerror.KindOf(err); got != internalerror.KindBadRequest {
+				t.Errorf("kind = %s, want %s (error %v)", got, internalerror.KindBadRequest, err)
+			}
+			if want := `role binding for provider "` + keyedPlugin + `" must hold configuration keys`; !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+			if strings.Contains(err.Error(), "sk-live-abc") {
+				t.Errorf("error %q quotes the credential", err)
+			}
+		})
 	}
 }
 

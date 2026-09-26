@@ -169,13 +169,12 @@ type embedding struct {
 }
 
 func newEmbedding(cfg *config.Config, reg *registry.Registry, providers providerInstances) (embedding, error) {
-	built, err := reg.BuildProvider(registry.Binding{
-		Provider:   cfg.Embedder.Provider,
-		Model:      cfg.Embedder.Model,
-		Dimensions: cfg.Embedder.Dimensions,
-		Capability: lore.CapabilityEmbed,
-		Field:      "embedder",
-	}, providers)
+	binding, err := bindingOf(cfg.Embedder, lore.CapabilityEmbed, "embedder")
+	if err != nil {
+		return embedding{}, err
+	}
+
+	built, err := reg.BuildProvider(binding, providers)
 	if err != nil {
 		return embedding{}, err
 	}
@@ -194,17 +193,31 @@ func newCompleter(cfg *config.Config, reg *registry.Registry, providers provider
 		return nil, nil
 	}
 
-	built, err := reg.BuildProvider(registry.Binding{
-		Provider:   cfg.LLM.Provider,
-		Model:      cfg.LLM.Model,
-		Dimensions: cfg.LLM.Dimensions,
-		Capability: lore.CapabilityComplete,
-		Field:      "llm",
-	}, providers)
+	binding, err := bindingOf(*cfg.LLM, lore.CapabilityComplete, "llm")
+	if err != nil {
+		return nil, err
+	}
+
+	built, err := reg.BuildProvider(binding, providers)
 	if err != nil {
 		return nil, err
 	}
 	return built.Value.(lore.Completer), nil
+}
+
+func bindingOf(role config.RoleBinding, capability lore.Capability, field string) (registry.Binding, error) {
+	with, err := role.WithValues()
+	if err != nil {
+		return registry.Binding{}, err
+	}
+	return registry.Binding{
+		Provider:   role.Provider,
+		Model:      role.Model,
+		Dimensions: role.Dimensions,
+		Capability: capability,
+		With:       with,
+		Field:      field,
+	}, nil
 }
 
 func newCodeRepos(reg *registry.Registry, declared clones) ([]services.CodeRepo, error) {
