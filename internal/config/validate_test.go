@@ -654,6 +654,98 @@ func TestInstanceWithValues(t *testing.T) {
 	}
 }
 
+func TestRoleBindingWithValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		yaml  string
+		check func(*testing.T, RoleBinding, map[string]any)
+	}{
+		{
+			name: "a binding naming only provider and model captures no block",
+			yaml: "provider: openai\nmodel: text-embedding-3-small\n",
+			check: func(t *testing.T, binding RoleBinding, values map[string]any) {
+				if binding.With != nil {
+					t.Errorf("With = %+v, want nil", binding.With)
+				}
+				if values != nil {
+					t.Errorf("WithValues() = %v, want nil", values)
+				}
+			},
+		},
+		{
+			name: "a key beyond provider, model and dimensions is captured for the plugin",
+			yaml: "provider: openai\nmodel: text-embedding-3-small\ndimensions: 1536\napi_key: sk-live-abc\n",
+			check: func(t *testing.T, binding RoleBinding, values map[string]any) {
+				if binding.Provider != "openai" || binding.Model != "text-embedding-3-small" || binding.Dimensions != 1536 {
+					t.Errorf("binding = %+v, want provider, model and dimensions decoded by name", binding)
+				}
+				if len(values) != 1 || values["api_key"] != "sk-live-abc" {
+					t.Errorf("WithValues() = %v, want only api_key captured", values)
+				}
+			},
+		},
+		{
+			name: "a nested mapping is captured whole",
+			yaml: "provider: openai\nmodel: text-embedding-3-small\nheaders:\n  x-org: acme\n",
+			check: func(t *testing.T, _ RoleBinding, values map[string]any) {
+				headers, ok := values["headers"].(map[string]any)
+				if !ok || len(headers) != 1 || headers["x-org"] != "acme" {
+					t.Errorf("headers = %v, want the nested mapping preserved", values["headers"])
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Decode(strings.NewReader("embedder:\n" + indent(test.yaml)))
+			if err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+
+			values, err := cfg.Embedder.WithValues()
+			if err != nil {
+				t.Fatalf("WithValues() error = %v, want success", err)
+			}
+			test.check(t, cfg.Embedder, values)
+		})
+	}
+}
+
+func TestDecodeRefusesAnUnsupportedRoleBindingKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "a repeated model",
+			yaml:    "embedder:\n  provider: openai\n  model: a\n  model: b\n",
+			wantErr: "line 4: field model is declared more than once in a role binding",
+		},
+		{
+			name:    "a merge key",
+			yaml:    "embedder:\n  provider: openai\n  <<: { model: a }\n",
+			wantErr: "line 3: merge key << is not supported in a role binding",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Decode(strings.NewReader(test.yaml))
+			if err == nil {
+				t.Fatalf("Decode() = %+v, want the key refused", cfg)
+			}
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("Decode() error kind = %s, want bad request", internalerror.KindOf(err))
+			}
+			if want := "invalid configuration: " + test.wantErr; err.Error() != want {
+				t.Errorf("Decode() error = %q, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestValidateListenAddr(t *testing.T) {
 	tests := []struct {
 		name    string
