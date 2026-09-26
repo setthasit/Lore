@@ -63,8 +63,7 @@ func (i *Instance) UnmarshalYAML(node *yaml.Node) error {
 	for pair := 0; pair+1 < len(node.Content); pair += 2 {
 		key, value := node.Content[pair], node.Content[pair+1]
 		if declaredEarlier(node.Content[:pair], key.Value) {
-			return fmt.Errorf("line %d: field %s is declared more than once in an instance",
-				key.Line, key.Value)
+			return refuseRedeclared(key, "an instance")
 		}
 		switch key.Value {
 		case "id":
@@ -92,6 +91,10 @@ func declaredEarlier(content []*yaml.Node, name string) bool {
 		}
 	}
 	return false
+}
+
+func refuseRedeclared(key *yaml.Node, owner string) error {
+	return fmt.Errorf("line %d: field %s is declared more than once in %s", key.Line, key.Value, owner)
 }
 
 func (i Instance) Ident() string {
@@ -123,14 +126,22 @@ func instancesUsing(used []string, section string, instances []Instance, plugin 
 
 // An absent or empty `with:` block decodes to a nil map, not an error.
 func (i Instance) WithValues() (map[string]any, error) {
-	if i.With == nil || i.With.Tag == "!!null" {
+	values, err := decodeSettings(i.With)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("with: for instance "+strconv.Quote(i.Ident())+
+			" must be a mapping of configuration keys", err)
+	}
+	return values, nil
+}
+
+func decodeSettings(settings *yaml.Node) (map[string]any, error) {
+	if settings == nil || settings.Tag == "!!null" {
 		return nil, nil
 	}
 
 	var values map[string]any
-	if err := i.With.Decode(&values); err != nil {
-		return nil, internalerror.NewBadRequestError("with: for instance "+strconv.Quote(i.Ident())+
-			" must be a mapping of configuration keys", err)
+	if err := settings.Decode(&values); err != nil {
+		return nil, err
 	}
 	return values, nil
 }
@@ -141,6 +152,52 @@ type RoleBinding struct {
 
 	// Vector width for models that do not imply one; zero leaves it to the driver.
 	Dimensions int `yaml:"dimensions"`
+
+	With *yaml.Node `yaml:"-"`
+}
+
+func (b *RoleBinding) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: a role binding must be a mapping that names a provider", node.Line)
+	}
+
+	var extras []*yaml.Node
+	for pair := 0; pair+1 < len(node.Content); pair += 2 {
+		key, value := node.Content[pair], node.Content[pair+1]
+		if declaredEarlier(node.Content[:pair], key.Value) {
+			return refuseRedeclared(key, "a role binding")
+		}
+		if key.ShortTag() == "!!merge" {
+			return fmt.Errorf("line %d: merge key %s is not supported in a role binding", key.Line, key.Value)
+		}
+		var err error
+		switch key.Value {
+		case "provider":
+			err = value.Decode(&b.Provider)
+		case "model":
+			err = value.Decode(&b.Model)
+		case "dimensions":
+			err = value.Decode(&b.Dimensions)
+		default:
+			extras = append(extras, key, value)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if extras != nil {
+		b.With = &yaml.Node{Kind: yaml.MappingNode, Line: node.Line, Column: node.Column, Content: extras}
+	}
+	return nil
+}
+
+func (b RoleBinding) WithValues() (map[string]any, error) {
+	values, err := decodeSettings(b.With)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("role binding for provider "+strconv.Quote(b.Provider)+
+			" must hold configuration keys", err)
+	}
+	return values, nil
 }
 
 type RepoDecl struct {
