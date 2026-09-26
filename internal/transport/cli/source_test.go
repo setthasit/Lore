@@ -31,9 +31,9 @@ embedder:
   model: embed-small
 `
 
-const forgeAnswers = "\nacme/app\n\n\n\n\n"
+const forgeAnswers = "\n\nacme/app\n\n\n\n\n"
 
-const trackerAnswers = "\nhttps://tracker.example\nPROJ, INFRA\n"
+const trackerAnswers = "\n\nhttps://tracker.example\nPROJ, INFRA\n"
 
 var linearManifest = `{"name":"linear","kind":"source","api_version":` + strconv.Itoa(lore.APIVersion) + `,` +
 	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
@@ -93,7 +93,8 @@ embedder:
 		t.Errorf("with.projects = %v, want both keys", values["projects"])
 	}
 
-	const transcript = "name of the environment variable holding the tracker api token" +
+	transcript := secretFormQuestion("tracker api token") +
+		"name of the environment variable holding the tracker api token" +
 		" — the name, never the value [LORE_TRACKER_TOKEN]: " +
 		"Tracker base URL: " +
 		"Project keys to sync, comma-separated: "
@@ -116,8 +117,9 @@ func TestSourceAddAsksForAnIDWhenThePluginAlreadyHasAnInstance(t *testing.T) {
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
-	const transcript = "sources already has an instance called forge," +
+	transcript := "sources already has an instance called forge," +
 		" so this one needs its own id, for example forge-2: " +
+		secretFormQuestion("forge token") +
 		"name of the environment variable holding the forge token" +
 		" — the name, never the value [LORE_FORGE_TOKEN]: " +
 		"Repositories to ingest, each \"owner/name\": " +
@@ -353,7 +355,7 @@ func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
 	const pasted = "glpat-Pasted!Credential"
 	path := writeConfigFile(t, seeded)
 
-	res := runOn(t, sourceRegistry(t), nil, pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
+	res := runOn(t, sourceRegistry(t), nil, "\n"+pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
 	if res.exitCode != exitBadRequest {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
 	}
@@ -375,7 +377,7 @@ func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
 func TestSourceAddWritesOnlyVariableNamesForSecrets(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runOn(t, sourceRegistry(t), nil, "TRACKER_PAT\nhttps://tracker.example\nPROJ\n",
+	res := runOn(t, sourceRegistry(t), nil, "\nTRACKER_PAT\nhttps://tracker.example\nPROJ\n",
 		"source", "add", "tracker", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
@@ -399,19 +401,19 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 		{
 			name:    "a required field left empty",
 			plugin:  "tracker",
-			answers: "\n\n",
+			answers: "\n\n\n",
 			wantErr: "sources[tracker].with.base_url must be set",
 		},
 		{
 			name:    "a required list left empty",
 			plugin:  "tracker",
-			answers: "\nhttps://tracker.example\n\n",
+			answers: "\n\nhttps://tracker.example\n\n",
 			wantErr: "sources[tracker].with.projects must list at least one entry",
 		},
 		{
 			name:    "a url that is not absolute http",
 			plugin:  "tracker",
-			answers: "\ntracker.example\n",
+			answers: "\n\ntracker.example\n",
 			wantErr: "sources[tracker].with.base_url must be an absolute http(s) URL",
 		},
 		{
@@ -419,31 +421,31 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			// so these answers open with one.
 			name:    "a url whose default is offered as the example",
 			plugin:  "forge",
-			answers: "forge-2\n\nacme/app\nftp://forge.acme.dev\n",
+			answers: "forge-2\n\n\nacme/app\nftp://forge.acme.dev\n",
 			wantErr: "sources[forge-2].with.base_url must be an absolute http(s) URL like https://forge.example",
 		},
 		{
 			name:    "a non-numeric int",
 			plugin:  "forge",
-			answers: "forge-2\n\nacme/app\n\n\nseven\n",
+			answers: "forge-2\n\n\nacme/app\n\n\nseven\n",
 			wantErr: "sources[forge-2].with.batch must be a whole number",
 		},
 		{
 			name:    "a bool that is neither",
 			plugin:  "forge",
-			answers: "forge-2\n\nacme/app\n\n\n50\nperhaps\n",
+			answers: "forge-2\n\n\nacme/app\n\n\n50\nperhaps\n",
 			wantErr: "sources[forge-2].with.archived must be true or false",
 		},
 		{
 			name:    "a duration that does not parse",
 			plugin:  "forge",
-			answers: "forge-2\n\nacme/app\n\nlast tuesday\n",
+			answers: "forge-2\n\n\nacme/app\n\nlast tuesday\n",
 			wantErr: "sources[forge-2].with.since must be a duration like 30m or 30d",
 		},
 		{
 			name:    "an env var name that is not a variable name",
 			plugin:  "tracker",
-			answers: "not a name!\n\n",
+			answers: "\nnot a name!\n\n",
 			wantErr: "sources[tracker].with.api_token must be an environment variable name like LORE_TRACKER_TOKEN",
 		},
 		{
@@ -530,15 +532,17 @@ func TestSourceAddPromptsFromAnInstalledPluginsManifest(t *testing.T) {
 	path := installLinearSource(t)
 	before := readConfigFile(t, path)
 
-	res := runOn(t, sourceRegistry(t), nil, "LINEAR_TOKEN\nSRE\ntrue\n",
+	res := runOn(t, sourceRegistry(t), nil, "\nLINEAR_TOKEN\nSRE\ntrue\n",
 		"source", "add", "linear", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	const transcript = "the questions below are the ones this plugin's own manifest declares;" +
-		" answer each one with configuration; a secret's field holds the credential, and for it you give the NAME" +
-		" of the environment variable holding it, written as ${env:VAR} so the value stays out of lore.yaml\n" +
+	transcript := "the questions below are the ones this plugin's own manifest declares;" +
+		" answer each one with configuration; a secret's field holds the credential, either as the NAME" +
+		" of the environment variable holding it, written as ${env:VAR} so the value stays out of lore.yaml," +
+		" or as the value itself, written into lore.yaml in plain text\n" +
+		secretFormQuestion("linear api key") +
 		"name of the environment variable holding the linear api key — the name, never the value: " +
 		"Linear team key: " +
 		"Include the backlog: "
@@ -791,6 +795,11 @@ func assertPromptsAskForNamesOnly(t *testing.T, prompts string) {
 	}
 }
 
+func secretFormQuestion(holds string) string {
+	return "the " + holds + ": env reads it from an environment variable, written as ${env:VAR};" +
+		" value writes it into lore.yaml as typed — env or value [env]: "
+}
+
 func hostileSourceRegistry(t *testing.T) *registry.Registry {
 	t.Helper()
 
@@ -800,13 +809,14 @@ func hostileSourceRegistry(t *testing.T) *registry.Registry {
 func TestSourceAddAsksAHostileManifestsQuestionsInert(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runOn(t, hostileSourceRegistry(t), nil, "\nPLATFORM\nhttps://tracker.example\n",
+	res := runOn(t, hostileSourceRegistry(t), nil, "\n\nPLATFORM\nhttps://tracker.example\n",
 		"source", "add", "hostile", "--config", path)
 	if res.exitCode != exitOK {
 		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 	}
 
-	const transcript = "name of the environment variable holding the hostile api token" +
+	transcript := secretFormQuestion("hostile api token") +
+		"name of the environment variable holding the hostile api token" +
 		" — the name, never the value [HOSTILE_API_TOKEN]: " +
 		clearScreenInert + "Team key: " +
 		"Base URL [https://tracker.example/" + clearScreenInert + "]: "
@@ -828,7 +838,7 @@ func TestSourceAddAsksAHostileManifestsQuestionsInert(t *testing.T) {
 func TestSourceAddRefusesAURLAndNamesTheManifestDefaultInert(t *testing.T) {
 	path := writeConfigFile(t, seeded)
 
-	res := runOn(t, hostileSourceRegistry(t), nil, "\nPLATFORM\nnot-a-url\n",
+	res := runOn(t, hostileSourceRegistry(t), nil, "\n\nPLATFORM\nnot-a-url\n",
 		"source", "add", "hostile", "--config", path)
 	if res.exitCode != exitBadRequest {
 		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)

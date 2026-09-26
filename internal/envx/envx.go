@@ -35,6 +35,10 @@ func Holds(raw string) bool {
 	return unescapedOpen(raw) >= 0
 }
 
+func Escape(literal string) string {
+	return strings.ReplaceAll(literal, open, escapedOpen)
+}
+
 // The error never quotes an expanded value, and quotes raw only up to the variable name.
 func Expand(field, raw string) (string, error) {
 	value, _, err := ExpandNames(field, raw)

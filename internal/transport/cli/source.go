@@ -24,8 +24,14 @@ const sourcesKey = "sources"
 const missingInstanceID = "sources[].id must be set"
 
 const externalPromptNotice = "the questions below are the ones this plugin's own manifest declares;" +
-	" answer each one with configuration; a secret's field holds the credential, and for it you give the NAME" +
-	" of the environment variable holding it, written as " + envx.Form + " so the value stays out of lore.yaml"
+	" answer each one with configuration; a secret's field holds the credential, either as the NAME" +
+	" of the environment variable holding it, written as " + envx.Form + " so the value stays out of lore.yaml," +
+	" or as the value itself, written into lore.yaml in plain text"
+
+const (
+	secretFromVariable = "env"
+	secretFromValue    = "value"
+)
 
 func newSourceCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	source := &cobra.Command{
@@ -46,9 +52,9 @@ func newSourceAddCommand(configPath *string, reg *registry.Registry) *cobra.Comm
 		Short: "Append a source instance to lore.yaml, asking for the fields its plugin declares",
 		Long: "Asks for exactly what the plugin's manifest declares and appends the answers\n" +
 			"as an item under sources: in lore.yaml, leaving every existing line\n" +
-			"untouched. A secret's field holds the credential: it asks for the NAME of\n" +
-			"the environment variable holding it and writes " + envx.Form + ", so the\n" +
-			"credential itself never lands in the file.",
+			"untouched. A secret's field holds the credential: it asks whether to write\n" +
+			envx.Form + ", naming the environment variable holding it, or the value\n" +
+			"itself, which then lands in the file in plain text.",
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSourceAdd(cmd, args, *configPath, reg)
@@ -197,12 +203,14 @@ func promptSource(p *prompter, m lore.Manifest, compiledIn bool, sources []confi
 
 	field := "sources[" + draft.ident() + "].with."
 	for _, secret := range m.Secrets {
-		name, err := p.envName(field+secret.Key, secretHolds(m, secret), defaultEnv(secret, compiledIn))
+		value, variable, err := p.secret(field+secret.Key, secretHolds(m, secret), defaultEnv(secret, compiledIn))
 		if err != nil {
 			return draft, err
 		}
-		draft.entries = append(draft.entries, config.Field{Key: secret.Key, Value: envx.Reference(name)})
-		draft.variables = append(draft.variables, name)
+		draft.entries = append(draft.entries, config.Field{Key: secret.Key, Value: value})
+		if variable != "" {
+			draft.variables = append(draft.variables, variable)
+		}
 	}
 	for _, declared := range m.Fields {
 		value, set, err := promptField(p, field+declared.Name, declared)
@@ -352,16 +360,56 @@ func (p *prompter) read(question, fallback string) (answer string, atEOF bool, e
 	return strings.TrimSpace(line), errors.Is(err, io.EOF), nil
 }
 
-func (p *prompter) envName(field, holds, fallback string) (string, error) {
-	answer, err := p.ask("name of the environment variable holding the "+holds+" — the name, never the value", fallback)
+// variable is empty when the operator typed the value itself.
+func (p *prompter) secret(field, holds, suggested string) (value, variable string, err error) {
+	form, err := p.ask("the "+holds+": "+secretFromVariable+" reads it from an environment variable, written as "+
+		envx.Form+"; "+secretFromValue+" writes it into lore.yaml as typed — "+
+		secretFromVariable+" or "+secretFromValue, secretFromVariable)
+	if err != nil {
+		return "", "", err
+	}
+	switch strings.ToLower(form) {
+	case secretFromVariable:
+		variable, err = p.envName(field, holds, suggested)
+		if err != nil {
+			return "", "", err
+		}
+		return envx.Reference(variable), variable, nil
+	case secretFromValue:
+		value, err = p.literal(field, holds)
+		if err != nil {
+			return "", "", err
+		}
+		return envx.Escape(value), "", nil
+	}
+	// The answer is never echoed: a user who pastes a token here must not see it logged back.
+	return "", "", internalerror.NewBadRequestError(
+		field+" comes from "+secretFromVariable+" or "+secretFromValue+"; answer one of them", nil)
+}
+
+func (p *prompter) literal(field, holds string) (string, error) {
+	printfln(p.out, "the %s will be written to lore.yaml in plain text", inertLine(holds))
+	answer, err := p.ask("type the "+holds+" (it will not be printed back)", "")
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return "", internalerror.NewBadRequestError(
+			field+" must be set: type the credential, or answer "+secretFromVariable+" to name a variable", nil)
+	}
+	return answer, nil
+}
+
+func (p *prompter) envName(field, holds, suggested string) (string, error) {
+	answer, err := p.ask("name of the environment variable holding the "+holds+" — the name, never the value", suggested)
 	if err != nil {
 		return "", err
 	}
 	if !envx.ValidName(answer) {
 		// The answer is never echoed: a user who pastes a token here must not see it logged back.
 		refusal := field + " must be an environment variable name"
-		if fallback != "" {
-			refusal += " like " + fallback
+		if suggested != "" {
+			refusal += " like " + suggested
 		}
 		return "", internalerror.NewBadRequestError(refusal+": "+envx.NameRule, nil)
 	}

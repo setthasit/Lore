@@ -223,3 +223,30 @@ func TestHolds(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeRoundTripsThroughExpansion(t *testing.T) {
+	setFakeEnv(t)
+
+	cases := map[string]string{
+		"plain text":                         "sk-live-abc",
+		"a bare open":                        "Pa${ss}word",
+		"a whole env expansion":              "${env:LORE_ENVX_TOKEN}",
+		"an escaped open already present":    "ghp_X$${Y}",
+		"a dollar run ending in an open":     "$$${",
+		"two opens back to back":             "${${",
+		"a trailing dollar":                  "trailing $",
+		"braces and dollars that never open": "{$}$",
+	}
+
+	for name, typed := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, names, err := envx.ExpandNames(field, envx.Escape(typed))
+			if err != nil {
+				t.Fatalf("ExpandNames(Escape(%q)) error = %v, want the literal back", typed, err)
+			}
+			if got != typed || names != nil {
+				t.Errorf("ExpandNames(Escape(%q)) = %q reading %v, want %q reading nothing", typed, got, names, typed)
+			}
+		})
+	}
+}
