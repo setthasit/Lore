@@ -223,6 +223,7 @@ instances may not share an identity:
 ```console
 $ lore source add github
 sources already has an instance called github, so this one needs its own id, for example github-2: github-infra
+the github token: env reads it from an environment variable, written as ${env:VAR}; value writes it into lore.yaml as typed — env or value [env]: 
 name of the environment variable holding the github token — the name, never the value [LORE_GITHUB_TOKEN]: LORE_INFRA_GITHUB_TOKEN
 Repositories to ingest, each "owner/name": acme-infra/terraform
 added sources[github-infra] to ./lore.yaml
@@ -242,9 +243,9 @@ What lands in `lore.yaml`:
 
 On a workspace where no `github` item exists yet, the id question is skipped
 entirely and the item is written without an `id:`
-(`internal/transport/cli/source.go:226-263`). The prompts themselves come from
+(`internal/transport/cli/source.go:234-271`). The prompts themselves come from
 the plugin's manifest — its secrets first, then its fields, in declaration order
-(`source.go:189-217`, `plugins/sources/github/plugin.go:16-31`) — so there is no
+(`source.go:195-225`, `plugins/sources/github/plugin.go:16-31`) — so there is no
 per-source prompting code to fall out of date.
 
 ### Verify
@@ -441,6 +442,7 @@ by the connector rather than the loader:
 
 ```console
 $ lore source add gitlab
+the gitlab token: env reads it from an environment variable, written as ${env:VAR}; value writes it into lore.yaml as typed — env or value [env]: 
 name of the environment variable holding the gitlab token — the name, never the value [LORE_GITLAB_TOKEN]: 
 GitLab instance URL [https://gitlab.com]: 
 Namespaced project paths to ingest, e.g. acme/myproject: acme/myproject, acme/platform/myproject
@@ -449,23 +451,24 @@ next: export LORE_GITLAB_TOKEN, then run `lore sync`
 ```
 
 The order is the manifest's: declared secrets first, then declared fields
-(`internal/transport/cli/source.go:189-217`), and each question is that entry's
-own `Prompt` (`plugins/sources/gitlab/plugin.go:16-38`). Both
-bracketed defaults are taken by pressing Enter; the projects question is not
-optional — an empty answer stops there with
-`sources[gitlab].with.projects must list at least one entry` (exit 2,
-`source.go:404-413`), which is the same rule instance building enforces later
-with its own wording. The credential is never typed: the prompt asks for the
-*name* of the variable holding it and writes `token: ${env:<name>}`
-(`source.go:199-206`, `:355-369`).
+(`internal/transport/cli/source.go:195-225`), and each field's question is
+that entry's own `Prompt` (`plugins/sources/gitlab/plugin.go:16-38`). A secret
+takes two questions: which form to write, then, for `env`, the name of the
+variable holding it, or, for `value`, the credential itself
+(`source.go:364-388`). All three bracketed defaults are taken by pressing
+Enter here, so the token is never typed; the Notion transcript below takes the
+`value` branch. The projects question is not optional — an empty answer stops
+there with `sources[gitlab].with.projects must list at least one entry`
+(exit 2, `source.go:452-461`), which is the same rule instance building
+enforces later with its own wording.
 
 `base_url` is written out even when you accept the default, so a self-managed
 instance is a visible edit rather than an invisible assumption — an optional
 field left *blank* stays out of the file entirely instead
-(`source.go:284-289`, `:329-338`).
+(`source.go:292-297`, `:337-346`).
 
 What lands in `lore.yaml`, appended to the existing `sources:` block with
-every other line left untouched (`internal/transport/cli/source.go:93-104`):
+every other line left untouched (`internal/transport/cli/source.go:99-110`):
 
 ```yaml
   - use: gitlab
@@ -480,7 +483,7 @@ every other line left untouched (`internal/transport/cli/source.go:93-104`):
 Adding a second GitLab instance is not refused: the command asks for an `id`
 that distinguishes it, and refuses only a duplicate of one already there —
 `sources already has an instance called gitlab; every id in sources must be
-unique` (`internal/transport/cli/source.go:226-263`).
+unique` (`internal/transport/cli/source.go:234-271`).
 
 ### Verify
 
@@ -618,23 +621,32 @@ sources:
 
 ```console
 $ lore source add notion
-name of the environment variable holding the notion token — the name, never the value [LORE_NOTION_TOKEN]: 
+the notion token: env reads it from an environment variable, written as ${env:VAR}; value writes it into lore.yaml as typed — env or value [env]: value
+the notion token will be written to lore.yaml in plain text
+type the notion token (it will not be printed back): <token>
 Root pages to ingest, each a page id or an exact page title (empty syncs everything): 00000000000000000000000000000000, Architecture Decisions
 added sources[notion] to ./lore.yaml
-next: export LORE_NOTION_TOKEN, then run `lore sync`
+next: run `lore sync`
 ```
 
 Prompts come from the manifest (`plugins/sources/notion/plugin.go:15-25`),
-asked by `internal/transport/cli/source.go:189-217`. Pasting a
-token at the first prompt is rejected without echoing it back:
-`sources[notion].with.token must be an environment variable name like
-LORE_NOTION_TOKEN: upper-case letters, digits and underscores, not starting
-with a digit` (`source.go:355-369`). Written item:
+asked by `internal/transport/cli/source.go:195-225`. This session answers
+`value` and pastes the integration token, shown here as `<token>`. The
+terminal echoes it as it is typed; Lore itself never prints it back, and with
+no variable to export the closing line only says to sync
+(`source.go:390-401`, `:112-117`). An empty answer there is refused with
+`sources[notion].with.token must be set: type the credential, or answer env
+to name a variable`. Pasting the token at the first question instead is
+rejected without echoing it back:
+`sources[notion].with.token comes from env or value; answer one of them`
+(`source.go:385-387`). Both refusals exit 2 and leave `lore.yaml` unchanged.
+The token is written as a literal, with any `${` in it written as `$${` so it
+loads back as typed (`source.go:383`). Written item:
 
 ```yaml
   - use: notion
     with:
-      token: ${env:LORE_NOTION_TOKEN}
+      token: <token>
       root_pages:
         - "00000000000000000000000000000000"
         - Architecture Decisions
@@ -643,13 +655,13 @@ with a digit` (`source.go:355-369`). Written item:
 The encoder quotes an all-digit page id, as above, so it stays a string; an
 optional list answered with an empty line is left out of the item entirely, so
 the plugin's own default keeps applying
-(`internal/config/edit.go:466-480`, `source.go:280-281`).
+(`internal/config/edit.go:466-480`, `source.go:288-289`).
 
 ### Verify
 
 ```console
-$ export LORE_NOTION_TOKEN=ntn_000000000000000000000000000000000000000000  # fake
 $ lore sync
+lore: secrets written as literal values in the config: sources[notion].with.token; write ${env:VAR} to keep a credential out of the file
 sync complete — `lore status` for counts and cursor ages
 $ lore status
 …
@@ -662,6 +674,7 @@ like an error:
 
 ```console
 $ lore sync
+lore: secrets written as literal values in the config: sources[notion].with.token; write ${env:VAR} to keep a credential out of the file
 notion failed at its last checkpoint — connector notion could not read changes
 the remaining sources are committed; `lore status` for counts and cursor ages
 lore: 1 source did not finish this round: connector notion could not read changes: notion: POST https://api.notion.com/v1/search: status 401: unauthorized: API token is invalid.
@@ -824,7 +837,9 @@ id, for example id: jira-acme` (`internal/config/validate.go:83-90`).
 
 ```console
 $ lore source add jira
+the jira email: env reads it from an environment variable, written as ${env:VAR}; value writes it into lore.yaml as typed — env or value [env]: 
 name of the environment variable holding the jira email — the name, never the value [LORE_JIRA_EMAIL]: 
+the jira token: env reads it from an environment variable, written as ${env:VAR}; value writes it into lore.yaml as typed — env or value [env]: 
 name of the environment variable holding the jira token — the name, never the value [LORE_JIRA_TOKEN]: 
 Jira site URL: https://acme.atlassian.net
 Project keys to ingest (empty syncs everything): PROJ, PLATFORM
@@ -832,12 +847,12 @@ added sources[jira] to ./lore.yaml
 next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN, then run `lore sync`
 ```
 
-Secrets are asked for first because the manifest declares them first
-(`plugins/sources/jira/plugin.go:30-41`, asked by
-`internal/transport/cli/source.go:189-217`). The base URL
+Secrets are asked for first, each with its own form question, because the
+manifest declares them first (`plugins/sources/jira/plugin.go:30-41`, asked by
+`internal/transport/cli/source.go:195-225`). The base URL
 is checked on the spot:
 `sources[jira].with.base_url must be an absolute http(s) URL`
-(`source.go:292-298`). Written item:
+(`source.go:300-306`). Written item:
 
 ```yaml
   - use: jira
@@ -916,9 +931,10 @@ is what the code does.
 2. **The operator chooses where a secret lives.** A secret field holds
    `${env:VAR}`, which keeps the credential in the environment and out of the
    file, or a literal, which puts it in `lore.yaml` in plain text. The
-   `lore source add` prompts ask for a variable name, write `${env:VAR}`, and
-   reject a pasted value without echoing it
-   (`internal/transport/cli/source.go:355-369`).
+   `lore source add` prompts ask which form to write: `env` asks for a
+   variable name and writes `${env:VAR}`; `value` takes the credential, never
+   prints it back, and writes it as a literal; any other answer is refused
+   without echoing it (`internal/transport/cli/source.go:364-417`).
 3. **Lore writes no secret to disk or logs.** A credential is resolved when
    the instance is built, against the secrets its manifest declares
    (`resolveSecrets` — `internal/registry/secrets.go:13-60`), and lives only
