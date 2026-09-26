@@ -162,6 +162,9 @@ type Field struct {
 	Type     FieldType `json:"type"`
 	Required bool      `json:"required"`
 
+	// Expandable opts this field into `${env:VAR}` expansion for an externally installed plugin.
+	Expandable bool `json:"expandable,omitempty"`
+
 	// Default documents the fallback value; the host never injects it, because
 	// only the plugin knows the value's real type.
 	Default string `json:"default,omitempty"`
