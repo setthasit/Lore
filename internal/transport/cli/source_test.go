@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -34,6 +35,12 @@ embedder:
 const forgeAnswers = "\n\nacme/app\n\n\n\n\n"
 
 const trackerAnswers = "\n\nhttps://tracker.example\nPROJ, INFRA\n"
+
+const (
+	fakeCredentialHead = "zq7K"
+	fakeCredentialTail = "Xv3W"
+	fakeCredential     = fakeCredentialHead + "-fake-not-a-real-token-" + fakeCredentialTail
+)
 
 var linearManifest = `{"name":"linear","kind":"source","api_version":` + strconv.Itoa(lore.APIVersion) + `,` +
 	`"summary":"a scripted external source","capabilities":{"embed":false,"complete":false,"repo_remotes":false},` +
@@ -351,26 +358,140 @@ repos: []
 	}
 }
 
-func TestSourceAddNeverWritesOrEchoesASecretValue(t *testing.T) {
-	const pasted = "glpat-Pasted!Credential"
-	path := writeConfigFile(t, seeded)
+func TestSourceAddRefusalNeverWritesOrEchoesTheCredential(t *testing.T) {
+	tests := []struct {
+		name    string
+		answers string
+		refusal string
+	}{
+		{
+			name:    "pasted as the variable name",
+			answers: "\n" + fakeCredential + "\n" + trackerAnswers,
+			refusal: "sources[tracker].with.api_token must be an environment variable name like LORE_TRACKER_TOKEN",
+		},
+		{
+			name:    "pasted at the form question",
+			answers: fakeCredential + "\n" + trackerAnswers,
+			refusal: "sources[tracker].with.api_token comes from env or value; answer one of them",
+		},
+		{
+			name:    "typed as the value, then a later answer refused",
+			answers: "value\n" + fakeCredential + "\n\n",
+			refusal: "sources[tracker].with.base_url must be set",
+		},
+	}
 
-	res := runOn(t, sourceRegistry(t), nil, "\n"+pasted+"\n"+trackerAnswers, "source", "add", "tracker", "--config", path)
-	if res.exitCode != exitBadRequest {
-		t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfigFile(t, seeded)
+
+			res := runOn(t, sourceRegistry(t), nil, test.answers, "source", "add", "tracker", "--config", path)
+			if res.exitCode != exitBadRequest {
+				t.Fatalf("exit = %d, want %d (stderr %q)", res.exitCode, exitBadRequest, res.stderr)
+			}
+			if !strings.Contains(res.stderr, test.refusal) {
+				t.Errorf("stderr = %q, want it to contain %q", res.stderr, test.refusal)
+			}
+			assertCredentialNeverShown(t, res)
+
+			after := readConfigFile(t, path)
+			if after != seeded {
+				t.Errorf("file = %q, want it untouched after the refusal", after)
+			}
+			if strings.Contains(after, fakeCredentialHead) {
+				t.Errorf("file = %q, want no pasted credential in it", after)
+			}
+		})
 	}
-	for name, stream := range map[string]string{"stderr": res.stderr, "stdout": res.stdout} {
-		if strings.Contains(stream, pasted) {
-			t.Errorf("%s = %q, want the rejected answer absent", name, stream)
-		}
+}
+
+func TestSourceAddWritesATypedCredentialAsALiteral(t *testing.T) {
+	tests := []struct {
+		name    string
+		typed   string
+		written string
+	}{
+		{
+			name:    "a plain credential",
+			typed:   fakeCredential,
+			written: fakeCredential,
+		},
+		{
+			name:    "a credential holding an expansion",
+			typed:   fakeCredentialHead + "${env:LORE_TRACKER_TOKEN}" + fakeCredentialTail,
+			written: fakeCredentialHead + "$${env:LORE_TRACKER_TOKEN}" + fakeCredentialTail,
+		},
 	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfigFile(t, seeded)
+
+			res := runOn(t, sourceRegistry(t), nil, "value\n"+test.typed+"\nhttps://tracker.example\nPROJ\n",
+				"source", "add", "tracker", "--config", path)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+			}
+			transcript := secretFormQuestion("tracker api token") +
+				typedValueQuestion("tracker api token") +
+				"Tracker base URL: " +
+				"Project keys to sync, comma-separated: "
+			if !strings.HasPrefix(res.stdout, transcript) {
+				t.Errorf("stdout = %q, want it to open with the prompt sequence\n%q", res.stdout, transcript)
+			}
+			if !strings.Contains(res.stdout, "next: run `lore sync`") || strings.Contains(res.stdout, "export") {
+				t.Errorf("stdout = %q, want no variable to export for a typed credential", res.stdout)
+			}
+			assertCredentialNeverShown(t, res)
+
+			after := readConfigFile(t, path)
+			if want := "      api_token: " + test.written + "\n"; !strings.Contains(after, want) {
+				t.Errorf("file =\n%s\nwant it to hold\n%s", after, want)
+			}
+			values, err := decodeConfigFile(t, after).Sources[1].WithValues()
+			if err != nil {
+				t.Fatalf("with: does not decode: %v", err)
+			}
+			raw, _ := values["api_token"].(string)
+			loaded, err := envx.Expand("sources[tracker].with.api_token", raw)
+			if err != nil {
+				t.Fatalf("with.api_token = %q does not expand: %v", raw, err)
+			}
+			if loaded != test.typed {
+				t.Errorf("with.api_token loads as %q, want the credential as typed %q", loaded, test.typed)
+			}
+		})
+	}
+}
+
+func TestSourceAddAsksTheFormOfEverySecret(t *testing.T) {
+	path := writeConfigFile(t, seeded)
+	reg := stubRegistry(t, forgePlugin(), trackerWithWebhookPlugin(), vectorsPlugin())
+
+	res := runOn(t, reg, nil, "value\n"+fakeCredential+"\nenv\nTRACKER_HOOK\nhttps://tracker.example\nPROJ\n",
+		"source", "add", "tracker", "--config", path)
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	transcript := secretFormQuestion("tracker api token") +
+		typedValueQuestion("tracker api token") +
+		secretFormQuestion("tracker webhook secret") +
+		"name of the environment variable holding the tracker webhook secret" +
+		" — the name, never the value [LORE_TRACKER_WEBHOOK]: " +
+		"Tracker base URL: "
+	if !strings.HasPrefix(res.stdout, transcript) {
+		t.Errorf("stdout = %q, want each secret asked its form in turn\n%q", res.stdout, transcript)
+	}
+	if !strings.Contains(res.stdout, "next: export TRACKER_HOOK, then run `lore sync`") {
+		t.Errorf("stdout = %q, want only the named variable to export", res.stdout)
+	}
+	assertCredentialNeverShown(t, res)
 
 	after := readConfigFile(t, path)
-	if after != seeded {
-		t.Errorf("file = %q, want it untouched after the refusal", after)
-	}
-	if strings.Contains(after, pasted) {
-		t.Errorf("file = %q, want no pasted credential in it", after)
+	const secrets = "      api_token: " + fakeCredential + "\n" +
+		"      webhook_secret: ${env:TRACKER_HOOK}\n"
+	if !strings.Contains(after, secrets) {
+		t.Errorf("file =\n%s\nwant it to hold\n%s", after, secrets)
 	}
 }
 
@@ -447,6 +568,12 @@ func TestSourceAddRefusesBadAnswersAndLeavesTheFileAlone(t *testing.T) {
 			plugin:  "tracker",
 			answers: "\nnot a name!\n\n",
 			wantErr: "sources[tracker].with.api_token must be an environment variable name like LORE_TRACKER_TOKEN",
+		},
+		{
+			name:    "a typed credential left empty",
+			plugin:  "tracker",
+			answers: "value\n\n",
+			wantErr: "sources[tracker].with.api_token must be set: type the credential, or answer env to name a variable",
 		},
 		{
 			name:    "an instance id the runtime would reject, never replaced",
@@ -798,6 +925,30 @@ func assertPromptsAskForNamesOnly(t *testing.T, prompts string) {
 func secretFormQuestion(holds string) string {
 	return "the " + holds + ": env reads it from an environment variable, written as ${env:VAR};" +
 		" value writes it into lore.yaml as typed — env or value [env]: "
+}
+
+func typedValueQuestion(holds string) string {
+	return "the " + holds + " will be written to lore.yaml in plain text\n" +
+		"type the " + holds + " (it will not be printed back): "
+}
+
+func assertCredentialNeverShown(t *testing.T, res result) {
+	t.Helper()
+
+	for name, stream := range map[string]string{"stdout": res.stdout, "stderr": res.stderr} {
+		folded := strings.ToLower(stream)
+		for _, mark := range []string{fakeCredentialHead, fakeCredentialTail} {
+			if strings.Contains(folded, strings.ToLower(mark)) {
+				t.Errorf("%s = %q, want no part of the typed credential in it, in any case; found %q", name, stream, mark)
+			}
+		}
+	}
+}
+
+func trackerWithWebhookPlugin() lore.Plugin {
+	p := trackerPlugin().(stubSource)
+	p.manifest.Secrets = append(p.manifest.Secrets, lore.Secret{Key: "webhook_secret", DefaultEnv: "LORE_TRACKER_WEBHOOK"})
+	return p
 }
 
 func hostileSourceRegistry(t *testing.T) *registry.Registry {
