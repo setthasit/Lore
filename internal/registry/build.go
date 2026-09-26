@@ -19,7 +19,8 @@ type Instance struct {
 
 	With map[string]any
 
-	ImpliedByRole bool
+	// Configuration path of the role binding that implies this instance; empty for a declared one.
+	Role string
 
 	// Configuration path, quoted verbatim in errors.
 	Field string
@@ -120,7 +121,7 @@ func (r *Registry) BuildProvider(b Binding, instances []Instance) (BuiltProvider
 		if _, known := r.entries[b.Provider]; !known {
 			return BuiltProvider{}, r.unresolved(b.Field+".provider", b.Provider, lore.KindProvider, instances)
 		}
-		in = Instance{Use: b.Provider, Field: b.Field + ".provider", ImpliedByRole: true}
+		in = Instance{Use: b.Provider, Field: b.Field + ".provider", Role: b.Field}
 	}
 
 	id, plugin, manifest, origin, err := r.resolve(in, lore.KindProvider)
