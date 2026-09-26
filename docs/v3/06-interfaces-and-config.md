@@ -318,10 +318,15 @@ underscores and does not start with a digit, and one value may hold several:
   when it prepares the instance (`internal/registry/expand.go`,
   `expandWith`). For a plugin compiled into this binary every string expands,
   inside lists and maps too. A plugin installed from outside the binary
-  expands only in its declared secret fields, whose values the host resolves
-  and injects anyway. An expansion in any other field of such a plugin is
-  refused, naming the field and the plugin, so the environment reaches a third
-  party's settings only where its manifest asked for a credential.
+  expands in its declared secret fields, whose values the host resolves and
+  injects anyway. It also expands in each field its manifest marks
+  `expandable`, including every string beneath that key. An expansion in any
+  other declared field of such a plugin is refused, naming the field and the
+  plugin, so the environment reaches a third party's settings only where its
+  manifest asked for it. An expansion in a key the manifest does not declare
+  is refused as an unknown key, as a literal there would be. Only a secret's
+  value is scrubbed from output (see below), never an expandable field's, so a
+  credential belongs in a declared secret.
 - Because `plugins[].name` and every `use:` expand, the environment may
   choose which plugin a declaration runs. That is by design; the expanded
   name still resolves as any `use:` does (`internal/registry/build.go`,

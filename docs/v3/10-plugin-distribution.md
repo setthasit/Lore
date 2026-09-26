@@ -83,13 +83,15 @@ one's ([08](08-extensibility.md#configuration)). The `with:` keys the plugin's
 manifest declares as secrets hold the credential, as a literal or as
 `${env:VAR}`, and the host resolves each one (`resolveSecrets`,
 `internal/registry/secrets.go`) and sends the value as `Secrets` in the request
-payload (`connector.Changes`, `internal/plugexec/connector.go`). Those are the
-only fields of an external plugin where `${env:VAR}` expands; anywhere else the
-host refuses it, naming the field and the plugin (`expandWith`,
-`internal/registry/expand.go`). Every other `with:` key travels as `Config`,
-which `configJSON` (`internal/registry/with.go`) builds from the fields the
-manifest declares, and what the subprocess environment does hold is in
-[the trust model](#trust-model).
+payload (`connector.Changes`, `internal/plugexec/connector.go`). Those fields,
+and the fields the manifest marks `expandable`, are the only ones of an
+external plugin where `${env:VAR}` expands. Anywhere else the host refuses it,
+naming the field and the plugin (`expandWith`, `internal/registry/expand.go`).
+Only a secret's value is scrubbed from output, so a credential belongs in a
+secret field, never in an expandable one. Every declared `with:` key that is
+not a secret, an expandable one included, travels as `Config`. `configJSON`
+(`internal/registry/with.go`) builds it from the fields the manifest declares.
+What the subprocess environment does hold is in [the trust model](#trust-model).
 
 ## Resolution and install
 
@@ -389,13 +391,14 @@ Three mitigations exist in the code:
   (`internal/registry/registry.go`) cannot fall back to a default variable of
   its own choosing, which a plugin compiled in through `Register`, including
   one added by `lore build --with`, can. Such an external plugin also expands
-  `${env:VAR}` only in those secret fields, so no other `with:` key can pull
-  host environment into its configuration. The host environment is not
-  inherited either: `minimalEnv` (`internal/plugexec/env.go`) hands the
-  subprocess an empty environment, and on Windows only the variables the
-  Windows loader and runtime need. So an external Linear plugin whose `token`
-  field reads `${env:LORE_LINEAR_TOKEN}` receives that value and no secret the
-  operator did not write.
+  `${env:VAR}` only in those secret fields and in the fields its manifest
+  marks `expandable`, so no other `with:` key can pull host environment into
+  its configuration. Only the plugin's author can mark a field. The host
+  environment is not inherited either: `minimalEnv`
+  (`internal/plugexec/env.go`) hands the subprocess an empty environment, and
+  on Windows only the variables the Windows loader and runtime need. So an
+  external Linear plugin whose `token` field reads `${env:LORE_LINEAR_TOKEN}`
+  receives that value and no secret the operator did not write.
 - **Digest pinning.** Remote code is pinned by content, not by tag. The digest
   is recorded on first install and enforced on every install that is not a
   deliberate update, and on every launch: `Install`
@@ -480,7 +483,7 @@ this system.
 | Digest mismatch at launch | `plugins[linear]: digest mismatch for darwin/arm64 — the cached binary hashes to sha256:1d77…, not the recorded sha256:4e90… — run: lore plugin install linear` | refuses to launch the plugin; startup fails; never downgrades to a warning |
 | Missing binary | `plugins[linear] is not installed — run: lore plugin install linear` | startup fails before the scheduler starts; nothing is fetched |
 | Manifest `api_version` mismatch | `plugin "linear" speaks api_version 3, host speaks 2` | rejected at the handshake, both numbers named; startup fails rather than run a source over a contract neither side agrees on |
-| Expansion outside a declared secret field | `sources[linear].with.team holds an expansion, but plugin "linear" is installed from outside the binary, and such a plugin expands ${env:VAR} only in its declared secret fields; $${ writes a literal ${` | startup fails before any source is synced; the plugin never sees the value |
+| Expansion in a declared, non-secret field the manifest does not mark `expandable` | `sources[linear].with.teams holds an expansion, but plugin "linear" is installed from outside the binary and its manifest does not mark teams expandable; only the plugin's author can mark it, so until then write the value itself; $${ writes a literal ${` | startup fails before any source is synced; the plugin never sees the value |
 | Required secret left out | ``sources[linear].with.token must hold the token as a value or as `${env:VAR}`; a plugin installed from outside the binary cannot choose a default`` | startup fails; the plugin's `default_env`, if it declares one, is never read |
 | Plugin crashes mid-stream | the instance, the last op, and the process exit status | reports a plugin crash and fails that source's round; the last persisted cursor is authoritative ([09](09-plugin-protocol.md)), so unflushed frames are only work the next round redoes; other sources finish theirs |
 | Line exceeds the 8 MiB cap | the instance and the op whose frame was oversized | fails the operation; the plugin must split oversized batches into several frames, since the batch is the checkpoint unit |

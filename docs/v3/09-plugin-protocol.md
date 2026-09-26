@@ -103,7 +103,7 @@ and resolves `secrets` before any other op.
     "capabilities": { "embed": false, "complete": false, "repo_remotes": false },
     "fields": [
       { "name": "teams", "type": "string_list", "required": true },
-      { "name": "base_url", "type": "string", "required": false }
+      { "name": "base_url", "type": "string", "required": false, "expandable": true }
     ],
     "secrets": [{ "key": "token", "default_env": "LORE_LINEAR_TOKEN" }]
   }
@@ -111,7 +111,13 @@ and resolves `secrets` before any other op.
 ```
 
 `secrets` lists the `with:` keys that hold a credential; [Secrets](#secrets)
-says how the host resolves and delivers them.
+says how the host resolves and delivers them. A field with `"expandable": true`
+lets the operator write `${env:VAR}` in it, and the host expands the value
+before sending it in `config`. A field that omits the key is not expandable, and
+the host refuses an expansion in it at startup
+([06](06-interfaces-and-config.md#environment-expansion)). The host scrubs
+only a secret's value from its output, never an expandable field's, so a
+credential belongs in `secrets`.
 
 The host MUST reject a manifest whose `api_version` differs from its own with a
 message naming **both** numbers (`plugin "linear" speaks api_version 3, host

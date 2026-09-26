@@ -226,6 +226,10 @@ type Field struct {
     Type     FieldType // string | url | int | bool | string_list | duration
     Required bool
 
+    // Expandable opts this field into `${env:VAR}` expansion for an externally
+    // installed plugin.
+    Expandable bool
+
     // Default is documentation. The host shows it in scaffolds and prompts and
     // never injects it: only the plugin knows the value's real type.
     Default  string
@@ -303,6 +307,20 @@ the discipline is also enforced: `minimalEnv` (`internal/plugexec/env.go`)
 hands the subprocess an empty environment, and on Windows only the variables
 the loader and runtime need. A plugin compiled into this binary shares the
 host process, so there the rule is a contract the author keeps.
+
+The operator's environment reaches an externally installed plugin's `with:`
+block through two doors only. One is a declared secret. The other is a
+field whose `Expandable` is true, where the operator may write `${env:VAR}` and
+the host expands it before the plugin decodes the config. Every other field of
+such a plugin refuses an expansion at startup (`internal/registry/expand.go`,
+`expandWith`). A plugin compiled into this binary needs no marker, because
+every string in its `with:` block expands. Mark a field when an operator has a
+reason to take its value from the environment, such as a base URL that differs
+per machine. Leave it unmarked otherwise. An operator cannot mark a field, so
+the choice is the author's alone. Nothing scrubs a marked field's value from
+logs, errors or plugin stderr. Only a declared secret's resolved value is
+scrubbed. So a credential belongs in a declared secret, never in an expandable
+field.
 
 An official plugin in full:
 

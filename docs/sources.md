@@ -81,7 +81,7 @@ Rules that hold for all four:
   `a plugin installed from outside the binary cannot choose a default`
   (`internal/registry/secrets.go:40-46, 62-68`).
 - **Any `lore.yaml` string may read `${env:VAR}`**, a `with:` value included
-  (`internal/config/expand.go:68-98`, `internal/registry/expand.go:15-30`);
+  (`internal/config/expand.go:68-98`, `internal/registry/expand.go:15-35`);
   durations and whole numbers outside `with:` are not expanded, and `VAR`
   follows the name rule above. Several may share a value, as in
   `remote: github:${env:GH_OWNER}/${env:REPO}`. `$${` writes a literal `${`, a
@@ -91,12 +91,19 @@ Rules that hold for all four:
   `lore: index_path expands LORE_INDEX, but LORE_INDEX is not set` (exit 2)
   (`internal/envx/envx.go:45-96`). Inside `with:`, a plugin compiled into this
   build expands every string. A plugin installed from outside the binary
-  expands only its declared secret fields; an expansion anywhere else is
-  refused, naming the field and the plugin:
-  `sources[<id>].with.<key> holds an expansion, but plugin "<name>" is installed from outside the binary, and such a plugin expands ${env:VAR} only in its declared secret fields; $${ writes a literal ${`
-  (`internal/registry/expand.go:67-77`). `lore plugin` never writes an
-  expanded value back, and refuses a pin over a `from:` written with
-  `${env:VAR}` (`internal/plugindist/workspace.go:401-414`).
+  expands its declared secret fields and the fields its manifest marks
+  `expandable`. An expansion in any other field it declares is refused,
+  naming the field and the plugin:
+  `sources[<id>].with.<key> holds an expansion, but plugin "<name>" is installed from outside the binary and its manifest does not mark <key> expandable; only the plugin's author can mark it, so until then write the value itself; $${ writes a literal ${`
+  (`internal/registry/expand.go:77-88`). A value inside a list or map is
+  named by its full path, as `with.<key>[0]`. No setting in `lore.yaml` lifts
+  this refusal. Write the value itself in that field, or ask the plugin's
+  author to mark the field expandable in a new release. An expansion in a key
+  the plugin does not declare is refused as an unknown key, as the next item
+  shows. Keep a credential in a secret field. Lore scrubs a secret's value
+  from its output and does not scrub an expandable field's value.
+  `lore plugin` never writes an expanded value back, and refuses a pin over a
+  `from:` written with `${env:VAR}` (`internal/plugindist/workspace.go:401-414`).
 - **Unknown keys are rejected**, so a typo is a startup error rather than a
   silently ignored setting: `invalid configuration at ./lore.yaml: …` for a key
   the engine does not have (`internal/config/config.go:280-283`),
