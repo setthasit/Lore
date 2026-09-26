@@ -287,7 +287,8 @@ Third-party plugins load two ways:
   any language, as `test/fixtures/plugins/pysource.py` demonstrates. The artifact is
   pinned by SHA-256 in `lore.lock`, re-verified at every launch, optionally signature-
   checked (cosign or minisign) against the `pubkey:` the declaration names, and started
-  with an empty environment so it sees only the secrets its manifest declared.
+  with an empty environment. In its `with:` block, your environment reaches it only through
+  the secrets its manifest declares and the fields it marks `expandable`.
 - **Compiled in.** `lore build --with github.com/owner/repo@v1.2.3` regenerates the
   composition root with that module added and builds a new binary — in-process calls
   and compile-time type safety, in exchange for needing a Go toolchain.
@@ -385,8 +386,10 @@ commits to `main`, and `make build`/`test`/`lint` green before a PR is opened.
   A literal is announced on stderr at startup. Every resolved secret is scrubbed from
   logs and errors — one shorter than 8 characters is named at startup instead — and
   never reaches the index; least-privilege tokens are the documented default.
-- **A plugin sees only the secrets its manifest declared.** External plugins are
-  digest-pinned, re-verified at launch, and started with no inherited environment.
+- **An external plugin's `with:` block reads your environment only where its manifest
+  allows.** Only its declared secrets and the fields it marks `expandable` expand. Only a
+  declared secret's value is scrubbed. The plugin is digest-pinned, re-verified at launch,
+  and started with no inherited environment.
 - **Off-loopback serving requires TLS**, enforced at startup, with mTLS support.
 - **Private data leaves the machine only toward the configured embedder and, once `llm:`
   is set, the configured LLM.** With `provider: ollama` on both, nothing leaves at all.
