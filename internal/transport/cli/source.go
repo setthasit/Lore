@@ -130,7 +130,7 @@ func sourceToAdd(ctx context.Context, args []string, configPath string, reg *reg
 		return lore.Manifest{}, false, err
 	}
 	if len(args) > 0 {
-		manifest, err := installedSource(ctx, workspace, args[0])
+		manifest, err := installedExternal(ctx, workspace, args[0])
 		if err != nil || manifest.Kind == lore.KindSource {
 			return manifest, false, err
 		}
@@ -138,7 +138,7 @@ func sourceToAdd(ctx context.Context, args []string, configPath string, reg *reg
 	return lore.Manifest{}, false, noSourceToAdd(args, addableSources(ctx, workspace, reg))
 }
 
-func installedSource(ctx context.Context, workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
+func installedExternal(ctx context.Context, workspace *plugindist.Workspace, name string) (lore.Manifest, error) {
 	decl, declared := workspace.Declaration(name)
 	if !declared {
 		return lore.Manifest{}, nil
@@ -159,7 +159,7 @@ func addableSources(ctx context.Context, workspace *plugindist.Workspace, reg *r
 		if _, compiled := reg.Manifest(decl.Name); compiled {
 			continue
 		}
-		if manifest, err := installedSource(ctx, workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
+		if manifest, err := installedExternal(ctx, workspace, decl.Name); err == nil && manifest.Kind == lore.KindSource {
 			names = append(names, decl.Name)
 		}
 	}

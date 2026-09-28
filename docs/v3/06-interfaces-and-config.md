@@ -42,7 +42,8 @@ Transports:
 ## CLI
 
 ```
-lore init                          # create workspace + lore.yaml scaffold
+lore init                          # create workspace + lore.yaml scaffold + its JSON Schema
+lore schema                        # rewrite the JSON Schema editors complete lore.yaml from
 lore source add <plugin>           # append source config interactively (prompts from the manifest)
 lore plugin list                   # every plugin this build can use, with kind and origin
 lore plugin install <name|coord>   # fetch, verify and install an external plugin
@@ -348,6 +349,35 @@ write an expanded value back: an update, or an install that resolves
 naming the field, and `lore plugin list` shows such a `from` by its field
 name (`internal/plugindist/workspace.go`, `Workspace.onDisk` and
 `Workspace.DeclaredFrom`).
+
+### Editor support
+
+`lore schema` writes a JSON Schema (draft-07) beside the configuration, named
+after it: `lore.yaml` gets `lore.schema.json`. `lore init` writes it once and
+opens the scaffold with the modeline
+`# yaml-language-server: $schema=./lore.schema.json`, which any editor running
+yaml-language-server (VS Code's YAML extension, Neovim's `yamlls`, Helix)
+reads for key and value completion, hover docs and diagnostics
+(`internal/configschema`, `Generate`, called from
+`internal/transport/cli/schema.go`, `runSchema`).
+
+The schema is generated from the skeleton above and from each plugin's
+manifest. Compiled-in plugins come from the registry. A plugin declared under
+`plugins:` comes from the manifest its install recorded, read the same way
+`lore source add` reads it. It mirrors the loader: unknown keys are flagged at
+the top level, in `with:` and in a role binding. `use:` offers the plugins of
+the matching kind, a `with:` block offers and types the keys its plugin
+declares, and `embedder:`/`llm:` offer the secrets of the provider they name.
+A secret is required only where nothing falls back, so an external plugin's
+secret is always required (`registry.FallsBack`). A declared plugin whose
+manifest cannot be read is still accepted by `use:`, its `with:` goes
+unchecked, and the command prints the reason as an `unchecked:` line.
+
+It never replaces the loader. It cannot see the environment, whether a
+`providers[]` id exists, or a plugin's own decoding rules. Durations are
+matched against the `lore.ParseDuration` grammar, and `${env:VAR}` is accepted
+wherever the loader would expand it. Regenerate it after installing, updating
+or removing a plugin.
 
 ## Security posture
 

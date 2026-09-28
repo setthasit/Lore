@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/setthasit/Lore/internal/configschema"
 	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/registry"
@@ -38,8 +39,10 @@ func newInitCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 		Long: "Writes a commented lore.yaml next to you, generated from the manifests of\n" +
 			"the plugins this build registers: a starter source instance to fill in,\n" +
 			"whose secret fields hold the credential, scaffolded as " + envx.Form + " of a\n" +
-			"suggested variable; a literal works too. It never touches an index:\n" +
-			"`lore sync` creates that on its first run.",
+			"suggested variable; a literal works too. Beside it goes a .schema.json named\n" +
+			"after it, which lets an editor running yaml-language-server complete and check\n" +
+			"the file; `lore schema` rewrites it. It never touches an index: `lore sync`\n" +
+			"creates that on its first run.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInit(cmd, *configPath, reg)
@@ -48,7 +51,7 @@ func newInitCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 }
 
 func runInit(cmd *cobra.Command, configPath string, reg *registry.Registry) error {
-	plan, err := newScaffold(reg, workspaceName(configPath))
+	plan, err := newScaffold(reg, workspaceName(configPath), schemaModeline(configPath))
 	if err != nil {
 		return err
 	}
@@ -69,9 +72,14 @@ func runInit(cmd *cobra.Command, configPath string, reg *registry.Registry) erro
 	if err := file.Close(); err != nil {
 		return internalerror.NewInternalError("cannot write "+configPath, err)
 	}
+	schema, err := writeSchema(configPath, configschema.Catalog{Plugins: reg.List()})
+	if err != nil {
+		return err
+	}
 
 	out := cmd.OutOrStdout()
 	printfln(out, "wrote %s", configPath)
+	printfln(out, "wrote %s", schema)
 	if variables := plan.variables(); len(variables) > 0 {
 		printfln(out, "next: fill in the fields it marks, export %s, then run `lore sync`",
 			strings.Join(variables, " and "))
@@ -94,6 +102,7 @@ func workspaceName(configPath string) string {
 }
 
 type scaffold struct {
+	modeline  string
 	workspace string
 	source    lore.Manifest
 	embedder  lore.Manifest
@@ -101,7 +110,7 @@ type scaffold struct {
 	hasLLM    bool
 }
 
-func newScaffold(reg *registry.Registry, workspace string) (*scaffold, error) {
+func newScaffold(reg *registry.Registry, workspace, modeline string) (*scaffold, error) {
 	source, ok := reg.Starter(lore.KindSource, "")
 	if !ok {
 		return nil, internalerror.NewPreconditionError("this build registers no source plugin, so there is"+
@@ -113,7 +122,7 @@ func newScaffold(reg *registry.Registry, workspace string) (*scaffold, error) {
 			" and a workspace without vectors has nothing to search — run `lore plugin list` to see what it has", nil)
 	}
 
-	plan := &scaffold{workspace: workspace, source: source, embedder: embedder}
+	plan := &scaffold{modeline: modeline, workspace: workspace, source: source, embedder: embedder}
 	plan.llm, plan.hasLLM = reg.Starter(lore.KindProvider, lore.CapabilityComplete)
 	return plan, nil
 }
@@ -121,6 +130,7 @@ func newScaffold(reg *registry.Registry, workspace string) (*scaffold, error) {
 func (s *scaffold) render() string {
 	var out strings.Builder
 
+	out.WriteString(s.modeline)
 	out.WriteString("workspace: " + s.workspace + "\n\n")
 	out.WriteString("# The index is derived data: safe to delete, rebuilt by the next lore sync.\n")
 	out.WriteString("# index_path: ~/.lore/" + s.workspace + ".db\n\n")

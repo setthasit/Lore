@@ -253,13 +253,15 @@ and the host's `api_version`. Anything else falls through to a fresh handshake,
 a local `from:` among them, because it has no record to name a file, and a
 workspace opened with no handshake refuses instead of falling through. The
 stored copy is never served for a binary that has changed, because
-`Workspace.Manifest` goes through the same digest check first. Two commands
+`Workspace.Manifest` goes through the same digest check first. Three commands
 reach it: `lore plugin install`, to print the kind and summary of what it
 installed (`runPluginInstall` through `renderInstalls` and `installedManifest`,
-`internal/transport/cli/plugindist.go`), and `lore source add`, to find the
+`internal/transport/cli/plugindist.go`), `lore source add`, to find the
 fields it prompts for when the name is not one this build compiled in
 (`runSourceAdd` through `sourceToAdd` or `addableSources` into
-`installedSource`, `internal/transport/cli/source.go`).
+`installedExternal`, `internal/transport/cli/source.go`), and `lore schema`,
+to type each declared plugin's `with:` block (`workspaceCatalog` through
+`installedEntry` into `installedExternal`, `internal/transport/cli/schema.go`).
 
 Every other reader executes the binary. Every remote install and every
 `lore plugin update` captures a fresh reply through `Installer.captureManifest`

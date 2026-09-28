@@ -78,16 +78,19 @@ mkdir -p ~/demo/lore-askonly && cd ~/demo/lore-askonly
 lore init
 ```
 
-`lore init` writes a commented `lore.yaml` and prints:
+`lore init` writes a commented `lore.yaml`, the `lore.schema.json` its first line points
+editors at, and prints:
 
 ```text
 wrote ./lore.yaml
+wrote ./lore.schema.json
 next: fill in the fields it marks, export LORE_GITHUB_TOKEN and OPENAI_API_KEY, then run `lore sync`
 ```
 
 Its scaffold carries one starter source instance — whichever source plugin the build
 offers first, GitHub here — and it leaves `llm:`, `query:` and `scheduler:` commented
-out. For this demo, replace the whole file:
+out. For this demo, replace the whole file, keeping its first line if your editor runs
+yaml-language-server:
 
 ```yaml
 workspace: lore-askonly

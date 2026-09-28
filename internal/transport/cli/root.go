@@ -49,6 +49,7 @@ func newRootCommand(resolve Resolver, reg *registry.Registry) *cobra.Command {
 		newInitCommand(configPath, reg),
 		newSourceCommand(configPath, reg),
 		newPluginCommand(configPath, reg),
+		newSchemaCommand(configPath, reg),
 		newBuildCommand(),
 		newSyncCommand(resolve, configPath),
 		newStatusCommand(resolve, configPath),

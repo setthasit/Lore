@@ -39,7 +39,7 @@ make bin                             # stamped build at bin/lore (CGO_ENABLED=0)
 Then, in the workspace directory:
 
 ```bash
-lore init                            # writes ./lore.yaml
+lore init                            # writes ./lore.yaml and ./lore.schema.json
 export LORE_GITHUB_TOKEN=...         # the variable lore.yaml expands
 export OPENAI_API_KEY=...            # the embedder key
 lore sync                            # first run creates the index

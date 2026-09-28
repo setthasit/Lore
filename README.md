@@ -69,7 +69,7 @@ go install github.com/setthasit/Lore/cmd/lore@latest   # or: git clone … && ma
 export OPENAI_API_KEY=...          # embeddings
 export LORE_GITHUB_TOKEN=...       # fine-grained, read-only PAT; lore.yaml expands it
 
-lore init                          # writes a commented lore.yaml scaffold
+lore init                          # writes a commented lore.yaml scaffold and its lore.schema.json
 lore source add jira               # optional: grow the workspace interactively
 lore sync                          # first run creates ~/.lore/<workspace>.db
 lore status                        # index counts, cursor ages, sync lock
@@ -239,6 +239,7 @@ optional `synthesize` flag, and leaving it unset means prose alongside the bundl
 | Command | Purpose |
 |---|---|
 | `lore init` · `lore source add <plugin>` | scaffold and grow `lore.yaml` |
+| `lore schema` | rewrite the JSON Schema that editors use to complete and check `lore.yaml` |
 | `lore sync [--source <instance>] [--reembed]` | one sync round; checkpoints per batch, so an interrupted run resumes |
 | `lore status` | index counts, per-source cursor ages, sync lock state |
 | `lore ask <question>` | synthesized prose; `--around --source --repo --doc-type --since --until --raw` |

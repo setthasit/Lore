@@ -16,7 +16,6 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 	}
 
 	secrets := make(map[string]string, len(manifest.Secrets))
-	compiledIn := origin == OriginBuiltin
 	for _, s := range manifest.Secrets {
 		if held, set := in.With[s.Key]; set {
 			field := in.keyField(s.Key)
@@ -37,12 +36,11 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 			continue
 		}
 
-		// An external plugin's own default would steer the host onto a variable the operator never granted.
-		if !compiledIn || s.DefaultEnv == "" {
+		if !FallsBack(s, origin) {
 			if s.Optional {
 				continue
 			}
-			return nil, unnamedSecret(in, s, compiledIn)
+			return nil, unnamedSecret(in, s, origin)
 		}
 		value := os.Getenv(s.DefaultEnv)
 		if strings.TrimSpace(value) == "" {
@@ -59,9 +57,14 @@ func (r *Registry) resolveSecrets(manifest lore.Manifest, in Instance, origin st
 	return secrets, nil
 }
 
-func unnamedSecret(in Instance, s lore.Secret, compiledIn bool) error {
+// An external plugin's own default would steer the host onto a variable the operator never granted.
+func FallsBack(s lore.Secret, origin string) bool {
+	return origin == OriginBuiltin && s.DefaultEnv != ""
+}
+
+func unnamedSecret(in Instance, s lore.Secret, origin string) error {
 	message := mustHold(in.keyField(s.Key), s)
-	if !compiledIn && s.DefaultEnv != "" {
+	if origin != OriginBuiltin && s.DefaultEnv != "" {
 		message += "; a plugin installed from outside the binary cannot choose a default"
 	}
 	return internalerror.NewBadRequestError(message, nil)

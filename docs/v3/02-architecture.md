@@ -310,7 +310,8 @@ internal/
 ├── fsx/                    # filesystem helpers shared across layers
 ├── urlx/                   # `Redact` strips userinfo and the query string, and the distribution and build paths call it before printing a URL
 ├── mocks/                  # gomock doubles, generated
-└── config/                 # lore.yaml loading + validation
+├── config/                 # lore.yaml loading + validation
+└── configschema/           # JSON Schema for lore.yaml, from the skeleton and plugin manifests
 api/proto/lore/v1/          # gRPC contract
 test/e2e/                   # composes the real binary, so it sits outside internal/
 docs/                       # these documents
