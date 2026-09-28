@@ -1,0 +1,526 @@
+# 09 — Plugin Protocol (external plugins)
+
+This document specifies the wire protocol between the host and an
+**out-of-process** plugin; compiled plugins implement the Go interfaces in
+[08](08-extensibility.md) and encode nothing. Both modes present the identical
+`lore.Connector` / provider surface to the engine, so the engine never learns
+which mode a plugin uses. Where a binary comes from — coordinates, resolution,
+install layout, signatures — is [10](10-plugin-distribution.md), not here.
+
+## Status
+
+**The protocol is frozen.** It froze when the milestone that ships external
+plugins landed, and it evolves additively from here: a new operation or a new
+field is allowed, and changing or removing one is not. Δ10 in
+[00](00-design-deltas.md) is why the freeze waited for the contract to settle —
+a wire signature frozen before its contract settled turned an internal fix into
+an unimplementable contract, and a published protocol turns that class of fix
+into an ecosystem break. The additive rule is what makes the "ignore unknown
+fields" requirement below safe in both directions.
+
+Version 2 broke that rule on purpose. It removed the separate config-key name
+from each manifest `secrets` entry, because a secret's `key` now names the
+`with:` field that holds the credential. The `api_version` check refuses a
+version 1 plugin at the handshake and at registration, so the host never
+misreads its secrets.
+
+## Transport
+
+The host spawns the plugin binary as a child process: requests go to its
+**stdin**, responses come back on its **stdout**, one JSON object per line
+(NDJSON), UTF-8, `\n`-terminated, with no raw newline inside an object.
+
+- **stdout is protocol-only.** A plugin that prints a banner, a progress bar,
+  or a stray `fmt.Println` there is malformed and fails — no resynchronization.
+- **stderr is free-form** and forwarded to the host logger at debug level,
+  prefixed with the instance id; it is the only diagnostic channel.
+- **Line size cap: 8 MiB** (`wire.MaxLineBytes`). A longer line fails the
+  operation, and a batch too large to frame MUST be split into several `batch`
+  frames — batches are the checkpoint unit, so splitting is always legal. The
+  host counts the bytes as it reads (`internal/plugexec/session.go`,
+  `session.readLine`, reached from `session.read` on every op) and kills the
+  process rather than resynchronizing.
+- **Backpressure is the OS pipe.** The host reads the next frame only after
+  committing the previous batch, so a fast plugin blocks on `write` instead of
+  buffering a whole source; a plugin MUST NOT defeat this by buffering itself.
+
+Examples below are wire-form — one object per line — except the two
+multi-line objects, which are pretty-printed for readability.
+
+## Envelope
+
+```json
+{ "v": 2, "id": "7f3a", "op": "changes" }
+{ "v": 2, "id": "7f3a", "ok": true }
+{ "v": 2, "id": "7f3a", "error": { "message": "…", "retryable": false, "kind": "auth" } }
+```
+
+- `v` is the protocol version, equal to `lore.APIVersion` (2); a plugin
+  receiving a `v` it does not implement MUST answer with an error naming both
+  numbers, never guess.
+- `id` is host-generated and opaque; the plugin echoes it **verbatim** on every
+  frame it emits for that request, streamed frames included.
+- **One in-flight request per process** — a deliberate simplification, because
+  concurrency is the host's job and it gets it by running more processes, so a
+  plugin needs no scheduler. The next request follows `ok`, `error`, or `done`.
+- Unknown response fields are ignored by the host, unknown request fields MUST
+  be ignored by the plugin; evolution is additive only (see [Status](#status)),
+  which is what makes ignoring safe both ways.
+
+## Operations
+
+| op | Kind | Direction | Payload | Response |
+|---|---|---|---|---|
+| `manifest` | all | request/response | — | `manifest` |
+| `changes` | `KindSource` | request/**stream** | `instance`, `config`, `secrets`, `cursor` | `batch` frames, then `done` |
+| `matches_remote` | `KindSource` (RepoRemotes) | request/response | `instance`, `config`, `secrets`, `remote` | `matches` |
+| `embed` | `KindProvider` (Embed) | request/response | `config`, `secrets`, `model`, `texts` | `vectors`, `dimensions` |
+| `complete` | `KindProvider` (Complete) | request/response | `config`, `secrets`, `model`, `system`, `user` | `text` |
+| `blame` | `KindCode` | request/response | `path`, `start_line`, `end_line` | `spans` |
+| `log` | `KindCode` | request/response | `path` | `commits` |
+| `has_file` | `KindCode` | request/response | `path` | `present` |
+| `shutdown` | all | request/exit | — | `ok`, then exit 0 |
+
+`KindCode` payloads carry no `config` or `secrets`: `path` is
+workspace-absolute — the host resolves it against the registered clone root
+before sending — and a local clone needs no credentials.
+
+### manifest
+
+The first request on every process; the host validates config against `fields`
+and resolves `secrets` before any other op.
+
+```json
+{ "v": 2, "id": "1", "op": "manifest" }
+```
+
+```json
+{
+  "v": 2, "id": "1", "ok": true,
+  "manifest": {
+    "name": "linear", "kind": "source", "api_version": 2,
+    "summary": "Linear issues and comments; created_at is the issue createdAt",
+    "capabilities": { "embed": false, "complete": false, "repo_remotes": false },
+    "fields": [
+      { "name": "teams", "type": "string_list", "required": true },
+      { "name": "base_url", "type": "string", "required": false, "expandable": true }
+    ],
+    "secrets": [{ "key": "token", "default_env": "LORE_LINEAR_TOKEN" }]
+  }
+}
+```
+
+`secrets` lists the `with:` keys that hold a credential; [Secrets](#secrets)
+says how the host resolves and delivers them. A field with `"expandable": true`
+lets the operator write `${env:VAR}` in it, and the host expands the value
+before sending it in `config`. A field that omits the key is not expandable, and
+the host refuses an expansion in it at startup
+([06](06-interfaces-and-config.md#environment-expansion)). The host scrubs
+only a secret's value from its output, never an expandable field's, so a
+credential belongs in `secrets`.
+
+The host MUST reject a manifest whose `api_version` differs from its own with a
+message naming **both** numbers (`plugin "linear" speaks api_version 3, host
+speaks 2`), never a generic mismatch error. It refuses at the handshake itself
+(`internal/plugexec/session.go`, `handshake`, which every session runs before
+its operation), and again at registration whichever way the plugin was
+registered (`internal/registry/registry.go`, `CheckManifest`, reached through
+`validateManifest` from `Register` and `RegisterExternal` alike).
+`capabilities` is an object of booleans, and each kind may set only its own. A
+`KindCode` plugin sets all three false: `repo_remotes` is a `KindSource`
+capability, and a plugin of any other kind that declares it is refused at
+registration (`internal/registry/registry.go`, `validateCapabilities`). A
+`KindProvider` sets `embed`, `complete`, or both, which are equally refused on
+any other kind, and the host refuses a role binding to a capability the plugin
+did not declare (`internal/registry/build.go`, `Registry.BuildProvider`).
+
+### changes
+
+Streams documents modified since `cursor`, oldest-first: zero or more `batch`
+frames, then exactly one `done`. An empty `cursor` object means full backfill.
+
+```json
+{ "v": 2, "id": "2", "op": "changes", "instance": "linear-core", "config": { "teams": ["CORE", "PLAT"] }, "secrets": { "token": "lin_api_…" }, "cursor": { "updated_after": "2026-08-31T09:12:44Z", "last_id": "ENG-4471" } }
+{ "v": 2, "id": "2", "batch": { "docs": [], "cursor": { "updated_after": "2026-09-01T00:00:00Z" } } }
+{ "v": 2, "id": "2", "done": true }
+```
+
+Every `batch` frame MUST carry a non-empty `cursor`, including one whose `docs`
+is empty: the host refuses a frame whose `cursor` is absent or an empty object,
+naming the count of documents that would have been checkpointed by nothing, and
+aborts the stream. The host commits the documents, **then** persists that
+frame's cursor — the batch is the checkpoint unit, exactly as for in-process
+connectors ([04](04-connectors-and-sync.md)). Two frame shapes are refused
+outright, aborting the stream: `done` carrying a batch, whatever cursor that
+batch holds, since neither its documents nor its cursor could be committed;
+and a frame carrying neither a batch nor `done`, which the host cannot act on.
+All three refusals are the frame loop in `internal/plugexec/connector.go`,
+`connector.Changes`, which the sync round drives one batch at a time.
+
+### matches_remote
+
+Answered only by a `KindSource` whose manifest declares `repo_remotes`. The
+host asks it once per registered local clone at startup, to decide whether the
+clone's `remote:` names something this instance ingests.
+
+```json
+{ "v": 2, "id": "8", "op": "matches_remote", "instance": "github", "config": { "repos": ["acme/app"] }, "secrets": {}, "remote": "github:ACME/App" }
+{ "v": 2, "id": "8", "ok": true, "matches": true }
+```
+
+It is an operation rather than a comparison the host performs itself, because
+only the plugin knows how its own repository identifiers compare: GitHub's
+owner and repository names are case-insensitive, a GitLab path is not and may
+nest through subgroups. Without it the capability would belong to compiled
+plugins alone, and the warning it powers would be a privilege of our own code.
+
+The answer only decides a **warning**, so a plugin that errors or cannot be
+reached reads as `false`: a startup warning must never be the reason a
+workspace fails to start.
+
+### embed
+
+```json
+{ "v": 2, "id": "3", "op": "embed", "config": { "base_url": "http://127.0.0.1:11434" }, "secrets": {}, "model": "nomic-embed-text", "texts": ["why option B over A", "rollback plan"] }
+{ "v": 2, "id": "3", "ok": true, "vectors": [[0.0131, -0.0442], [-0.0087, 0.0210]], "dimensions": 768 }
+```
+
+`vectors` MUST be positionally aligned with `texts` and of equal length; a
+short, reordered, or filtered result is a protocol error, never a partial
+success. The host checks the count, the reported width and every row against
+that width (`internal/plugexec/provider.go`, `embedder.aligned`, on the return
+path of every `Embed`). The plugin reports `dimensions`, never an identity
+string — the host composes the vector-space identity as
+`<plugin>/<model>/<dims>` from the manifest name, the bound model and the width
+the provider reports (`internal/di/modules.go`, `newVectorSpace`), so no plugin
+can claim another's identity ([08](08-extensibility.md)).
+
+### complete
+
+```json
+{ "v": 2, "id": "4", "op": "complete", "config": {}, "secrets": { "api_key": "sk-…" }, "model": "claude-sonnet-4", "system": "Answer only from the evidence.", "user": "Why did we pick B over A?" }
+{ "v": 2, "id": "4", "ok": true, "text": "B was chosen because …" }
+```
+
+Empty or whitespace-only `text` is an **error**, not a success: an empty
+completion is indistinguishable from a dropped request, reported as `internal`.
+
+### blame, log and has_file
+
+```json
+{ "v": 2, "id": "5", "op": "blame", "path": "/w/api/internal/auth/auth.go", "start_line": 40, "end_line": 42 }
+{ "v": 2, "id": "5", "ok": true, "spans": [{ "sha": "9c1f0ab3e5d4", "line_start": 40, "line_end": 42, "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "lines": ["if !tok.Valid() {", "\treturn errUnauthorized", "}"] }] }
+{ "v": 2, "id": "6", "op": "log", "path": "/w/api/internal/auth/auth.go" }
+{ "v": 2, "id": "6", "ok": true, "commits": [{ "sha": "9c1f0ab3e5d4", "author": "Ada Lovelace", "time": "2026-05-14T08:31:02Z", "subject": "reject expired tokens" }] }
+{ "v": 2, "id": "7", "op": "has_file", "path": "/w/api/internal/auth/auth.go" }
+{ "v": 2, "id": "7", "ok": true, "present": true }
+```
+
+Spans come in span order, `lines` holds one entry per line in the span, and
+`commits` is newest-first following renames. All three ops only read, and that
+is a property of the protocol rather than a control: there is no operation by
+which the host asks a code plugin to change a clone. Nothing stops the process
+from writing to one anyway. It runs with the operator's privileges and the
+clone is an ordinary directory it can open, so a code plugin that writes to the
+working tree succeeds, exactly as a source plugin that writes to its source
+does ([10](10-plugin-distribution.md#trust-model)).
+
+`has_file` answers whether the path exists at the clone's current head. It is a
+separate op rather than an inference from an empty `log`, because a deleted file
+still has history: the query engine asks it before blaming
+(`internal/services/coderepo.go`, `requireTrackedFile`, reached from
+`codeSpan.blame` for `why` and from `fileHistoryOf` for `history_of`) so a
+mistyped path comes back as a `not_found` naming the repository instead of a
+raw tool failure. A directory, an untracked path, and a clone with no commits
+are all `"present": false`, not errors.
+
+### shutdown
+
+```json
+{ "v": 2, "id": "7", "op": "shutdown" }
+{ "v": 2, "id": "7", "ok": true }
+```
+
+The plugin answers, flushes stdout, and exits `0`; it MUST NOT start new work.
+
+## Data encoding
+
+Field names are snake_case, one-to-one with the entity fields: `Document` →
+`id`, `source`, `type`, `repo_ref`, `title`, `body`, `author`, `url`,
+`created_at`, `updated_at`, `refs`; `RawRef` → `kind`, `value`, `instance`;
+`Batch` → `docs`, `cursor`.
+
+```json
+{
+  "batch": {
+    "docs": [{
+      "id": "linear:ticket:ENG-4471", "source": "linear", "type": "ticket",
+      "repo_ref": "",
+      "title": "Move session store to Redis",
+      "body": "Chose B (Redis) over A (sticky sessions) because …",
+      "author": "grace@example.com",
+      "url": "https://linear.app/acme/issue/ENG-4471",
+      "created_at": "2026-08-30T14:02:11Z",
+      "updated_at": "2026-09-01T07:45:03+02:00",
+      "refs": [
+        { "kind": "url", "value": "https://github.com/acme/api/pull/812" },
+        { "kind": "ticket_key", "value": "PROJ-123" },
+        { "kind": "commit_sha", "value": "9c1f0ab" }
+      ]
+    }],
+    "cursor": { "updated_after": "2026-09-01T05:45:03Z", "last_id": "ENG-4471" }
+  }
+}
+```
+
+- `id` is `"<source>:<type>:<external_id>"` and the host never rebuilds it;
+  `source` MUST equal the request's `instance` and `id` MUST carry it as its
+  prefix, or the host fails the batch (`internal/services/sync.go`,
+  `assertInstanceIdentity`, which runs before any document of the batch is
+  stored).
+- `repo_ref` is `"github:owner/repo"` for repository-scoped documents, empty
+  otherwise; the key is always present, the value may be empty.
+- Timestamps are RFC 3339 **with** a timezone offset. `created_at` and
+  `updated_at` are both REQUIRED and non-zero; a source with no true creation
+  time sets `created_at = updated_at` and says so in its manifest `summary`,
+  the rule in-process connectors follow in their package doc. Nothing at
+  ingest rejects a zero one. `sdk/conform` reports it as a finding
+  (`CheckTimestamps`), so `lore plugin verify` is where a plugin author hears
+  about it, and a document that reaches the index undated is ranked and
+  rendered as undated rather than refused.
+- `refs[].kind` MUST be one of `url`, `ticket_key`, `commit_sha`, `file_path`,
+  `pr_number`; an unknown kind is rejected at ingest with the known list, never
+  dropped (`internal/services/linkresolver.go`, `assertKnownRefKind`, reached
+  from `assertDocumentRefKinds` on every batch) — a dropped ref is a missing
+  edge and so a wrong answer.
+- `refs[].instance` is optional and omitted when empty. It names the source
+  instance the reference resolves inside, matched exactly with case, and an
+  omitted one resolves against every ingested instance
+  (`sdk/document.go`, `RawRef`, and
+  [04](04-connectors-and-sync.md#link-resolver)).
+- `type` is an open set: an unknown value is accepted, chunked with the default
+  strategy, and ranked as ordinary evidence.
+- `cursor` is a flat string→string map, opaque to the host, which stores and
+  replays it without inspecting a key.
+- A field the protocol types as a list or a map travels as `[]` or `{}`, never
+  `null`, from the SDK — in the requests the host sends and in the frames a
+  plugin answers with alike. The rule binds the encoder: the host reads `null`
+  and an absent key as that same empty value, so a plugin writing its own JSON
+  is refused for neither — only where an op requires a non-empty value, as
+  `changes` does of `cursor` and `embed` of `vectors`.
+
+## Errors
+
+```json
+{ "v": 2, "id": "2", "error": { "message": "token lacks read:issues", "retryable": false, "kind": "auth" } }
+```
+
+| `kind` | What the plugin is reporting |
+|---|---|
+| `invalid_config` | the instance's configuration cannot produce a stream; the same config fails the same way |
+| `auth` | the credentials were rejected or lack a scope; credentials do not fix themselves |
+| `rate_limit` | the upstream API is throttling this instance |
+| `not_found` | a configured resource does not exist upstream |
+| `internal` | anything else, including every protocol violation the host detects itself |
+
+The host action is the same for every kind: the instance fails for the round,
+and the next round asks the plugin for changes from the last cursor the host
+committed. No kind delays the round, retries the operation, or re-dials the
+plugin. `kind` reaches the operator inside the reported error rather than
+steering the host, and an unknown `kind` is reported as `internal` with the
+value the plugin sent quoted in the message.
+
+`retryable` is a field the host accepts and does not act on: it is absent from
+the host's error decoder, so nothing branches on it and nothing round-trips it.
+A failing instance never stops the others — instances fail independently
+([04](04-connectors-and-sync.md#sync-round)) and the round reports partial
+failure.
+
+A plugin MUST NOT exit non-zero as its way of reporting a business
+error: a non-zero exit means *the process died*, and the host reports it as a
+crash naming the instance and the last op. Every expected failure — bad
+credentials, missing resource, throttling — is an `error` frame on stdout,
+after which the process stays alive and ready for the next request.
+
+## Lifecycle and cancellation
+
+One process per instance per round: the host spawns, sends `manifest`, runs
+the operation (a whole `changes` stream for a source, one call for a provider
+or code op), then `shutdown`; no state survives a round except what the plugin
+put in the cursor. Teardown is bounded at every step, and the steps run in
+sequence: the host closes stdin and waits for the process to exit, then sends
+`SIGTERM` and waits again, then `SIGKILL`s. A round the host abandons instead
+of ending — a timeout, a protocol violation — skips the wait on stdin and goes
+straight to `SIGTERM`. A plugin MUST treat stdin EOF as cancel, abandoning
+in-flight work and exiting: it is the only path that spends none of those
+windows. The host MUST NOT assume a killed plugin flushed anything, which is
+safe because the last persisted cursor is authoritative: unflushed frames are
+work the next round redoes, and re-ingest is idempotent by `id`.
+
+| Operation | Timeout |
+|---|---|
+| `manifest` | 10s |
+| `embed`, `blame`, `log`, `has_file`, `matches_remote` | 60s |
+| `complete` | 120s, matching the in-process `lore.CompleteTimeout` |
+| `changes` | none while frames keep arriving; 300s idle |
+| `shutdown` | 5s to take the request, 5s to answer it, then the escalation above |
+
+Every window above is `defaultTuning` (`internal/plugexec/session.go`), read by
+the session that runs the op.
+
+The `changes` timeout is idle-only — a long backfill is legitimate, a silent
+process is not. Teardown windows add up rather than overlap: after the request
+is written, a plugin that answers `shutdown` and then ignores both stdin EOF
+and `SIGTERM` has up to 5s to answer, 5s to exit on the EOF and a 5s grace
+before the `SIGKILL` — up to about 15s — and a further 5s may pass reaping
+output pipes a descendant it left behind still holds. A round pays that per
+stalled instance, which is why exiting on EOF is a MUST rather than a courtesy.
+
+## Secrets
+
+Secrets travel **inside the request payload on stdin**: never argv, which is
+world-readable in `ps`, and never the inherited environment, so a plugin sees
+only what its manifest declared. The host resolves each secret from its
+`with:` field in `lore.yaml`, a literal or `${env:VAR}`, and delivers values
+keyed by the manifest's secret keys (`{"api_key": "…"}`), so a plugin never
+learns which variable, if any, the operator chose. The host never reads an
+external plugin's `default_env`, because it would steer the host onto a
+variable the operator never granted, so the operator's `with:` block holds
+every required secret. A plugin MUST NOT read `os.Getenv` or any equivalent;
+needing an undeclared value means it is misconfigured.
+
+The discipline is enforced rather than requested: the host starts the child
+with an empty environment instead of an inherited one, so one plugin cannot
+read another's credentials even if it looks. On Windows the child additionally
+receives the few variables the loader and runtime need to find the system and a
+temporary directory — none of which can carry a credential — because a process
+started without them fails in ways that look like plugin bugs.
+
+The transport changes no residual risk: a source plugin holds a source token,
+so "read-only" is a promise the host cannot enforce for a subprocess — trust
+controls are in [10](10-plugin-distribution.md).
+
+## Conformance
+
+`sdk/conform` runs against an external plugin **unchanged**, because it needs
+only a `lore.Connector` and the client shim that speaks this protocol is one —
+so one suite certifies compiled and external plugins identically, save the
+stream-error rule the host shim absorbs at the boundary. It asserts:
+
+- that a full stream reaches `done` at all, since a stream that never
+  completes leaves the rest nothing to judge;
+- resumability from a mid-stream cursor: replaying from batch *n*'s cursor
+  yields batch *n+1* onward, no gap and no rewind;
+- idempotency: a full replay produces no duplicate documents, since upserts
+  key on `id`;
+- every batch carries a cursor, empty ones included;
+- `created_at` and `updated_at` both set and non-zero on every document;
+- full identity on every document — `id`, `source`, `type`, `url` present and
+  `id` consistent with its three parts;
+- that an error ends the stream — nothing is yielded after it, and no batch
+  carrying documents or a cursor rides in the same yield, since a consumer
+  drops that batch. This one is proved on the connector itself, which is what
+  an in-process suite run drives; a subprocess plugin reaches the suite
+  through the host shim, which ends the stream on an error frame, drops
+  whatever that frame carried beside the error, and refuses a batch in the
+  `done` frame, so `lore plugin verify` enforces the rule at the boundary
+  rather than failing the plugin on it.
+
+A check reports a verdict only on the material the stream gave it. A stream
+that carried no batch leaves the cursor check unreachable, one that carried no
+document leaves timestamps and identity unreachable. Idempotency and the error
+check are the exceptions: two empty streams compare equal, and a stream that
+never failed broke no rule about what follows an error, so both pass. After an
+error the suite reads one more value and stops there; the Go runtime rejects a
+sequence that keeps yielding past that, and a connector that hangs instead of
+returning is bounded by the context it was given, as it is for every consumer
+of `Changes`. Each unreachable check is reported by name with its reason,
+neither a pass nor a finding.
+
+Certifying a source no `sources:` entry configures is weaker again. Resume is
+excused below two batches, and a refusal to stream at all for want of
+configuration certifies nothing instead of failing, reported in the plugin's
+own words — cut to a quoted 120-byte excerpt, as every plugin string the host
+quotes back is. A defect committed once the stream is open stays a finding,
+and so does one committed in the refusal itself: an in-process source that
+rides documents or a cursor beside the error it declines with — or yields
+anything after it — is reported and fails certification.
+
+`lore plugin verify` is this suite pointed at an installed binary: it opens the
+binary, reads the manifest the binary reports, prepares the declared instance's
+`with:` block and secrets against that manifest, and certifies under that
+instance's id — the same code path a third-party author runs locally before
+publishing.
+
+## Non-goals
+
+- **No host callbacks, no bidirectional RPC.** A plugin cannot ask the host
+  anything; one that wants the store is misdesigned and violates the layering
+  in [02](02-architecture.md) — connectors produce data, services orchestrate.
+- **No plugin-to-plugin communication.** Plugins do not know about each other;
+  cross-source relations are the LinkResolver's job.
+- **No long-lived daemon plugins.** A process exists for a round; anything
+  needing persistence goes in the cursor.
+- **No gRPC.** Rejected because it forces a proto toolchain and generated code
+  on every plugin author, the cost NDJSON avoids; it stays the escape hatch if
+  host callbacks ever become necessary, when hand-rolling stops being cheap.
+- **Not Go's `plugin` package.** Version-locked to the exact toolchain and
+  dependency graph, no Windows, and it breaks the pure-Go build.
+
+Sync is I/O bound, so a subprocess boundary costs nothing measurable against
+network round-trips — which is why exec is the default for third-party plugins
+rather than a fallback.
+
+## Reference implementation
+
+`sdk/stdio` ships the Go side of this protocol. `Serve` takes one
+`lore.Plugin` value and answers the host on the process's own streams, so a
+source author writes two methods, `Manifest` and a `NewSource` returning a
+`lore.Connector` and an error, which together satisfy `lore.SourcePlugin`,
+plus a `main` that hands that value to `Serve`. `ServeStreams` is the same
+loop over streams the caller supplies. `Serve` returns nil once `shutdown` or
+stdin EOF ends the loop, and an error when the streams fail or a request line
+exceeds `wire.MaxLineBytes`. The SDK reports that over-cap line on stderr
+itself, so a `main` need only exit non-zero on it. A `main` reports every
+other error `Serve` returns before exiting. Both serve source operations
+only: a value that implements no `lore.SourcePlugin` serves `manifest` and
+`shutdown`, and refuses `changes` and `matches_remote` as `internal` naming
+its manifest kind.
+
+The SDK owns the frame layer. It decodes every request line, echoes the host's
+`id` and stamps its own `lore.APIVersion` as `v` on each frame it emits,
+refuses a request whose `v` is not `lore.APIVersion` with an error naming both
+numbers, serves `manifest`, `changes`, `matches_remote` and `shutdown`, and
+answers an operation it does not serve with an `internal` error frame that
+leaves the loop ready for the next request. A request carrying no `id` is
+reported on stderr and left unanswered, because no frame could name it.
+`matches_remote` reaches a connector that implements `lore.RemoteMatcher` and
+is refused as `internal` when the connector does not implement it. The
+`manifest` payload travels as the author built it, so the author's
+`lore.Manifest` sets `APIVersion: lore.APIVersion` itself.
+
+For `changes` the SDK turns each `lore.Batch` the author yields into one
+`batch` frame unless that frame would exceed `wire.MaxLineBytes`, which ends
+the stream with an `internal` error frame naming the size. It refuses a batch
+whose cursor is empty rather than checkpointing nothing, closes a clean
+stream with exactly one `done`, and hands the connector a nil `lore.Cursor`
+when the request's cursor is empty, so full backfill is the author's zero
+value. An error from `NewSource` refuses the request and falls back to
+`invalid_config` rather than `internal`. An error the author yields is the
+stream's terminal frame: the SDK reads `lore.Failure.Kind` through a wrapped
+chain and falls back to `internal`. A panic before the stream's terminal
+frame becomes an `internal` error frame reported on stderr instead of a dead
+process, and a panic after it is reported on stderr alone, because the
+request already has its answer. Cancellation and shutdown cost the author
+nothing: stdin EOF cancels the `context.Context` the connector was given and
+the stream ends with that cancellation as its error, and a `shutdown` request
+is answered before the loop returns. `lore.SourceConfig`'s `Host.Log` is a
+logger the SDK points at stderr with the round's secret values redacted.
+
+Nothing here requires the SDK. `sdk/wire` publishes the frame types this
+document specifies, `Envelope`, `Frame`, `Batch`, `Error`, the operation
+constants, the error kinds and `MaxLineBytes`, so an author in another
+language reads the frame grammar from one package, with the payload types it
+carries in `sdk` beside it. The protocol is small enough to implement in
+Python or TypeScript by reading lines from stdin and printing objects to
+stdout, and that portability is why NDJSON was chosen.

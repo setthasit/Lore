@@ -92,6 +92,41 @@ func TestStatusReportsAFailedRead(t *testing.T) {
 	}
 }
 
+func TestStatusRendersACursorConnectorInert(t *testing.T) {
+	rt := mockStatus(t, entities.IndexStats{
+		Cursors: []entities.CursorAge{{Connector: "forge" + clearScreen, UpdatedAt: time.Now()}},
+	}, nil)
+
+	res := run(t, rt, "status")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	assertInert(t, res.stdout)
+	if !strings.Contains(res.stdout, "forge"+clearScreenInert) {
+		t.Errorf("stdout = %q, want the connector named with its escape shown", res.stdout)
+	}
+}
+
+func TestStatusRendersALeaseHolderInert(t *testing.T) {
+	now := time.Now()
+	rt := mockStatus(t, entities.IndexStats{
+		Lease: &entities.LeaseState{
+			Holder:      "host-1/4242" + clearScreen,
+			AcquiredAt:  now.Add(-time.Hour),
+			HeartbeatAt: now.Add(-12 * time.Second),
+		},
+	}, nil)
+
+	res := run(t, rt, "status")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	assertInert(t, res.stdout)
+	if !strings.Contains(res.stdout, "host-1/4242"+clearScreenInert) {
+		t.Errorf("stdout = %q, want the holder named with its escape shown", res.stdout)
+	}
+}
+
 func TestHumanizeAge(t *testing.T) {
 	cases := []struct {
 		d    time.Duration

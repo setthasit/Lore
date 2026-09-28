@@ -3,7 +3,9 @@ package internalerror_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
@@ -189,6 +191,33 @@ func TestKindOfReturnsOutermostClassification(t *testing.T) {
 	}
 }
 
+func TestMessageOf(t *testing.T) {
+	t.Parallel()
+
+	classified := internalerror.NewPreconditionError("no repositories registered", errCause)
+
+	projections := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"classified", classified, "no repositories registered"},
+		{"wrapped classified", fmt.Errorf("start runtime: %w", classified), "no repositories registered"},
+		{"outermost classified wins", internalerror.NewInternalError("open index", classified), "open index"},
+		{"unclassified", errCause, "disk offline"},
+		{"wrapped unclassified keeps the wrapper", fmt.Errorf("open index: %w", errCause), "open index: disk offline"},
+	}
+
+	for _, p := range projections {
+		t.Run(p.name, func(t *testing.T) {
+			if got := internalerror.MessageOf(p.err); got != p.want {
+				t.Errorf("MessageOf() = %q, want %q", got, p.want)
+			}
+		})
+	}
+}
+
 func TestKindString(t *testing.T) {
 	t.Parallel()
 
@@ -205,5 +234,43 @@ func TestKindString(t *testing.T) {
 		if got := kind.String(); got != want {
 			t.Errorf("Kind(%d).String() = %q, want %q", int(kind), got, want)
 		}
+	}
+}
+
+func TestExcerpt(t *testing.T) {
+	t.Parallel()
+
+	const limit = 120
+
+	excerpts := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", `""`},
+		{"a control byte is escaped", "a\x1b b", `"a\x1b b"`},
+		{"at the limit nothing is cut", strings.Repeat("a", limit), `"` + strings.Repeat("a", limit) + `"`},
+		{"one byte past the limit is cut", strings.Repeat("a", limit+1), `"` + strings.Repeat("a", limit) + `"…`},
+		{"a two-byte rune cut in half", strings.Repeat("a", limit-1) + "é",
+			`"` + strings.Repeat("a", limit-1) + `\xc3"…`},
+		{"a three-byte rune cut after two", strings.Repeat("a", limit-2) + "€a",
+			`"` + strings.Repeat("a", limit-2) + `\xe2\x82"…`},
+		{"a four-byte rune cut after three", strings.Repeat("a", limit-3) + "😀a",
+			`"` + strings.Repeat("a", limit-3) + `\xf0\x9f\x98"…`},
+	}
+
+	for _, e := range excerpts {
+		t.Run(e.name, func(t *testing.T) {
+			got := internalerror.Excerpt(e.in)
+			if got != e.want {
+				t.Errorf("Excerpt() = %q, want %q", got, e.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("Excerpt() = %q, which is not valid UTF-8", got)
+			}
+			if fromBytes := internalerror.Excerpt([]byte(e.in)); fromBytes != got {
+				t.Errorf("Excerpt([]byte) = %q, want the same as Excerpt(string) = %q", fromBytes, got)
+			}
+		})
 	}
 }

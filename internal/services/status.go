@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/repositories"
@@ -20,13 +19,13 @@ type StatusService interface {
 
 type statusService struct {
 	store repositories.IndexStore
-	emb   embedder.Embedder
+	space VectorSpace
 }
 
 var _ StatusService = (*statusService)(nil)
 
-func NewStatusService(store repositories.IndexStore, emb embedder.Embedder) StatusService {
-	return &statusService{store: store, emb: emb}
+func NewStatusService(store repositories.IndexStore, space VectorSpace) StatusService {
+	return &statusService{store: store, space: space}
 }
 
 func (s *statusService) Status(ctx context.Context) (entities.IndexStats, error) {
@@ -42,5 +41,5 @@ func (s *statusService) EmbedderIdentity(ctx context.Context) (entities.Embedder
 	if err != nil {
 		return entities.EmbedderIdentity{}, internalerror.NewInternalError("reading the index's embedder identity failed", err)
 	}
-	return entities.EmbedderIdentity{Configured: s.emb.Identity(), Indexed: indexed}, nil
+	return entities.EmbedderIdentity{Configured: s.space.String(), Indexed: indexed}, nil
 }

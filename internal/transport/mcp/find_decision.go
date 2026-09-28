@@ -25,8 +25,8 @@ const dateLayout = "2006-01-02"
 type findDecisionInput struct {
 	Question string `json:"question" jsonschema:"the question to answer, in natural language"`
 	Around   string `json:"around,omitempty" jsonschema:"event or date the question is anchored to, such as 'incident X' or 2025-03-12"`
-	Source   string `json:"source,omitempty" jsonschema:"keep only evidence from one source, such as github, notion or jira"`
-	Repo     string `json:"repo,omitempty" jsonschema:"keep only evidence from one repository, such as github:owner/repo"`
+	Source   string `json:"source,omitempty" jsonschema:"keep only evidence from one source instance, named by the id it has in the workspace configuration"`
+	Repo     string `json:"repo,omitempty" jsonschema:"keep only evidence from one repository, named as <forge>:owner/repo"`
 	DocType  string `json:"doc_type,omitempty" jsonschema:"keep only evidence of one document type, such as commit, pr, issue, ticket or page"`
 	Since    string `json:"since,omitempty" jsonschema:"keep only evidence created at or after this date (YYYY-MM-DD, from its first instant) or RFC 3339 timestamp"`
 	Until    string `json:"until,omitempty" jsonschema:"keep only evidence created at or before this date (YYYY-MM-DD, through its last instant) or RFC 3339 timestamp"`

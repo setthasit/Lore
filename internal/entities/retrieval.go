@@ -1,23 +1,27 @@
 package entities
 
-import "time"
+import (
+	"time"
+
+	"github.com/setthasit/Lore/sdk"
+)
 
 // Zero-valued fields do not constrain.
 type Filters struct {
 	Source      string
 	RepoRef     string
-	DocType     DocType
+	DocType     lore.DocType
 	CreatedFrom time.Time
 	CreatedTo   time.Time
 }
 
 type Chunk struct {
-	DocID     DocID
+	DocID     lore.DocID
 	Ordinal   int
 	Text      string
 	Source    string
 	RepoRef   string
-	DocType   DocType
+	DocType   lore.DocType
 	Author    string
 	CreatedAt time.Time
 	UpdatedAt time.Time

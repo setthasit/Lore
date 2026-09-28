@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	entities "github.com/setthasit/Lore/internal/entities"
+	lore "github.com/setthasit/Lore/sdk"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -41,7 +42,7 @@ func (m *MockChunker) EXPECT() *MockChunkerMockRecorder {
 }
 
 // Chunk mocks base method.
-func (m *MockChunker) Chunk(doc entities.Document) []entities.Chunk {
+func (m *MockChunker) Chunk(doc lore.Document) []entities.Chunk {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Chunk", doc)
 	ret0, _ := ret[0].([]entities.Chunk)

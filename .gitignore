@@ -20,3 +20,7 @@ certs/
 
 # OS / editor noise
 .DS_Store
+
+# Lore config
+lore.yaml
+lore.schema.json

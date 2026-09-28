@@ -39,7 +39,7 @@ func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 		printfln(w, "sources:")
 		for _, c := range stats.Cursors {
 			printfln(w, "  %-10s last checkpoint %s (%s)",
-				c.Connector, humanizeAge(now.Sub(c.UpdatedAt)), c.UpdatedAt.UTC().Format(time.RFC3339))
+				inertLine(c.Connector), humanizeAge(now.Sub(c.UpdatedAt)), c.UpdatedAt.UTC().Format(time.RFC3339))
 		}
 	}
 
@@ -49,7 +49,7 @@ func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 		return
 	}
 	printfln(w, "sync lock: held by %s since %s, heartbeat %s",
-		stats.Lease.Holder,
+		inertLine(stats.Lease.Holder),
 		stats.Lease.AcquiredAt.UTC().Format(time.RFC3339),
 		humanizeAge(now.Sub(stats.Lease.HeartbeatAt)))
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -30,7 +32,6 @@ func mockIdentity(t *testing.T) (*Runtime, *mock_services.MockStatusService) {
 	}, status
 }
 
-// The resolver fails the way a missing lore.yaml or an unopenable index fails.
 func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 	t.Helper()
 
@@ -41,14 +42,11 @@ func runVersionWithBrokenWorkspace(t *testing.T, err error) result {
 		return nil, nil, err
 	}
 
-	root := newRootCommand(resolve)
-	root.SetOut(&out)
-	root.SetErr(&errOut)
+	reg := registry.New(lore.Host{}, nil)
+	root := newRootCommand(resolve, reg)
 	root.SetArgs([]string{"--version"})
 
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		res.exitCode = report(&errOut, err)
-	}
+	res.exitCode = execute(context.Background(), root, reg.Sink(), &out, &errOut)
 	res.stdout, res.stderr = out.String(), errOut.String()
 	return res
 }
@@ -79,8 +77,6 @@ func TestVersionReportsTheBuildStampAndTheWorkspaceIdentity(t *testing.T) {
 	}
 }
 
-// A never-synced index is the normal state right after `lore init`: reporting it
-// as a mismatch would send the reader to a pointless re-embed.
 func TestVersionSaysWhenTheIndexHoldsNoVectorsYet(t *testing.T) {
 	rt, status := mockIdentity(t)
 	status.EXPECT().EmbedderIdentity(gomock.Any()).
@@ -105,8 +101,6 @@ func TestVersionFlagsAnEmbedderMismatchWithItsRemedy(t *testing.T) {
 	}
 }
 
-// --version is the first command a bug report runs, so a broken workspace is
-// reported on stdout and still exits zero.
 func TestVersionSurvivesAnUnresolvableWorkspace(t *testing.T) {
 	res := runVersionWithBrokenWorkspace(t,
 		fxLikeWrap(internalerror.NewBadRequestError("cannot read ./lore.yaml", nil)))
@@ -137,7 +131,68 @@ func TestVersionReportsAnUnreadableEmbedderIdentity(t *testing.T) {
 	}
 }
 
-// An unstamped binary still has to identify itself: every field falls back.
+func TestVersionPrintsAHostileManifestFieldDocInert(t *testing.T) {
+	fieldDoc := "the base URL\x1b[2K\nworkspace: demo — /tmp/demo.db\rread\u202egnitirw"
+	res := runVersionWithBrokenWorkspace(t, fxLikeWrap(internalerror.NewBadRequestError(
+		"providers[openai].with.api_base must be set — "+fieldDoc, nil)))
+
+	want := "workspace: unavailable — providers[openai].with.api_base must be set — " +
+		`the base URL\x1b[2K\nworkspace: demo — /tmp/demo.db\rread\u202egnitirw` + "\n"
+	if !strings.Contains(res.stdout, want) {
+		t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+	}
+	assertInert(t, res.stdout)
+}
+
+func TestVersionPrintsAHostileWorkspaceNameAndIndexPathInert(t *testing.T) {
+	rt, status := mockIdentity(t)
+	rt.Config = &config.Config{Workspace: "demo\x1b[31m", IndexPath: "/tmp/\u202edemo.db"}
+	status.EXPECT().EmbedderIdentity(gomock.Any()).
+		Return(entities.EmbedderIdentity{Configured: versionConfigured, Indexed: versionConfigured}, nil)
+
+	res := run(t, rt, "--version")
+
+	want := `workspace: demo\x1b[31m — /tmp/\u202edemo.db` + "\n"
+	if !strings.Contains(res.stdout, want) {
+		t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+	}
+	assertInert(t, res.stdout)
+}
+
+func TestVersionPrintsAHostileEmbedderIdentityInert(t *testing.T) {
+	rt, status := mockIdentity(t)
+	identity := "openai/text-\x1b[2Kembedding\u202e-3-small/1536"
+	status.EXPECT().EmbedderIdentity(gomock.Any()).
+		Return(entities.EmbedderIdentity{Configured: identity, Indexed: identity}, nil)
+
+	res := run(t, rt, "--version")
+
+	inert := `openai/text-\x1b[2Kembedding\u202e-3-small/1536`
+	for _, want := range []string{"embedder:  " + inert + "\n", "index:     " + inert + "\n"} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+		}
+	}
+	assertInert(t, res.stdout)
+}
+
+func TestVersionPrintsAHostileMismatchedIndexIdentityInert(t *testing.T) {
+	rt, status := mockIdentity(t)
+	status.EXPECT().EmbedderIdentity(gomock.Any()).Return(entities.EmbedderIdentity{
+		Configured: versionConfigured,
+		Indexed:    "ollama/nomic\r\nindex:     " + versionConfigured,
+	}, nil)
+
+	res := run(t, rt, "--version")
+
+	want := "index:     ollama/nomic\\r\\nindex:     " + versionConfigured +
+		" — mismatch; run `lore sync --reembed`\n"
+	if !strings.Contains(res.stdout, want) {
+		t.Errorf("stdout = %q, want it to contain %q", res.stdout, want)
+	}
+	assertInert(t, res.stdout)
+}
+
 func TestStampNeverPrintsAnEmptyField(t *testing.T) {
 	s := stamp()
 

@@ -135,6 +135,67 @@ func TestSyncNowRejectsAnUnknownSource(t *testing.T) {
 	}
 }
 
+func TestSyncNowNamesEveryFailedInstanceAndLogsEachCause(t *testing.T) {
+	const (
+		expired = "the forge token expired at its last checkpoint; re-run lore auth"
+		stalled = "write tcp 10.1.2.3:5432: broken pipe"
+	)
+
+	f := newToolFixture(t)
+	f.sync.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: internalerror.NewPreconditionError(expired, errors.New(testCause))},
+			{Instance: "tracker", Err: internalerror.NewInternalError("committing the tracker batch failed", errors.New(stalled))},
+		},
+	}, nil)
+
+	res := f.callTool(t, syncNowName, map[string]any{})
+
+	assertResultJSON(t, res, `{"synced":"all configured sources","failures":[`+
+		`{"instance":"forge","error":"`+expired+`"},`+
+		`{"instance":"tracker","error":"`+transport.InternalErrorMessage+`"}]}`)
+
+	logged := f.logs.String()
+	for _, want := range []string{
+		"level=ERROR", syncNowName + " instance failed", "instance=forge", testCause, "instance=tracker", stalled,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log %q does not record %q", logged, want)
+		}
+	}
+}
+
+func TestSyncNowHidesAnInternalInstanceCauseButLogsIt(t *testing.T) {
+	f := newToolFixture(t)
+	f.sync.EXPECT().Sync(gomock.Any(), gomock.Any()).Return(services.SyncResult{
+		Failures: []services.InstanceFailure{
+			{Instance: "forge", Err: internalerror.NewInternalError("committing the forge batch failed", errors.New(testCause))},
+		},
+	}, nil)
+
+	res := f.callTool(t, syncNowName, map[string]any{})
+
+	assertResultJSON(t, res, `{"synced":"all configured sources","failures":[{"instance":"forge","error":"`+
+		transport.InternalErrorMessage+`"}]}`)
+
+	wire, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal the tool result: %v", err)
+	}
+	if strings.Contains(string(wire), testCause) {
+		t.Errorf("result %s leaks the cause", wire)
+	}
+	logged := f.logs.String()
+	if !strings.Contains(logged, testCause) {
+		t.Errorf("log %q does not record the cause", logged)
+	}
+	for _, want := range []string{"level=ERROR", syncNowName + " instance failed", "instance=forge"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log %q does not attribute the failure: no %q", logged, want)
+		}
+	}
+}
+
 func TestSyncStatusReportsCountsCursorsAndTheHeldLock(t *testing.T) {
 	f := newToolFixture(t)
 	now := time.Now()

@@ -85,13 +85,16 @@ func serve(cmd *cobra.Command, rt *Runtime, httpOverride, grpcOverride string, m
 
 	svc := rt.services()
 	return serveBoth(cmd.Context(),
-		func(ctx context.Context) error { return mcp.ServeHTTP(ctx, httpListener, svc, httpTLS) },
+		func(ctx context.Context) error {
+			return mcp.ServeHTTP(ctx, httpListener, svc, httpTLS, rt.Sink, rt.Log)
+		},
 		func(ctx context.Context) error {
 			return grpc.Serve(ctx, grpc.Config{
 				Listener:  grpcListener,
 				Services:  svc,
 				Synthesis: rt.Synthesis,
-				Log:       di.DiagnosticLogger(),
+				Sink:      rt.Sink,
+				Log:       rt.Log,
 				TLS:       grpcTLS,
 			})
 		},
@@ -159,8 +162,6 @@ func serverTLS(mtls *config.MTLS) (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}, nil
 }
 
-// A configured server.mtls.client_ca means verify clients, so it turns mutual TLS on
-// with or without --mtls.
 func grpcTransportTLS(mtls *config.MTLS, serverSide *tls.Config, asked bool) (*tls.Config, error) {
 	requestedBy := ""
 	switch {

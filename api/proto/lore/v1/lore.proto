@@ -94,6 +94,14 @@ message TriggerRequest {
 message TriggerResponse {
   string synced = 1;
   LeaseState took_over_from = 2;
+  // Instances that ended their stream early while the round carried on. Empty on
+  // a clean round; a populated list is a partial success, not a failure.
+  repeated InstanceFailure failures = 3;
+}
+
+message InstanceFailure {
+  string instance = 1;
+  string error = 2;
 }
 
 message StatusRequest {}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -32,16 +33,16 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 		Return(testBundle(), nil)
 
 	requests := replaceStdin(t)
-	responses := replaceStdout(t)
+	stdout, responses := stdoutPipe(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() {
-		served <- Serve(ctx, transport.Services{
+		served <- Serve(ctx, stdout, transport.Services{
 			Query:  query,
 			Trace:  mock_services.NewMockTraceService(ctrl),
 			Impact: mock_services.NewMockImpactService(ctrl),
-		})
+		}, slog.New(slog.DiscardHandler))
 	}()
 
 	send(t, requests, map[string]any{
@@ -173,7 +174,7 @@ func replaceStdin(t *testing.T) *os.File {
 	return writer
 }
 
-func replaceStdout(t *testing.T) *bufio.Scanner {
+func stdoutPipe(t *testing.T) (*os.File, *bufio.Scanner) {
 	t.Helper()
 
 	reader, writer, err := os.Pipe()
@@ -183,15 +184,12 @@ func replaceStdout(t *testing.T) *bufio.Scanner {
 	if err := reader.SetReadDeadline(time.Now().Add(serveTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
-	restore := os.Stdout
-	os.Stdout = writer
 	t.Cleanup(func() {
-		os.Stdout = restore
 		_ = writer.Close()
 		_ = reader.Close()
 	})
 
-	return bufio.NewScanner(reader)
+	return writer, bufio.NewScanner(reader)
 }
 
 func send(t *testing.T, requests *os.File, message map[string]any) {

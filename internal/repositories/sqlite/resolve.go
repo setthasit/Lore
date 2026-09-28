@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 // Shortest abbreviation a SHA is quoted by in prose, and the full SHA-1 width.
@@ -96,7 +97,7 @@ func numberRefClause(slug, number string) (string, []any) {
 	// Scans: a bare number names no repo, and documents(source, type) has no type-only prefix.
 	clause := `type IN (?, ?) AND (external_key LIKE '%/pull/' || ?` +
 		` OR external_key LIKE '%/issues/' || ?)`
-	return clause, []any{string(entities.DocTypePR), string(entities.DocTypeIssue), number, number}
+	return clause, []any{string(lore.DocTypePR), string(lore.DocTypeIssue), number, number}
 }
 
 func shaRef(ref string) (string, bool) {

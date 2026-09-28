@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -13,8 +14,8 @@ const (
 )
 
 type graphSource interface {
-	Neighbors(ctx context.Context, ids []entities.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error)
-	DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error)
+	Neighbors(ctx context.Context, ids []lore.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error)
+	DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error)
 }
 
 type walkOptions struct {
@@ -26,7 +27,7 @@ type walkOptions struct {
 }
 
 type walkPath struct {
-	Nodes      []entities.DocID
+	Nodes      []lore.DocID
 	Edges      []entities.Edge
 	Confidence float32
 }
@@ -34,11 +35,11 @@ type walkPath struct {
 type walkResult struct {
 	Paths     []walkPath
 	SeedLinks []entities.Edge
-	Metas     map[entities.DocID]entities.DocumentMeta
+	Metas     map[lore.DocID]entities.DocumentMeta
 }
 
 // Seeds are never reached nodes: they open the paths, and no path ends on one.
-func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts walkOptions) (walkResult, error) {
+func walkGraph(ctx context.Context, g graphSource, seeds []lore.DocID, opts walkOptions) (walkResult, error) {
 	if len(seeds) == 0 {
 		return walkResult{}, nil
 	}
@@ -47,9 +48,9 @@ func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts 
 		graph:   g,
 		opts:    opts,
 		floor:   opts.confidenceFloor(),
-		seeds:   make(map[entities.DocID]bool, len(seeds)),
-		visited: make(map[entities.DocID]bool, len(seeds)),
-		metas:   make(map[entities.DocID]entities.DocumentMeta, len(seeds)),
+		seeds:   make(map[lore.DocID]bool, len(seeds)),
+		visited: make(map[lore.DocID]bool, len(seeds)),
+		metas:   make(map[lore.DocID]entities.DocumentMeta, len(seeds)),
 	}
 
 	frontier := make([]walkPath, 0, len(seeds))
@@ -58,7 +59,7 @@ func walkGraph(ctx context.Context, g graphSource, seeds []entities.DocID, opts 
 			continue
 		}
 		w.seeds[seed], w.visited[seed] = true, true
-		frontier = append(frontier, walkPath{Nodes: []entities.DocID{seed}, Confidence: 1})
+		frontier = append(frontier, walkPath{Nodes: []lore.DocID{seed}, Confidence: 1})
 	}
 	if err := w.loadMetas(ctx, frontierIDs(frontier)); err != nil {
 		return walkResult{}, err
@@ -81,10 +82,10 @@ type walker struct {
 	graph   graphSource
 	opts    walkOptions
 	floor   float32
-	seeds   map[entities.DocID]bool
-	visited map[entities.DocID]bool
+	seeds   map[lore.DocID]bool
+	visited map[lore.DocID]bool
 	links   []entities.Edge
-	metas   map[entities.DocID]entities.DocumentMeta
+	metas   map[lore.DocID]entities.DocumentMeta
 }
 
 func (w *walker) step(ctx context.Context, frontier []walkPath) ([]walkPath, error) {
@@ -125,7 +126,7 @@ func (w *walker) collectSeedLinks(edges []entities.Edge) {
 
 type candidate struct {
 	parent     int
-	node       entities.DocID
+	node       lore.DocID
 	edge       entities.Edge
 	confidence float32
 }
@@ -135,7 +136,7 @@ func (w *walker) candidates(frontier []walkPath, edges []entities.Edge) []candid
 	steps := stepsByNode(edges, w.opts.Direction)
 
 	candidates := make([]candidate, 0, len(edges))
-	at := make(map[entities.DocID]int, len(edges))
+	at := make(map[lore.DocID]int, len(edges))
 	for i, path := range frontier {
 		for _, s := range steps[lastNode(path)] {
 			confidence := path.Confidence * s.edge.Confidence
@@ -158,15 +159,15 @@ func (w *walker) candidates(frontier []walkPath, edges []entities.Edge) []candid
 }
 
 type walkStep struct {
-	node entities.DocID
+	node lore.DocID
 	edge entities.Edge
 }
 
 // Neighbors answers a whole frontier at once, so an edge may belong to either endpoint.
-func stepsByNode(edges []entities.Edge, dir entities.Direction) map[entities.DocID][]walkStep {
+func stepsByNode(edges []entities.Edge, dir entities.Direction) map[lore.DocID][]walkStep {
 	outward, inward := followed(dir)
 
-	steps := make(map[entities.DocID][]walkStep, len(edges))
+	steps := make(map[lore.DocID][]walkStep, len(edges))
 	for _, e := range edges {
 		if e.Src == e.Dst {
 			continue
@@ -194,7 +195,7 @@ func followed(dir entities.Direction) (outward, inward bool) {
 }
 
 // Inadmissible nodes are not walked through either: every node of a returned path is itself evidence.
-func (w *walker) admits(id entities.DocID) bool {
+func (w *walker) admits(id lore.DocID) bool {
 	meta, known := w.metas[id]
 	if !known {
 		return false
@@ -203,7 +204,7 @@ func (w *walker) admits(id entities.DocID) bool {
 	return w.opts.TimeAfter == nil || meta.CreatedAt.After(*w.opts.TimeAfter)
 }
 
-func (w *walker) loadMetas(ctx context.Context, ids []entities.DocID) error {
+func (w *walker) loadMetas(ctx context.Context, ids []lore.DocID) error {
 	metas, err := w.graph.DocumentsByID(ctx, ids)
 	if err != nil {
 		return err
@@ -216,7 +217,7 @@ func (w *walker) loadMetas(ctx context.Context, ids []entities.DocID) error {
 }
 
 func extend(parent walkPath, c candidate) walkPath {
-	nodes := make([]entities.DocID, len(parent.Nodes)+1)
+	nodes := make([]lore.DocID, len(parent.Nodes)+1)
 	copy(nodes, parent.Nodes)
 	nodes[len(parent.Nodes)] = c.node
 
@@ -227,12 +228,12 @@ func extend(parent walkPath, c candidate) walkPath {
 	return walkPath{Nodes: nodes, Edges: edges, Confidence: c.confidence}
 }
 
-func lastNode(path walkPath) entities.DocID {
+func lastNode(path walkPath) lore.DocID {
 	return path.Nodes[len(path.Nodes)-1]
 }
 
-func frontierIDs(frontier []walkPath) []entities.DocID {
-	ids := make([]entities.DocID, len(frontier))
+func frontierIDs(frontier []walkPath) []lore.DocID {
+	ids := make([]lore.DocID, len(frontier))
 	for i, path := range frontier {
 		ids[i] = lastNode(path)
 	}
@@ -240,8 +241,8 @@ func frontierIDs(frontier []walkPath) []entities.DocID {
 	return ids
 }
 
-func candidateIDs(candidates []candidate) []entities.DocID {
-	ids := make([]entities.DocID, len(candidates))
+func candidateIDs(candidates []candidate) []lore.DocID {
+	ids := make([]lore.DocID, len(candidates))
 	for i, c := range candidates {
 		ids[i] = c.node
 	}

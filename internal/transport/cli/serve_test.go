@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/setthasit/Lore/internal/config"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
 type serveResult struct {
@@ -40,17 +43,14 @@ func runResolving(t *testing.T, ctx context.Context, cfg *config.Config, args ..
 
 	resolve := func(_ context.Context, _ string, modules ...fx.Option) (*Runtime, func() error, error) {
 		res.modules = modules
-		return &Runtime{Config: cfg}, func() error { return nil }, nil
+		return &Runtime{Config: cfg, Log: slog.New(slog.DiscardHandler)}, func() error { return nil }, nil
 	}
 
-	root := newRootCommand(resolve)
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&errOut)
+	reg := registry.New(lore.Host{}, nil)
+	root := newRootCommand(resolve, reg)
 	root.SetArgs(args)
 
-	if err := root.ExecuteContext(ctx); err != nil {
-		res.exitCode = report(&errOut, err)
-	}
+	res.exitCode = execute(ctx, root, reg.Sink(), &bytes.Buffer{}, &errOut)
 	res.stderr = errOut.String()
 	return res
 }

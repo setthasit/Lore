@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 )
 
 // The codes are stable: a script can branch on them instead of parsing stderr.
@@ -17,9 +19,7 @@ const (
 	exitNotFound     = 4
 )
 
-// The kinds a caller can act on say everything actionable in Message; only an
-// error the caller cannot act on falls back to the cause for diagnosis.
-func report(w io.Writer, err error) int {
+func Report(w io.Writer, sink *secrets.Sink, err error) int {
 	if err == nil {
 		return exitOK
 	}
@@ -41,16 +41,8 @@ func report(w io.Writer, err error) int {
 		}
 	}
 
-	_, _ = fmt.Fprintln(w, "lore: "+message)
-	return code
-}
-
-// Diagnostic lines want the classified message alone: the fx wrapper that carries
-// it names constructors the reader has no use for.
-func actionableMessage(err error) string {
-	var classified *internalerror.Error
-	if errors.As(err, &classified) {
-		return classified.Message
+	for _, line := range strings.Split(sink.Scrub(message), "\n") {
+		_, _ = fmt.Fprintln(w, "lore: "+inertLine(line))
 	}
-	return err.Error()
+	return code
 }

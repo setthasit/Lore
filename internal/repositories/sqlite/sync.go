@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const syncLockID = 1
@@ -27,31 +27,31 @@ INSERT INTO meta (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value = excluded.value`
 )
 
-func (s *Store) Cursor(ctx context.Context, connector string) (entities.Cursor, error) {
+func (s *Store) Cursor(ctx context.Context, instance string) (lore.Cursor, error) {
 	var payload string
-	err := s.db.QueryRowContext(ctx, selectCursorSQL, connector).Scan(&payload)
+	err := s.db.QueryRowContext(ctx, selectCursorSQL, instance).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: read cursor of %q: %w", connector, err)
+		return nil, fmt.Errorf("sqlite: read cursor of %q: %w", instance, err)
 	}
 
-	var c entities.Cursor
+	var c lore.Cursor
 	if err := json.Unmarshal([]byte(payload), &c); err != nil {
-		return nil, fmt.Errorf("sqlite: decode cursor of %q: %w", connector, err)
+		return nil, fmt.Errorf("sqlite: decode cursor of %q: %w", instance, err)
 	}
 	return c, nil
 }
 
 // The stored timestamp is the store clock, not one read out of the Cursor.
-func (s *Store) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
+func (s *Store) SetCursor(ctx context.Context, instance string, c lore.Cursor) error {
 	payload, err := json.Marshal(c)
 	if err != nil {
-		return fmt.Errorf("sqlite: encode cursor of %q: %w", connector, err)
+		return fmt.Errorf("sqlite: encode cursor of %q: %w", instance, err)
 	}
-	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, connector, string(payload), formatTime(s.now())); err != nil {
-		return fmt.Errorf("sqlite: write cursor of %q: %w", connector, err)
+	if _, err := s.db.ExecContext(ctx, upsertCursorSQL, instance, string(payload), formatTime(s.now())); err != nil {
+		return fmt.Errorf("sqlite: write cursor of %q: %w", instance, err)
 	}
 	return nil
 }

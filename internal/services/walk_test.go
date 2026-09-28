@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 var (
@@ -20,16 +21,16 @@ var (
 var walkEpoch = time.Date(2025, time.March, 12, 9, 0, 0, 0, time.UTC)
 
 type walkAsk struct {
-	ids   []entities.DocID
+	ids   []lore.DocID
 	kinds []entities.EdgeKind
 	dir   entities.Direction
 }
 
 type walkFake struct {
 	edges        []entities.Edge
-	metas        map[entities.DocID]entities.DocumentMeta
+	metas        map[lore.DocID]entities.DocumentMeta
 	asked        []walkAsk
-	loaded       [][]entities.DocID
+	loaded       [][]lore.DocID
 	edgesErr     error
 	docsErr      error
 	docsErrAfter int
@@ -40,18 +41,18 @@ func walkEdgeOrder(a, b entities.Edge) int {
 }
 
 func walkTypedEdge(src, dst string, kind entities.EdgeKind, confidence float32) entities.Edge {
-	return entities.Edge{Src: entities.DocID(src), Dst: entities.DocID(dst), Kind: kind, Confidence: confidence}
+	return entities.Edge{Src: lore.DocID(src), Dst: lore.DocID(dst), Kind: kind, Confidence: confidence}
 }
 
 func walkEdge(src, dst string, confidence float32) entities.Edge {
 	return walkTypedEdge(src, dst, entities.EdgeKindReferencesDoc, confidence)
 }
 
-func walkMeta(id entities.DocID, createdAt time.Time) entities.DocumentMeta {
+func walkMeta(id lore.DocID, createdAt time.Time) entities.DocumentMeta {
 	return entities.DocumentMeta{
 		ID:        id,
 		Source:    "github",
-		Type:      entities.DocTypePage,
+		Type:      lore.DocTypePage,
 		Title:     string(id),
 		URL:       "https://example.test/" + string(id),
 		CreatedAt: createdAt,
@@ -62,9 +63,9 @@ func walkMeta(id entities.DocID, createdAt time.Time) entities.DocumentMeta {
 func newWalkFake(edges ...entities.Edge) *walkFake {
 	slices.SortFunc(edges, walkEdgeOrder)
 
-	metas := make(map[entities.DocID]entities.DocumentMeta, 2*len(edges))
+	metas := make(map[lore.DocID]entities.DocumentMeta, 2*len(edges))
 	for _, e := range edges {
-		for _, id := range [...]entities.DocID{e.Src, e.Dst} {
+		for _, id := range [...]lore.DocID{e.Src, e.Dst} {
 			metas[id] = walkMeta(id, walkEpoch)
 		}
 	}
@@ -74,7 +75,7 @@ func newWalkFake(edges ...entities.Edge) *walkFake {
 
 func (f *walkFake) Neighbors(
 	_ context.Context,
-	ids []entities.DocID,
+	ids []lore.DocID,
 	kinds []entities.EdgeKind,
 	dir entities.Direction,
 ) ([]entities.Edge, error) {
@@ -83,7 +84,7 @@ func (f *walkFake) Neighbors(
 		return nil, f.edgesErr
 	}
 
-	asked := make(map[entities.DocID]bool, len(ids))
+	asked := make(map[lore.DocID]bool, len(ids))
 	for _, id := range ids {
 		asked[id] = true
 	}
@@ -101,7 +102,7 @@ func (f *walkFake) Neighbors(
 	return out, nil
 }
 
-func walkTouches(e entities.Edge, asked map[entities.DocID]bool, dir entities.Direction) bool {
+func walkTouches(e entities.Edge, asked map[lore.DocID]bool, dir entities.Direction) bool {
 	switch dir {
 	case entities.DirIn:
 		return asked[e.Dst]
@@ -112,7 +113,7 @@ func walkTouches(e entities.Edge, asked map[entities.DocID]bool, dir entities.Di
 	}
 }
 
-func (f *walkFake) DocumentsByID(_ context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
+func (f *walkFake) DocumentsByID(_ context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error) {
 	f.loaded = append(f.loaded, slices.Clone(ids))
 	if f.docsErr != nil && len(f.loaded) > f.docsErrAfter {
 		return nil, f.docsErr
@@ -190,7 +191,7 @@ func assertMetas(t *testing.T, res walkResult, want ...string) {
 	}
 }
 
-func assertCalls(t *testing.T, what string, got, want [][]entities.DocID) {
+func assertCalls(t *testing.T, what string, got, want [][]lore.DocID) {
 	t.Helper()
 
 	if !reflect.DeepEqual(got, want) {
@@ -198,10 +199,10 @@ func assertCalls(t *testing.T, what string, got, want [][]entities.DocID) {
 	}
 }
 
-func assertAskedLayers(t *testing.T, f *walkFake, want [][]entities.DocID) {
+func assertAskedLayers(t *testing.T, f *walkFake, want [][]lore.DocID) {
 	t.Helper()
 
-	ids := make([][]entities.DocID, len(f.asked))
+	ids := make([][]lore.DocID, len(f.asked))
 	for i, ask := range f.asked {
 		ids[i] = ask.ids
 	}
@@ -233,7 +234,7 @@ func pathTo(t *testing.T, res walkResult, node string) walkPath {
 	t.Helper()
 
 	for _, path := range res.Paths {
-		if lastNode(path) == entities.DocID(node) {
+		if lastNode(path) == lore.DocID(node) {
 			return path
 		}
 	}
@@ -242,10 +243,10 @@ func pathTo(t *testing.T, res walkResult, node string) walkPath {
 	return walkPath{}
 }
 
-func walkIDs(names ...string) []entities.DocID {
-	ids := make([]entities.DocID, len(names))
+func walkIDs(names ...string) []lore.DocID {
+	ids := make([]lore.DocID, len(names))
 	for i, name := range names {
-		ids[i] = entities.DocID(name)
+		ids[i] = lore.DocID(name)
 	}
 
 	return ids
@@ -298,7 +299,7 @@ func TestWalkGraphReachesEachDocumentOnceOnItsStrongestShortestPath(t *testing.T
 	}
 	assertConfidence(t, path.Confidence, 0.9*0.5)
 
-	layers := [][]entities.DocID{walkIDs("a"), walkIDs("b", "c"), walkIDs("d")}
+	layers := [][]lore.DocID{walkIDs("a"), walkIDs("b", "c"), walkIDs("d")}
 	assertAskedLayers(t, f, layers)
 	assertCalls(t, "DocumentsByID", f.loaded, layers)
 }
@@ -344,18 +345,18 @@ func TestWalkGraphPrunesPathsBelowTheConfidenceFloor(t *testing.T) {
 		name          string
 		minConfidence float32
 		want          []string
-		wantAsked     [][]entities.DocID
+		wantAsked     [][]lore.DocID
 	}{
 		{
 			name:      "the default floor stops the chain where the product crosses it",
 			want:      []string{"b", "c"},
-			wantAsked: [][]entities.DocID{walkIDs("a"), walkIDs("b"), walkIDs("c")},
+			wantAsked: [][]lore.DocID{walkIDs("a"), walkIDs("b"), walkIDs("c")},
 		},
 		{
 			name:          "a lower floor lets the tail through",
 			minConfidence: 0.2,
 			want:          []string{"b", "c", "d", "e"},
-			wantAsked: [][]entities.DocID{
+			wantAsked: [][]lore.DocID{
 				walkIDs("a"), walkIDs("b"), walkIDs("c"), walkIDs("d"), walkIDs("e"),
 			},
 		},
@@ -430,8 +431,8 @@ func TestWalkGraphPrunesTraversalThroughDocumentsOlderThanTimeAfter(t *testing.T
 	res := walkFrom(t, f, "a", walkOptions{TimeAfter: &walkEpoch})
 
 	assertReached(t, res, "d")
-	assertAskedLayers(t, f, [][]entities.DocID{walkIDs("a"), walkIDs("d")})
-	assertCalls(t, "DocumentsByID", f.loaded, [][]entities.DocID{walkIDs("a"), walkIDs("b", "d", "e")})
+	assertAskedLayers(t, f, [][]lore.DocID{walkIDs("a"), walkIDs("d")})
+	assertCalls(t, "DocumentsByID", f.loaded, [][]lore.DocID{walkIDs("a"), walkIDs("b", "d", "e")})
 }
 
 func TestWalkGraphFollowsOnlyTheRequestedKinds(t *testing.T) {
@@ -460,7 +461,7 @@ func TestWalkGraphSkipsEdgesIntoUnindexedDocuments(t *testing.T) {
 
 	assertReached(t, res)
 	assertMetas(t, res, "a")
-	assertAskedLayers(t, f, [][]entities.DocID{walkIDs("a")})
+	assertAskedLayers(t, f, [][]lore.DocID{walkIDs("a")})
 }
 
 func walkLinkedSeedsFake() *walkFake {
@@ -576,7 +577,7 @@ func TestWalkGraphPathsShareNoBackingArray(t *testing.T) {
 		deep.Edges[i] = walkEdge("mutated", "mutated", 0)
 	}
 
-	for node, want := range map[string][]entities.DocID{
+	for node, want := range map[string][]lore.DocID{
 		"b": walkIDs("a", "b"),
 		"c": walkIDs("a", "b", "c"),
 		"e": walkIDs("a", "b", "c", "e"),

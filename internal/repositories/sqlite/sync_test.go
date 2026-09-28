@@ -10,6 +10,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/repositories"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func TestCursorRoundTrip(t *testing.T) {
@@ -24,7 +25,7 @@ func TestCursorRoundTrip(t *testing.T) {
 		t.Errorf("Cursor (missing) = %v, want nil", got)
 	}
 
-	want := entities.Cursor{
+	want := lore.Cursor{
 		"since":  "2025-03-12T09:30:00Z",
 		"page":   "3",
 		"opaque": `{"nested":"value with spaces, commas & \"quotes\""}`,
@@ -42,7 +43,7 @@ func TestCursorRoundTrip(t *testing.T) {
 	if got, err = s.Cursor(ctx, "notion"); err != nil || got != nil {
 		t.Errorf("Cursor(notion) = %v, %v; want nil, nil", got, err)
 	}
-	next := entities.Cursor{"since": "2025-04-01T00:00:00Z"}
+	next := lore.Cursor{"since": "2025-04-01T00:00:00Z"}
 	if err := s.SetCursor(ctx, "github", next); err != nil {
 		t.Fatalf("SetCursor (update): %v", err)
 	}
@@ -240,8 +241,7 @@ func TestLeaseReportsTheCurrentHolder(t *testing.T) {
 	}
 }
 
-// The failure mode this guards: with a read followed by a write, every racing
-// caller reads "free" and every one of them writes itself in.
+// With a read followed by a write, every racing caller reads "free" and every one of them writes itself in.
 func TestSyncLeaseAdmitsOneWinnerUnderRace(t *testing.T) {
 	frozen := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	s := openTestStore(t, WithClock(func() time.Time { return frozen }))

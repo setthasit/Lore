@@ -61,7 +61,7 @@ func newWhyCommand(resolve Resolver, configPath *string) *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&flags.repo, "repo", "",
-		"the registered clone the file belongs to, by remote (github:owner/repo) or by path; omit it when only one is registered")
+		"the registered clone the file belongs to, by remote (<forge>:owner/repo) or by path; omit it when only one is registered")
 	flags.out.flags(cmd)
 	return cmd
 }

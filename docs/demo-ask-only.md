@@ -13,7 +13,7 @@ The point of the zero-repository setup: the answers cannot come from `git log`.
 Every hop is a reference one document made to another, resolved at sync time.
 
 The story is the same one the automated end-to-end suite exercises
-(`internal/e2e/ask_only_test.go` against `internal/e2e/testdata/askonly/`), so the
+(`test/e2e/ask_only_test.go` against `test/e2e/testdata/askonly/`), so the
 shapes below are the shapes the suite holds the engine to. Which parts are
 *asserted* is called out per block.
 
@@ -34,8 +34,9 @@ Two properties of the tool that shape this walkthrough:
 
 - **Read-only toward every source.** Nothing in this repository writes to Jira or
   Notion. Seeding is a manual step you perform in your own sandbox, by hand.
-- **No secrets in configuration.** `lore.yaml` names environment *variables*; the
-  values live in your shell only.
+- **Credentials stay out of the file by choice.** A secret field in `lore.yaml` holds
+  the credential, and this walkthrough writes every one as `${env:VAR}`, so the values
+  live in your shell only.
 
 For a run with no third-party API at all — local embedder, local model — configure
 the workspace as in [`fully-local.md`](fully-local.md) and follow this walkthrough
@@ -77,15 +78,19 @@ mkdir -p ~/demo/lore-askonly && cd ~/demo/lore-askonly
 lore init
 ```
 
-`lore init` writes a commented `lore.yaml` and prints:
+`lore init` writes a commented `lore.yaml`, the `lore.schema.json` its first line points
+editors at, and prints:
 
 ```text
 wrote ./lore.yaml
-next: set the token variables it names, export OPENAI_API_KEY, then run `lore sync`
+wrote ./lore.schema.json
+next: fill in the fields it marks, export LORE_GITHUB_TOKEN and OPENAI_API_KEY, then run `lore sync`
 ```
 
-Its scaffold assumes GitHub, and it leaves `llm:`, `query:` and `scheduler:`
-commented out. For this demo, replace the whole file:
+Its scaffold carries one starter source instance — whichever source plugin the build
+offers first, GitHub here — and it leaves `llm:`, `query:` and `scheduler:` commented
+out. For this demo, replace the whole file, keeping its first line if your editor runs
+yaml-language-server:
 
 ```yaml
 workspace: lore-askonly
@@ -94,18 +99,20 @@ workspace: lore-askonly
 # index_path: ~/.lore/lore-askonly.db
 
 sources:
-  jira:
-    base_url: https://acme-sandbox.atlassian.net
-    email_env: LORE_JIRA_EMAIL
-    token_env: LORE_JIRA_TOKEN
-    projects:
-      - INC
-      - ARCH
-      - OPS
-  notion:
-    token_env: LORE_NOTION_TOKEN
-    root_pages:
-      - 1f2e3d4c5b6a47788990aabbccddeeff   # the "Engineering Decisions" page id
+  - use: jira
+    with:
+      base_url: https://acme-sandbox.atlassian.net
+      email: ${env:LORE_JIRA_EMAIL}
+      token: ${env:LORE_JIRA_TOKEN}
+      projects:
+        - INC
+        - ARCH
+        - OPS
+  - use: notion
+    with:
+      token: ${env:LORE_NOTION_TOKEN}
+      root_pages:
+        - 1f2e3d4c5b6a47788990aabbccddeeff   # the "Engineering Decisions" page id
 
 # No local clones. Zero repos is a valid ask-only workspace — and the whole point
 # of this one.
@@ -116,47 +123,59 @@ embedder:
   model: text-embedding-3-small
 
 # Optional. Without it, `lore ask` needs --raw and the other verbs lose --explain.
+# `anthropic` names no providers[] instance, so it runs on the plugin's own defaults
+# and reads its key from ANTHROPIC_API_KEY.
 llm:
   provider: anthropic
   model: claude-sonnet-4-5
-  api_key_env: LORE_LLM_KEY
 ```
 
-Then export the four variables it names:
+Then export the three variables it expands, plus the two the provider manifests
+fall back to:
 
 ```bash
 export LORE_JIRA_EMAIL='lore-bot@example.invalid'      # the Jira account's e-mail
 export LORE_JIRA_TOKEN='…'                             # Jira API token
 export LORE_NOTION_TOKEN='…'                           # Notion internal integration secret
-export OPENAI_API_KEY='…'                              # the embedder key; the name is fixed
-export LORE_LLM_KEY='…'                                # only if you kept the llm: block
+export OPENAI_API_KEY='…'                              # the embedder key
+export ANTHROPIC_API_KEY='…'                           # only if you kept the llm: block
 ```
 
 Notes worth knowing before the first run:
 
-- Every `*_env` key must name a variable that is **set** at load time, or the run
-  refuses with e.g. `sources.jira.token_env names LORE_JIRA_TOKEN, but that
-  environment variable is not set`.
-- `OPENAI_API_KEY` is not configurable — the `openai` embedder reads that exact
-  name. `embedder.dimensions` must **not** be set for `openai`; the model implies
-  the width.
+- Every `${env:VAR}` must name a variable that is **set**, and not blank, at load
+  time, or the run refuses with e.g. `sources[jira].with.token expands
+  LORE_JIRA_TOKEN, but LORE_JIRA_TOKEN is not set`, or `… but it is blank`.
+- A secret field may hold a literal instead. The run proceeds and prints, once on
+  stderr, `lore: secrets written as literal values in the config:
+  sources[jira].with.token; write ${env:VAR} to keep a credential out of the file`.
+- `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are the variables those two provider
+  manifests fall back to, read because neither role here names a `providers[]`
+  instance that sets `api_key`. `embedder.dimensions` must **not** be set for
+  `openai`; the model implies the width.
 - Unknown keys are rejected, so a typo in `lore.yaml` fails the load rather than
   being ignored.
 - `lore --config path/to/lore.yaml <cmd>` moves the configuration; the default is
   `./lore.yaml`.
 
-The interactive alternative to hand-editing, once the `github:` block is out of
-the file:
+The interactive alternative to hand-editing, once the scaffolded `github` item is out
+of the file:
 
 ```bash
 lore source add jira
 lore source add notion
 ```
 
-Both prompt for the **name** of the variable holding each credential, never the
-credential, and finish with `next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN,
-then run `lore sync``. They refuse a source that is already configured and tell
-you to edit that block directly.
+Each asks, per credential, which form to write: `env or value [env]`. `env` asks
+for a variable name and writes `${env:VAR}`; `value` takes the credential and
+writes it into `lore.yaml` as a literal, in plain text. The terminal echoes it as
+it is typed; Lore itself never prints it back. Any other answer is refused
+without echoing it. Taking the defaults for both Jira secrets finishes with
+``next: export LORE_JIRA_EMAIL and LORE_JIRA_TOKEN, then run `lore sync` ``, and
+a secret answered with `value` is left out of that line.
+Adding a plugin the file already has an instance of is not refused: it asks for an
+`id` first, because that id is the cursor key and the document-id prefix, and two
+instances may not share one.
 
 ## 4. Sync
 
@@ -318,7 +337,8 @@ markdown link is rejected rather than printed.
 
 With no `llm:` block, this same command exits **3** with
 `lore: synthesis needs an LLM, and this workspace has no llm: block in lore.yaml
-— add one naming the provider, the model and the api_key_env that holds its key`.
+— add one naming the provider and the model, and give that provider its api_key as
+a literal or as ${env:VAR}`.
 `--raw` is the LLM-free path. `lore ask` has no `--explain` flag; prose is its
 default.
 
@@ -408,7 +428,7 @@ for a local harness, and `lore serve` exposes it over HTTP.
 
 | This walkthrough | MCP tool | Arguments |
 | --- | --- | --- |
-| `lore sync` | `sync_now` | `source` optional — the same filter as `lore sync --source <name>` |
+| `lore sync` | `sync_now` | `source` optional — the same filter as `lore sync --source <instance>` |
 | `lore status` | `sync_status` | — |
 | question one | `find_decision` | `question`, `around`, plus optional `source` / `repo` / `doc_type` / `since` / `until` |
 | question two | `impact_of` | `ref_or_query`, optional `question` |

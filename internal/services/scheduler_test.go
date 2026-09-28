@@ -29,7 +29,6 @@ type roundOutcome struct {
 	err    error
 }
 
-// A round parks until the test ends it, so a tick can never outrun the assertions.
 type roundCall struct {
 	ctx  context.Context
 	ends chan roundOutcome
@@ -217,6 +216,47 @@ func TestSchedulerLogsAFailedRoundAndTicksOn(t *testing.T) {
 	}
 	if !strings.Contains(failure, "the index is unreadable") {
 		t.Errorf("the failure line = %q, want it to carry the error", failure)
+	}
+}
+
+func TestSchedulerLogsEveryInstanceOfAPartialRoundAndNotACompletion(t *testing.T) {
+	loop := startScheduler(t, schedulerTick)
+
+	loop.round(t).end(SyncResult{Failures: []InstanceFailure{
+		{Instance: "github", Err: internalerror.NewInternalError("the pull request stream stalled", nil)},
+		{Instance: "notion", Err: internalerror.NewPreconditionError("the notion token expired", nil)},
+	}}, nil)
+
+	logs := loop.logsOnceRoundsAreLogged(t)
+	partial := logLine(t, logs, "scheduled sync round partial")
+	if !strings.Contains(partial, "level=ERROR") {
+		t.Errorf("the partial line = %q, want it logged at ERROR", partial)
+	}
+	if want := `failures="github: the pull request stream stalled; notion: the notion token expired"`; !strings.Contains(partial, want) {
+		t.Errorf("the partial line = %q, want it to carry %s", partial, want)
+	}
+	if strings.Contains(logs, "scheduled sync round complete") {
+		t.Errorf("logs = %q, want no line stating the round completed", logs)
+	}
+}
+
+func TestSchedulerNamesTheDeadHolderOfAPartialRound(t *testing.T) {
+	loop := startScheduler(t, schedulerTick)
+
+	dead := &entities.LeaseState{Holder: "host-c/3003"}
+	loop.round(t).end(SyncResult{
+		TookOverFrom: dead,
+		Failures: []InstanceFailure{
+			{Instance: "github", Err: internalerror.NewInternalError("the pull request stream stalled", nil)},
+		},
+	}, nil)
+
+	partial := logLine(t, loop.logsOnceRoundsAreLogged(t), "scheduled sync round partial")
+	if want := "took_over_from=" + dead.Holder; !strings.Contains(partial, want) {
+		t.Errorf("the partial line = %q, want it to carry %s", partial, want)
+	}
+	if want := `failures="github: the pull request stream stalled"`; !strings.Contains(partial, want) {
+		t.Errorf("the partial line = %q, want it to carry %s", partial, want)
 	}
 }
 

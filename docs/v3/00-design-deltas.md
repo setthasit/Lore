@@ -21,21 +21,34 @@ stays, as one anchor type among several.
 |---|--------|----------|----------|-----------|
 | Δ1 | Product framing | "Provenance engine for codebases; answers why *code* exists" | Decision-provenance engine; anchors = query, code span, document, time window | Framing drove design; every rich feature hung off `git blame`. See [01](01-overview.md). |
 | Δ2 | Zero-repo workspaces | `repos:` implicitly required; `why` validation assumed a registered repo | `repos:` explicitly optional; workspace valid with none; `why`/`history_of` fail with a clear "code anchoring disabled" error; all other tools unaffected | Ask-only (Jira/Notion) is a primary configuration. See [06](06-interfaces-and-config.md). |
-| Δ3 | Pipeline asymmetry | `why` got walk + chains + gaps; `find_decision` got retrieval + 1 hop, no chains, unspecified "clustering" | One engine, four seed modes (retrieval / blame / ref / log); **every** tool returns `Chains` + `Gaps`; clustering deleted | The ask path — the primary path — received the weakest machinery. See [05](05-query-engine.md). |
+| Δ3 | Pipeline asymmetry | `why` got walk + chains + gaps; `find_decision` got retrieval + 1 hop, no chains, unspecified "clustering" | One engine, four seed modes (retrieval / blame / ref / log); **every query** tool returns `Chains` + `Gaps`; clustering deleted | The ask path — the primary path — received the weakest machinery. See [05](05-query-engine.md). |
 | Δ4 | Event/time anchoring | None; agent had to guess dates | `find_decision` takes `around` (free text or date) → event resolution → time window; ranking uses proximity-to-anchor instead of recency when anchored | "When incident X happened" is unanswerable without it. See [05](05-query-engine.md#event-resolution). |
 | Δ5 | Impact queries | Not expressible | New `impact_of` tool: forward-in-time walk (incoming references after anchor time) + time-filtered semantic expansion, chronological timeline | "What impact did we get?" is a target question. No new edge kinds needed — direction + time on existing edges. |
 | Δ6 | Jira | Post-v1 aspiration | v1 connector (Cloud: new `/search/jql` endpoint, `updated` watermark, ADF→text) | User's ask-only scenario names Jira explicitly; ticket-key linking is the classic provenance case. See [04](04-connectors-and-sync.md#jiraconnector-v1). |
 | Δ7 | `Anchor` shape | Code-only (repo, file, lines, SHAs) | Union: query / code span / document / time window | Generalizing later would break the bundle contract on every surface. |
 | Δ8 | `Document.CreatedAt` | Only `UpdatedAt` | Both | Event time ≠ last-edit time. A postmortem edited yesterday still belongs to last year's incident. Timelines, event resolution, and impact filtering all key on `CreatedAt`. |
-| Δ9 | Config conflation | `repos:` doubled as GitHub ingest list (via `remote:`) and local-clone registry | `sources.github.repos` = what to ingest; top-level `repos:` = local clones for blame only | Zero-repo workspaces must still ingest GitHub; enrichment mapping via `remote:` when both exist. |
+| Δ9 | Config conflation | `repos:` doubled as GitHub ingest list (via `remote:`) and local-clone registry | A GitHub instance's own `with.repos` (`plugins/sources/github/plugin.go`, `Manifest`) = what to ingest; top-level `repos:` = local clones for blame only | Zero-repo workspaces must still ingest GitHub; enrichment mapping via `remote:` when both exist. |
 | Δ10 | `Connector.Changes` signature | Returned final `Cursor` *before* the stream was consumed — contradicted "checkpoint every batch" | Streams `Batch{Docs, Cursor}`; orchestrator commits batch, then persists its cursor | v1 signature made the documented crash-safe resume unimplementable. |
 | Δ11 | `authored_follow_up` edge | Declared in `EdgeKind`, produced by nothing | Deleted; `supersedes` added (ADR "supersedes" text pattern) | Orphan removed; supersession is real signal for "B instead of A" questions. |
 | Δ12 | `Neighbors` direction | Unspecified (trace claimed "both directions") | Explicit `dir` parameter (out / in / both) in the store contract | Impact walking requires incoming-edge traversal; contracts must say so. |
-| Δ13 | SQLite build | cgo (mattn) assumed; "pure-Go fallback if pain appears" | Default **ncruces/go-sqlite3 WASM** bindings (pure Go, sqlite-vec embedded); cgo variant kept as a benchmark alternative behind the same interface | Official WASM bindings exist ([sqlite-vec-go-bindings](https://github.com/asg017/sqlite-vec-go-bindings/)); removes the cross-compile risk instead of mitigating it. |
+| Δ13 | SQLite build | cgo (mattn) assumed; "pure-Go fallback if pain appears" | **ncruces/go-sqlite3 WASM** bindings (pure Go, sqlite-vec embedded); no cgo driver ships, and a second store implementation would be one package behind `IndexStore` | Official WASM bindings exist ([sqlite-vec-go-bindings](https://github.com/asg017/sqlite-vec-go-bindings/)); removes the cross-compile risk instead of mitigating it. |
 | Δ14 | Milestone order | Blame-provenance at M2; Notion at M3; Jira absent | Ask-first: retrieval core → provenance engine (`find_decision`/`trace`/`impact_of`) → Notion + Jira → code anchoring | Ship the assistant before the code explorer; matches stated priority. |
 | Δ15 | Tool surface | `find_decision` returned flat clusters; no impact verb | `find_decision` kept and upgraded to the full engine; `impact_of` added as a narrow fifth verb; CLI `lore ask` still maps to `find_decision` | Verb honesty: MCP returns evidence, not answers — a rename to `ask` was considered and rejected in review as overselling. Narrow verbs route better in LLM hosts than modal params. |
 | Δ16 | Contract stability | Implicit | `EvidenceBundle` = the stable, additively-evolving contract; tools = disposable verbs with in-place MCP deprecation | Changing param semantics silently breaks agent prompts; adding/retiring tools is cheap. |
 | Δ17 | Plugin readiness | Not considered | Connector seam kept plugin-viable by three disciplines (entities-only imports, additive schemas, conformance suite); plugin transport itself deferred | Δ10 is the cautionary tale: freezing a wire protocol before the contract stops moving turns fixes into ecosystem breaks. |
+| Δ18 | Connector/provider construction | A hardcoded switch per source and per provider in the DI module; adding either meant editing core | Plugin registry + manifest; the engine holds no source or provider name, registration validates a manifest against the plugin that declares it, and the built value's capabilities are checked when an instance is built | "Adding a source is one package" was true only if you were us. See [08](08-extensibility.md#registry-and-composition-root). |
+| Δ19 | Source configuration | Closed `sources:` struct, one typed field per source, strict decode rejecting everything else | `sources:` is a list of instances (`id` / `use` / `with`); `with:` is validated against the plugin's manifest and decoded strictly by the plugin | A config format that cannot express an unknown source cannot configure a plugin. Multiple instances of one plugin (two Jira sites) become expressible as a side effect. |
+| Δ20 | Where implementations live | Connectors and providers under `internal/`, unimportable by anyone | `sdk/` (public contract, stdlib only) + `plugins/` (official plugins), both outside `internal/`; boundaries enforced by depguard, not by convention | A plugin nobody can import is not a plugin. Official plugins now hold no privilege a third party lacks. |
+| Δ21 | AI providers | One Go package per vendor (`openai`, `anthropic`, `zai`, `ollama`) | Native drivers only where the wire format differs; every OpenAI-compatible vendor (Z.AI, OpenRouter, Moonshot, DeepSeek, Groq, …) is a preset row of one driver | The Z.AI package was 19 lines wrapping the OpenAI client — configuration wearing a package costume. |
+| Δ22 | Embedder identity | The provider self-reported `"provider/model/dims"` | The plugin reports `Dimensions()`; the host composes the identity from the manifest name, the configured model and that width | A plugin must not be able to claim another's vector space and silently poison an index. |
+| Δ23 | Local git access | A bespoke interface, deliberately not a connector | A third plugin kind (`KindCode`) behind the same registry and manifest | Mercurial, Jujutsu and remote forges are real alternative implementations of the three-method `CodeRepo` contract — `Blame`, `Log`, `HasFileAtHEAD` (`sdk/code.go`, `CodeRepo`). |
+| Δ24 | Unknown `RefKind` from a connector | Resolved to an empty rule: every such reference vanished with no error | Rejected at ingest, naming the known kinds | Silent drops are undebuggable for a plugin author; `DocType` stays open because unknown types degrade to ordinary evidence, which is honest. |
+
+Δ17 is superseded by Δ18–Δ24: the seam it protected is now the shipped
+contract, and the transport it deferred is specified in
+[09](09-plugin-protocol.md), which shipped with external plugins and is now
+frozen — it evolves additively from here, with the one version 2 exception
+[09](09-plugin-protocol.md#status) records.
 
 ## Unchanged (deliberately)
 
@@ -43,5 +56,27 @@ stays, as one anchor type among several.
 - D1: MCP returns evidence, not prose; zero LLM key server-side.
 - Synthesis as an optional final step for non-AI surfaces.
 - Single SQLite file per workspace; RRF fusion in Go; store portability rules.
-- Lease-lock sync (heartbeat + TTL takeover); read-only connectors; env-only secrets.
-- `Gaps` honesty invariant — extended to every tool rather than weakened.
+- Lease-lock sync (heartbeat + TTL takeover); read-only connectors; secrets resolved by the host, never read by a plugin.
+- `Gaps` honesty invariant — extended to every query tool rather than weakened.
+
+## Corrections to this set
+
+Claims this set carried that the code did not support. Each row names the
+symbol that settles it.
+
+| # | Claim | What the set said | What the code does | Symbol |
+|---|---|---|---|---|
+| C1 | Plugin confinement | the mitigation list read as though something confined a plugin | nothing confines it, and the three mitigations are supply-chain controls | `internal/plugexec/session.go`, `spawn` |
+| C2 | Plugin environment | a plugin never reads the environment, unqualified | the host hands a subprocess an empty environment, and on Windows the loader and runtime variables only. A compiled-in plugin shares the host process, so there the rule is a contract rather than an enforcement | `internal/plugexec/env.go`, `minimalEnv` |
+| C3 | Ingest scope | `sources.<plugin>.<field>` | a source instance's own `with:` block, validated against the plugin's manifest | `internal/config/config.go`, `Instance` |
+| C4 | Code contract | two methods | three methods: `Blame`, `Log`, `HasFileAtHEAD` | `sdk/code.go`, `CodeRepo` |
+| C5 | Optional secrets | `Secret` declared no optional flag | `Secret.Optional` marks a secret the host may skip | `sdk/plugin.go`, `Secret` |
+| C6 | Reference scope | `RawRef` carried a kind and a value | `RawRef.Instance` scopes a reference to one source instance, and travels as `instance` on the wire | `sdk/document.go`, `RawRef` |
+| C7 | Bundle surface | every tool returns an `EvidenceBundle` | the five query tools do. `sync_now` answers an acknowledgment and `sync_status` an index status | `internal/transport/mcp/sync.go`, `syncAcknowledgment` and `indexStatus` |
+| C8 | Ask filter flag | `--type` | `--doc-type` | `internal/transport/cli/ask.go`, `newAskCommand` |
+| C9 | Host injection | a plugin receives an HTTP client, a logger and a clock | `lore.Host` carries a logger alone, already tagged with the instance id | `sdk/host.go`, `Host`, and `internal/registry/build.go`, `Registry.Host` |
+| C10 | Install verification | digest pinning read as unconditional | an unsigned `https://` coordinate is constrained by nothing on its first install, and by nothing again under `lore plugin update`, because a digest is compared only when `hasLocked && !req.Rewrite` | `internal/plugindist/install.go`, `Install`, and `Installer.locate` for the missing checksums file |
+| C11 | Store contract | the `IndexStore` listing omitted eight methods and renamed a parameter | the shipped method set, with `Cursor` keyed by instance | `internal/repositories/indexstore.go`, `IndexStore` |
+| C12 | Unanchored time prior | a mild recency boost | an age penalty of at most `RecencyPenalty` over `RecencyHorizon`, so an undated-anchor query never lifts a document above a neutral prior | `internal/services/rank.go`, `timePrior.of` |
+| C13 | Jira watermark | one JQL shape naming projects and a watermark | the project clause is dropped for an empty list, and the watermark is backed off by `jqlSlack` before it is spelled | `plugins/sources/jira/connector.go`, `Connector.jql` |
+| C14 | Design diagram | the index named no diagram | eleven pages beside these documents | `docs/v3/lore-system-design.drawio` |

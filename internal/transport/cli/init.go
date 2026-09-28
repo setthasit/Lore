@@ -5,29 +5,57 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
-	"github.com/setthasit/Lore/internal/di"
+	"github.com/setthasit/Lore/internal/configschema"
+	"github.com/setthasit/Lore/internal/envx"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/sdk"
 )
 
-func newInitCommand(configPath *string) *cobra.Command {
+const commentColumn = 43
+
+const (
+	queryBlock = `# query:                                   # optional tuning
+#   event_window: 30d                      # ± window for event resolution
+#   walk_depth: 3
+#   top_k: 12
+`
+
+	schedulerBlock = `# scheduler:
+#   interval: 30m
+`
+)
+
+func newInitCommand(configPath *string, reg *registry.Registry) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Write a lore.yaml scaffold for this workspace",
-		Long: "Writes a commented lore.yaml next to you, with placeholder source and\n" +
-			"secret-variable names to fill in. It never touches an index: `lore sync`\n" +
+		Long: "Writes a commented lore.yaml next to you, generated from the manifests of\n" +
+			"the plugins this build registers: a starter source instance to fill in,\n" +
+			"whose secret fields hold the credential, scaffolded as " + envx.Form + " of a\n" +
+			"suggested variable; a literal works too. Beside it goes a .schema.json named\n" +
+			"after it, which lets an editor running yaml-language-server complete and check\n" +
+			"the file; `lore schema` rewrites it. It never touches an index: `lore sync`\n" +
 			"creates that on its first run.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runInit(cmd, *configPath)
+			return runInit(cmd, *configPath, reg)
 		},
 	}
 }
 
-func runInit(cmd *cobra.Command, configPath string) error {
+func runInit(cmd *cobra.Command, configPath string, reg *registry.Registry) error {
+	plan, err := newScaffold(reg, workspaceName(configPath), schemaModeline(configPath))
+	if err != nil {
+		return err
+	}
+
 	// Check-then-write would overwrite a configuration written in between.
 	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
@@ -37,17 +65,27 @@ func runInit(cmd *cobra.Command, configPath string) error {
 		return internalerror.NewInternalError("cannot create "+configPath, err)
 	}
 
-	if _, err := file.WriteString(scaffold(workspaceName(configPath))); err != nil {
+	if _, err := file.WriteString(plan.render()); err != nil {
 		_ = file.Close()
 		return internalerror.NewInternalError("cannot write "+configPath, err)
 	}
 	if err := file.Close(); err != nil {
 		return internalerror.NewInternalError("cannot write "+configPath, err)
 	}
+	schema, err := writeSchema(configPath, configschema.Catalog{Plugins: reg.List()})
+	if err != nil {
+		return err
+	}
 
 	out := cmd.OutOrStdout()
 	printfln(out, "wrote %s", configPath)
-	printfln(out, "next: set the token variables it names, export %s, then run `lore sync`", di.EmbedderKeyEnv)
+	printfln(out, "wrote %s", schema)
+	if variables := plan.variables(); len(variables) > 0 {
+		printfln(out, "next: fill in the fields it marks, export %s, then run `lore sync`",
+			strings.Join(variables, " and "))
+	} else {
+		printfln(out, "next: fill in the fields it marks, then run `lore sync`")
+	}
 	return nil
 }
 
@@ -63,45 +101,182 @@ func workspaceName(configPath string) string {
 	return name
 }
 
-func scaffold(workspace string) string {
-	return strings.ReplaceAll(`workspace: {{WORKSPACE}}
+type scaffold struct {
+	modeline  string
+	workspace string
+	source    lore.Manifest
+	embedder  lore.Manifest
+	llm       lore.Manifest
+	hasLLM    bool
+}
 
-# The index is derived data: safe to delete, rebuilt by the next lore sync.
-# index_path: ~/.lore/{{WORKSPACE}}.db
+func newScaffold(reg *registry.Registry, workspace, modeline string) (*scaffold, error) {
+	source, ok := reg.Starter(lore.KindSource, "")
+	if !ok {
+		return nil, internalerror.NewPreconditionError("this build registers no source plugin, so there is"+
+			" nothing for a workspace to ingest — run `lore plugin list` to see what it has", nil)
+	}
+	embedder, ok := reg.Starter(lore.KindProvider, lore.CapabilityEmbed)
+	if !ok {
+		return nil, internalerror.NewPreconditionError("this build registers no provider serving embeddings,"+
+			" and a workspace without vectors has nothing to search — run `lore plugin list` to see what it has", nil)
+	}
 
-# Sources say what to INGEST. All optional — keep the ones you have.
-# Secrets are never stored here: *_env names an environment variable.
-sources:
-  github:
-    token_env: LORE_GITHUB_TOKEN           # export a fine-grained read-only PAT
-    # Repositories to ingest, "owner/name" — no local clone needed.
-    repos:
-      - acme/{{WORKSPACE}}
-      # - acme/{{WORKSPACE}}-infra
+	plan := &scaffold{modeline: modeline, workspace: workspace, source: source, embedder: embedder}
+	plan.llm, plan.hasLLM = reg.Starter(lore.KindProvider, lore.CapabilityComplete)
+	return plan, nil
+}
 
-# Local clones, for blame and file history only. Zero repos is a valid
-# ask-only workspace.
-repos: []
-# repos:
-#   - path: ~/dev/{{WORKSPACE}}
-#     remote: github:acme/{{WORKSPACE}}
+func (s *scaffold) render() string {
+	var out strings.Builder
 
-# query:                                   # optional tuning
-#   event_window: 30d                      # ± window for event resolution
-#   walk_depth: 3
-#   top_k: 12
+	out.WriteString(s.modeline)
+	out.WriteString("workspace: " + s.workspace + "\n\n")
+	out.WriteString("# The index is derived data: safe to delete, rebuilt by the next lore sync.\n")
+	out.WriteString("# index_path: ~/.lore/" + s.workspace + ".db\n\n")
 
-embedder:
-  provider: openai                         # the API key comes from OPENAI_API_KEY
-  model: text-embedding-3-small            # changing the model needs: lore sync --reembed
+	out.WriteString("# Sources say what to INGEST: one sequence item per instance, in sync order.\n")
+	out.WriteString("# A secret field holds the credential: " + envx.Form + " keeps it out of this file,\n")
+	out.WriteString("# and a literal value works too.\n")
+	out.WriteString("# `lore source add <plugin>` appends another instance; `lore plugin list` names them.\n")
+	out.WriteString("sources:\n")
+	out.WriteString(s.sourceItem())
+	out.WriteString("\n")
 
-# Synthesis: lore ask and --explain answer in prose only with this block.
-# llm:
-#   provider: anthropic                    # openai | anthropic | zai | ollama
-#   model: claude-sonnet-4-5
-#   api_key_env: LORE_LLM_KEY              # provider: ollama needs only a model
+	out.WriteString("# Local clones, for blame and file history only. Zero repos is a valid\n")
+	out.WriteString("# ask-only workspace.\n")
+	out.WriteString("repos: []\n")
+	out.WriteString(s.repoExample())
+	out.WriteString("\n")
 
-# scheduler:
-#   interval: 30m
-`, "{{WORKSPACE}}", workspace)
+	out.WriteString(queryBlock)
+	out.WriteString("\n")
+	out.WriteString(s.embedderBlock())
+	out.WriteString("\n")
+	if s.hasLLM {
+		out.WriteString(s.llmBlock())
+		out.WriteString("\n")
+	}
+	out.WriteString(schedulerBlock)
+	return out.String()
+}
+
+func (s *scaffold) sourceItem() string {
+	item := scaffoldLine("  - ", "use: "+s.source.Name, "")
+	if body := withBlock(s.source, "      "); body != "" {
+		item += "    with:\n" + body
+	}
+	return item
+}
+
+func (s *scaffold) repoExample() string {
+	if !s.source.Capabilities.RepoRemotes {
+		return ""
+	}
+	return "# repos:\n" +
+		"#   - path: ~/dev/" + s.workspace + "\n" +
+		"#     remote: " + inertLine(s.source.Name) + ":acme/" + s.workspace + "\n"
+}
+
+func (s *scaffold) embedderBlock() string {
+	return "# Role binding: which provider instance embeds, and with which model.\n" +
+		"embedder:\n" +
+		scaffoldLine("  ", "provider: "+s.embedder.Name, credentialNote(s.embedder)) +
+		scaffoldLine("  ", "model: "+scalar(s.embedder.DefaultModels[lore.CapabilityEmbed]),
+			"changing the model needs: lore sync --reembed")
+}
+
+func (s *scaffold) llmBlock() string {
+	return "# Synthesis: lore ask and --explain answer in prose only with this block.\n" +
+		"# llm:\n" +
+		scaffoldLine("#   ", "provider: "+s.llm.Name, credentialNote(s.llm, uniqueVariables(s.embedder)...)) +
+		scaffoldLine("#   ", "model: "+scalar(s.llm.DefaultModels[lore.CapabilityComplete]), "")
+}
+
+func (s *scaffold) variables() []string {
+	return uniqueVariables(s.source, s.embedder, s.llm)
+}
+
+func withBlock(m lore.Manifest, indent string) string {
+	var out strings.Builder
+	for _, secret := range m.Secrets {
+		out.WriteString(scaffoldLine(indent, secret.Key+": "+suggestedSecret(secret), secret.Doc))
+	}
+	for _, field := range m.Fields {
+		entry := field.Name + ": " + placeholder(field)
+		if !field.Required {
+			entry = "# " + entry
+		}
+		out.WriteString(scaffoldLine(indent, entry, field.Doc))
+	}
+	return out.String()
+}
+
+func suggestedSecret(secret lore.Secret) string {
+	if secret.DefaultEnv == "" {
+		return scalar("")
+	}
+	return envx.Reference(secret.DefaultEnv)
+}
+
+func placeholder(f lore.Field) string {
+	switch f.Type {
+	case lore.FieldStringList:
+		return "[]"
+	case lore.FieldInt:
+		if f.Default == "" {
+			return "0"
+		}
+		return f.Default
+	case lore.FieldBool:
+		if f.Default == "" {
+			return "false"
+		}
+		return f.Default
+	default:
+		return scalar(f.Default)
+	}
+}
+
+// A key with no value decodes as null, which a plugin's decoder reports as a type error, not a blank.
+func scalar(value string) string {
+	if value == "" {
+		return `""`
+	}
+	return value
+}
+
+func credentialNote(m lore.Manifest, alreadyNamed ...string) string {
+	var fresh []string
+	for _, name := range uniqueVariables(m) {
+		if !slices.Contains(alreadyNamed, name) {
+			fresh = append(fresh, name)
+		}
+	}
+	if len(fresh) == 0 {
+		return ""
+	}
+	return "credentials come from " + strings.Join(fresh, " and ")
+}
+
+func uniqueVariables(manifests ...lore.Manifest) []string {
+	var names []string
+	for _, m := range manifests {
+		for _, secret := range m.Secrets {
+			if secret.DefaultEnv == "" || slices.Contains(names, secret.DefaultEnv) {
+				continue
+			}
+			names = append(names, secret.DefaultEnv)
+		}
+	}
+	return names
+}
+
+func scaffoldLine(prefix, body, comment string) string {
+	text := prefix + inertLine(body)
+	if comment == "" {
+		return text + "\n"
+	}
+	pad := max(commentColumn-utf8.RuneCountInString(text), 1)
+	return text + strings.Repeat(" ", pad) + "# " + inertLine(comment) + "\n"
 }

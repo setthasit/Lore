@@ -11,7 +11,10 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func bundleFixture() *entities.EvidenceBundle {
@@ -21,9 +24,9 @@ func bundleFixture() *entities.EvidenceBundle {
 		Anchor:   entities.Anchor{Kind: entities.AnchorQuery, Query: "why did we pick sqlite?"},
 		Nodes: []entities.EvidenceNode{{
 			Doc: entities.DocumentMeta{
-				ID:        entities.NewDocID("github", entities.DocTypePR, "12"),
+				ID:        lore.NewDocID("github", lore.DocTypePR, "12"),
 				Source:    "github",
-				Type:      entities.DocTypePR,
+				Type:      lore.DocTypePR,
 				Title:     "Index on SQLite, not Postgres",
 				Author:    "dev@example.test",
 				URL:       "https://github.com/acme/lore/pull/12",
@@ -34,9 +37,9 @@ func bundleFixture() *entities.EvidenceBundle {
 			Score:   0.91,
 		}, {
 			Doc: entities.DocumentMeta{
-				ID:        entities.NewDocID("notion", entities.DocTypePage, "design/storage"),
+				ID:        lore.NewDocID("notion", lore.DocTypePage, "design/storage"),
 				Source:    "notion",
-				Type:      entities.DocTypePage,
+				Type:      lore.DocTypePage,
 				Title:     "Storage design",
 				Author:    "arch@example.test",
 				URL:       "https://notion.so/design/storage",
@@ -132,6 +135,36 @@ func TestAskRawEmitsTheCanonicalBundleJSON(t *testing.T) {
 	doc, _ := first["doc"].(map[string]any)
 	if doc["url"] != bundle.Nodes[0].Doc.URL {
 		t.Errorf("first url = %v, want %q", doc["url"], bundle.Nodes[0].Doc.URL)
+	}
+}
+
+func TestAskRawScrubsASecretTheJSONEscapes(t *testing.T) {
+	const secret = "fake\x01tok\"en&<value>"
+	sink := &secrets.Sink{}
+	sink.Record("LORE_FORGE_TOKEN", secret)
+	rt, query := mockQuery(t)
+	mockSynthesis(t, rt)
+	bundle := bundleFixture()
+	bundle.Nodes[0].Doc.Title = "leaked " + secret
+	query.EXPECT().FindDecision(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	res := runOn(t, registry.New(lore.Host{}, sink), rt, "", "ask", "why sqlite?", "--raw")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	var decoded struct {
+		Nodes []struct {
+			Doc struct{ Title string } `json:"doc"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(res.stdout), &decoded); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, res.stdout)
+	}
+	if len(decoded.Nodes) == 0 {
+		t.Fatalf("stdout carries no nodes:\n%s", res.stdout)
+	}
+	if got, want := decoded.Nodes[0].Doc.Title, "leaked "+secrets.Placeholder; got != want {
+		t.Errorf("title = %q, want %q", got, want)
 	}
 }
 

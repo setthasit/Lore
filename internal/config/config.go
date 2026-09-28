@@ -1,83 +1,209 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/fsx"
+	"github.com/setthasit/Lore/sdk"
 )
 
-// Defaults applied at load when the corresponding key is absent.
 const (
 	DefaultEventWindow       = Duration(30 * 24 * time.Hour)
 	DefaultWalkDepth         = 3
 	DefaultTopK              = 12
 	DefaultSchedulerInterval = Duration(30 * time.Minute)
+	DefaultRepoPlugin        = "git"
 )
 
-// Config is a parsed lore.yaml workspace configuration.
 type Config struct {
-	Workspace string    `yaml:"workspace"`
-	IndexPath string    `yaml:"index_path"`
-	Sources   Sources   `yaml:"sources"`
-	Repos     []Repo    `yaml:"repos"`
-	Query     Query     `yaml:"query"`
-	Embedder  Embedder  `yaml:"embedder"`
-	LLM       *LLM      `yaml:"llm"`
-	Scheduler Scheduler `yaml:"scheduler"`
-	Server    Server    `yaml:"server"`
+	Workspace string       `yaml:"workspace"`
+	IndexPath string       `yaml:"index_path"`
+	Plugins   []PluginDecl `yaml:"plugins"`
+	Sources   []Instance   `yaml:"sources"`
+	Providers []Instance   `yaml:"providers"`
+	Embedder  RoleBinding  `yaml:"embedder"`
+	LLM       *RoleBinding `yaml:"llm"`
+	Repos     []RepoDecl   `yaml:"repos"`
+	Query     Query        `yaml:"query"`
+	Scheduler Scheduler    `yaml:"scheduler"`
+	Server    Server       `yaml:"server"`
 }
 
-// Sources declares what to ingest. Every source is optional; an absent source
-// is never synced and never required.
-type Sources struct {
-	GitHub *GitHubSource `yaml:"github"`
-	GitLab *GitLabSource `yaml:"gitlab"`
-	Notion *NotionSource `yaml:"notion"`
-	Jira   *JiraSource   `yaml:"jira"`
+type PluginDecl struct {
+	Name   string `yaml:"name"`
+	From   string `yaml:"from"` // "github.com/jdoe/lore-linear@v0.3.1"
+	PubKey string `yaml:"pubkey"`
 }
 
-// GitHubSource ingests commits, PRs, reviews and issues for Repos. Independent
-// of local clones: no repository on disk is needed.
-type GitHubSource struct {
-	TokenEnv string   `yaml:"token_env"`
-	Repos    []string `yaml:"repos"` // "acme/myproject"
+type Instance struct {
+	ID   string     `yaml:"id"`
+	Use  string     `yaml:"use"`
+	With *yaml.Node `yaml:"with"`
 }
 
-// GitLabSource ingests commits, merge requests, discussion threads, issues and
-// notes for Projects. BaseURL is optional: absent means gitlab.com, and a
-// self-managed instance names its own root.
-type GitLabSource struct {
-	BaseURL  string   `yaml:"base_url"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects"` // "acme/myproject", "acme/platform/myproject"
+// KnownFields(true) rejects a plugin's own `with:` keys as unknown fields of yaml.Node.
+func (i *Instance) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: an instance must be a mapping that names a plugin with a use key", node.Line)
+	}
+
+	for pair := 0; pair+1 < len(node.Content); pair += 2 {
+		key, value := node.Content[pair], node.Content[pair+1]
+		if declaredEarlier(node.Content[:pair], key.Value) {
+			return refuseRedeclared(key, "an instance")
+		}
+		switch key.Value {
+		case "id":
+			if err := value.Decode(&i.ID); err != nil {
+				return err
+			}
+		case "use":
+			if err := value.Decode(&i.Use); err != nil {
+				return err
+			}
+		case "with":
+			i.With = value
+		default:
+			return fmt.Errorf("line %d: field %s not found in an instance, which has id, use and with",
+				key.Line, key.Value)
+		}
+	}
+	return nil
 }
 
-type NotionSource struct {
-	TokenEnv  string   `yaml:"token_env"`
-	RootPages []string `yaml:"root_pages"`
+func declaredEarlier(content []*yaml.Node, name string) bool {
+	for prior := 0; prior < len(content); prior += 2 {
+		if content[prior].Value == name {
+			return true
+		}
+	}
+	return false
 }
 
-type JiraSource struct {
-	BaseURL  string   `yaml:"base_url"`
-	EmailEnv string   `yaml:"email_env"`
-	TokenEnv string   `yaml:"token_env"`
-	Projects []string `yaml:"projects"`
+func refuseRedeclared(key *yaml.Node, owner string) error {
+	return fmt.Errorf("line %d: field %s is declared more than once in %s", key.Line, key.Value, owner)
 }
 
-// Repo registers a local clone used for blame and log only. Zero repos is a
-// valid ask-only workspace.
-type Repo struct {
+func (i Instance) Ident() string {
+	if i.ID != "" {
+		return i.ID
+	}
+	return i.Use
+}
+
+func (c *Config) InstancesUsing(plugin string) []string {
+	used := instancesUsing(nil, "sources", c.Sources, plugin)
+	used = instancesUsing(used, "providers", c.Providers, plugin)
+	for _, repo := range c.Repos {
+		if repo.Use == plugin {
+			used = append(used, "repos["+repo.Path+"]")
+		}
+	}
+	return used
+}
+
+func instancesUsing(used []string, section string, instances []Instance, plugin string) []string {
+	for _, instance := range instances {
+		if instance.Use == plugin {
+			used = append(used, section+"["+instance.Ident()+"]")
+		}
+	}
+	return used
+}
+
+// An absent or empty `with:` block decodes to a nil map, not an error.
+func (i Instance) WithValues() (map[string]any, error) {
+	values, err := decodeSettings(i.With)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("with: for instance "+strconv.Quote(i.Ident())+
+			" must be a mapping of configuration keys", err)
+	}
+	return values, nil
+}
+
+func decodeSettings(settings *yaml.Node) (map[string]any, error) {
+	if settings == nil || settings.Tag == "!!null" {
+		return nil, nil
+	}
+
+	var values map[string]any
+	if err := settings.Decode(&values); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+type RoleBinding struct {
+	Provider string `yaml:"provider"` // a providers[] id, or a provider plugin used with its defaults
+	Model    string `yaml:"model"`
+
+	// Vector width for models that do not imply one; zero leaves it to the driver.
+	Dimensions int `yaml:"dimensions"`
+
+	With *yaml.Node `yaml:"-"`
+}
+
+func (b *RoleBinding) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: a role binding must be a mapping that names a provider", node.Line)
+	}
+
+	var extras []*yaml.Node
+	for pair := 0; pair+1 < len(node.Content); pair += 2 {
+		key, value := node.Content[pair], node.Content[pair+1]
+		if declaredEarlier(node.Content[:pair], key.Value) {
+			return refuseRedeclared(key, "a role binding")
+		}
+		if key.ShortTag() == "!!merge" {
+			return fmt.Errorf("line %d: merge key %s is not supported in a role binding", key.Line, key.Value)
+		}
+		var err error
+		switch key.Value {
+		case "provider":
+			err = value.Decode(&b.Provider)
+		case "model":
+			err = value.Decode(&b.Model)
+		case "dimensions":
+			err = value.Decode(&b.Dimensions)
+		default:
+			extras = append(extras, key, value)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if extras != nil {
+		b.With = &yaml.Node{Kind: yaml.MappingNode, Line: node.Line, Column: node.Column, Content: extras}
+	}
+	return nil
+}
+
+func (b RoleBinding) WithValues() (map[string]any, error) {
+	values, err := decodeSettings(b.With)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("role binding for provider "+strconv.Quote(b.Provider)+
+			" must hold configuration keys", err)
+	}
+	return values, nil
+}
+
+type RepoDecl struct {
 	Path   string `yaml:"path"`
-	Remote string `yaml:"remote"` // "github:acme/myproject"; maps the clone onto a source repo
+	Use    string `yaml:"use"`
+	Remote string `yaml:"remote"` // "github:acme/myproject", named after the forge, not the instance
 }
 
 type Query struct {
@@ -86,27 +212,7 @@ type Query struct {
 	TopK        int      `yaml:"top_k"`
 }
 
-type Embedder struct {
-	Provider string `yaml:"provider"` // openai | ollama
-	Model    string `yaml:"model"`
-	BaseURL  string `yaml:"base_url"` // default: the provider's own endpoint
-
-	// Dimensions is the vector width. Required for ollama, whose models do not
-	// imply one; `ollama show <model>` reports it.
-	Dimensions int `yaml:"dimensions"`
-}
-
-// LLM configures synthesis for the CLI and gRPC surfaces. Optional: MCP never
-// needs it.
-type LLM struct {
-	Provider  string `yaml:"provider"` // openai | anthropic | zai | ollama
-	Model     string `yaml:"model"`
-	APIKeyEnv string `yaml:"api_key_env"`
-	BaseURL   string `yaml:"base_url"` // default: the provider's own endpoint
-}
-
 type Scheduler struct {
-	// Zero is absent, not "never sync": Load fills it with DefaultSchedulerInterval.
 	Interval Duration `yaml:"interval"`
 }
 
@@ -122,8 +228,7 @@ type MTLS struct {
 	ClientCA string `yaml:"client_ca"`
 }
 
-// Duration is a time.Duration that additionally accepts a whole-day "30d" form,
-// which time.ParseDuration rejects.
+// Duration accepts the whole-day "30d" that time.ParseDuration rejects.
 type Duration time.Duration
 
 func (d Duration) String() string {
@@ -135,7 +240,7 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(&raw); err != nil {
 		return err
 	}
-	parsed, err := parseDuration(raw)
+	parsed, err := lore.ParseDuration(raw)
 	if err != nil {
 		return fmt.Errorf("line %d: invalid duration %q: %w", node.Line, raw, err)
 	}
@@ -143,17 +248,25 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func parseDuration(raw string) (time.Duration, error) {
-	if days, ok := strings.CutSuffix(raw, "d"); ok {
-		if n, err := strconv.Atoi(days); err == nil {
-			return time.Duration(n) * 24 * time.Hour, nil
-		}
+func Decode(r io.Reader) (*Config, error) {
+	cfg, err := parse(r)
+	if err != nil {
+		return nil, internalerror.NewBadRequestError("invalid configuration", err)
 	}
-	return time.ParseDuration(raw)
+	return cfg, nil
 }
 
-// Load reads lore.yaml from path, rejects unknown keys, applies defaults and
-// validates the result.
+func parse(r io.Reader) (*Config, error) {
+	decoder := yaml.NewDecoder(r)
+	decoder.KnownFields(true)
+
+	var cfg Config
+	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
 func Load(path string) (*Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -164,21 +277,110 @@ func Load(path string) (*Config, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	decoder := yaml.NewDecoder(file)
-	decoder.KnownFields(true)
-
-	var cfg Config
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, internalerror.NewBadRequestError("invalid configuration at "+path+": "+err.Error(), err)
+	cfg, err := parse(file)
+	if err != nil {
+		return nil, refuseUndecodable("invalid configuration at "+path, err)
 	}
 
+	if err := cfg.expand(); err != nil {
+		return nil, err
+	}
 	if err := cfg.applyDefaults(); err != nil {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return cfg, nil
+}
+
+func ReadFile(path string) (text string, cfg *Config, err error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, refuseMissing(path, err)
+		}
+		return "", nil, internalerror.NewInternalError("cannot read "+path, err)
+	}
+
+	parsed, err := parse(bytes.NewReader(content))
+	if err != nil {
+		return "", nil, refuseUndecodable("cannot parse "+path, err)
+	}
+	return string(content), parsed, nil
+}
+
+func refuseMissing(path string, cause error) error {
+	return internalerror.NewNotFoundError("no configuration at "+path+
+		" — run `lore init` to create one", cause)
+}
+
+func refuseUndecodable(refusal string, cause error) error {
+	return internalerror.NewBadRequestError(refusal+": "+
+		internalerror.Excerpt(internalerror.MessageOf(cause)), cause)
+}
+
+type Splice struct {
+	From string
+	To   string
+}
+
+func WriteFile(path string, splice Splice, refusal string) error {
+	if _, err := Decode(strings.NewReader(splice.To)); err != nil {
+		return internalerror.NewInternalError(refusal, err)
+	}
+	mode, err := ensureUnchanged(path, splice.From)
+	if err != nil {
+		return err
+	}
+	if err := fsx.WriteAtomic(path, []byte(splice.To), mode); err != nil {
+		return internalerror.NewInternalError("cannot write "+path, err)
+	}
+	return nil
+}
+
+func ensureUnchanged(path, read string) (fs.FileMode, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, refuseNotRegular(path)
+	}
+
+	oneByteBeyondRead := int64(len(read)) + 1
+	current, err := io.ReadAll(io.LimitReader(file, oneByteBeyondRead))
+	if err != nil {
+		return 0, refuseUnreadable(path, err)
+	}
+	if string(current) != read {
+		return 0, refuseChanged(path)
+	}
+	return info.Mode().Perm(), nil
+}
+
+func refuseChanged(path string) error {
+	return internalerror.NewPreconditionError(path+" changed since it was read"+
+		" — re-run the command; the newer file is unchanged", nil)
+}
+
+func refuseNotRegular(path string) error {
+	return internalerror.NewPreconditionError(path+" is not a regular file"+
+		" — re-run the command; nothing was written", nil)
+}
+
+func refuseUnreadable(path string, cause error) error {
+	if errors.Is(cause, fs.ErrNotExist) {
+		return refuseMissing(path, cause)
+	}
+	return internalerror.NewPreconditionError("cannot re-read the configuration to confirm it is unchanged: "+
+		internalerror.MessageOf(cause)+" — re-run the command; nothing was written", cause)
 }
 
 func (c *Config) applyDefaults() error {
@@ -198,31 +400,38 @@ func (c *Config) applyDefaults() error {
 		c.Scheduler.Interval = DefaultSchedulerInterval
 	}
 
-	indexPath, err := expandHome("index_path", c.IndexPath)
+	indexPath, err := ExpandHome("index_path", c.IndexPath)
 	if err != nil {
 		return err
 	}
 	c.IndexPath = indexPath
 
 	for i := range c.Repos {
-		path, err := expandHome("repos path", c.Repos[i].Path)
+		path, err := ExpandHome(indexed("repos", i)+".path", c.Repos[i].Path)
 		if err != nil {
 			return err
 		}
 		c.Repos[i].Path = path
+
+		if c.Repos[i].Use == "" {
+			c.Repos[i].Use = DefaultRepoPlugin
+		}
 	}
 	return nil
 }
 
-// Only a leading "~" is expanded.
-func expandHome(field, path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+func ExpandHome(field, path string) (string, error) {
+	if !startsAtHome(path) {
 		return path, nil
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", internalerror.NewBadRequestError(field+" "+path+" starts with ~, but this user has no home directory; set an absolute "+field, err)
+		return "", internalerror.NewBadRequestError(field+" starts with ~, but this user has no home directory; declare an absolute path", err)
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
+}
+
+func startsAtHome(path string) bool {
+	return path == "~" || (len(path) > 1 && path[0] == '~' && os.IsPathSeparator(path[1]))
 }

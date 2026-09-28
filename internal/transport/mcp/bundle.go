@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 func EncodeBundle(bundle *entities.EvidenceBundle) ([]byte, error) {
@@ -181,7 +182,7 @@ func newEdges(edges []entities.Edge) []edge {
 	return out
 }
 
-func newChains(chains [][]entities.DocID) [][]string {
+func newChains(chains [][]lore.DocID) [][]string {
 	if len(chains) == 0 {
 		return nil
 	}

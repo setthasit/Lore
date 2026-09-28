@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 
@@ -18,10 +19,14 @@ const (
 	serverVersion = "v0.1.0"
 )
 
-// Blocks until ctx is cancelled or the client disconnects.
-func Serve(ctx context.Context, svc transport.Services) error {
-	return newServer(svc, diagnosticLogger()).Run(ctx, &sdk.StdioTransport{})
+// Blocks until ctx is cancelled or the client disconnects. Requests are read from os.Stdin.
+func Serve(ctx context.Context, out io.Writer, svc transport.Services, log *slog.Logger) error {
+	return newServer(svc, log).Run(ctx, &sdk.IOTransport{Reader: os.Stdin, Writer: nopWriteCloser{out}})
 }
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 func newServer(svc transport.Services, log *slog.Logger) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: serverName, Version: serverVersion}, nil)
@@ -34,11 +39,6 @@ func newServer(svc transport.Services, log *slog.Logger) *sdk.Server {
 	registerSyncStatus(server, svc.Status, log)
 
 	return server
-}
-
-// Stdout carries the JSON-RPC stream, so anything printed there corrupts the session.
-func diagnosticLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, nil))
 }
 
 func toolError(log *slog.Logger, tool string, err error) error {

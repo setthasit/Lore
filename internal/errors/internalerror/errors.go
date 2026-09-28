@@ -3,6 +3,7 @@ package internalerror
 import (
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // Kind classifies an error so a transport can map it to a protocol-native code
@@ -33,8 +34,8 @@ func (k Kind) String() string {
 	}
 }
 
-// Error is a classified error carrying a caller-facing message and an optional
-// cause. The cause is reachable through errors.Unwrap, errors.Is and errors.As.
+// Error is a classified error whose cause may be nil; a non-nil cause is
+// reachable through errors.Unwrap, errors.Is and errors.As.
 type Error struct {
 	Kind    Kind
 	Message string
@@ -53,23 +54,18 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// NewBadRequestError reports malformed or invalid caller input. cause may be nil.
 func NewBadRequestError(message string, cause error) error {
 	return &Error{Kind: KindBadRequest, Message: message, cause: cause}
 }
 
-// NewNotFoundError reports a requested entity that does not exist. cause may be nil.
 func NewNotFoundError(message string, cause error) error {
 	return &Error{Kind: KindNotFound, Message: message, cause: cause}
 }
 
-// NewPreconditionError reports a workspace or state requirement the caller must
-// satisfy before the operation can run. cause may be nil.
 func NewPreconditionError(message string, cause error) error {
 	return &Error{Kind: KindPrecondition, Message: message, cause: cause}
 }
 
-// NewInternalError reports a failure the caller cannot act on. cause may be nil.
 func NewInternalError(message string, cause error) error {
 	return &Error{Kind: KindInternal, Message: message, cause: cause}
 }
@@ -82,6 +78,31 @@ func KindOf(err error) Kind {
 		return classified.Kind
 	}
 	return KindUnclassified
+}
+
+// Empty for a nil err; the plain Error() text when the chain holds no classified error.
+func MessageOf(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var classified *Error
+	if errors.As(err, &classified) {
+		return classified.Message
+	}
+	return err.Error()
+}
+
+const excerptLimit = 120
+
+// Excerpt renders text so a message can carry it without putting control bytes
+// or an unbounded value on a terminal; a []byte is bounded before conversion,
+// so quoting a frame does not copy it.
+func Excerpt[T ~string | ~[]byte](text T) string {
+	if len(text) > excerptLimit {
+		return strconv.Quote(string(text[:excerptLimit])) + "…"
+	}
+	return strconv.Quote(string(text))
 }
 
 func IsBadRequest(err error) bool {

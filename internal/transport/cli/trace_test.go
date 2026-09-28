@@ -9,7 +9,10 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
+	lore "github.com/setthasit/Lore/sdk"
 )
 
 const traceQuestion = "provenance of Storage design"
@@ -187,5 +190,23 @@ func TestTraceKeepsTheCandidatesOfAnAmbiguousRef(t *testing.T) {
 		if !strings.Contains(res.stderr, want) {
 			t.Errorf("stderr is missing %q\n--- stderr ---\n%s", want, res.stderr)
 		}
+	}
+}
+
+func TestTraceTimelineScrubsASecretItRendersInert(t *testing.T) {
+	const secret = "fake\x01tok\"en-value"
+	sink := &secrets.Sink{}
+	sink.Record("LORE_FORGE_TOKEN", secret)
+	rt, trace := mockTrace(t)
+	bundle := timelineBundle(traceQuestion)
+	bundle.Gaps = []string{"forge rejected " + secret}
+	trace.EXPECT().Trace(gomock.Any(), gomock.Any()).Return(bundle, nil)
+
+	res := runOn(t, registry.New(lore.Host{}, sink), rt, "", "trace", "9fceb02")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	if want := "  forge rejected " + secrets.Placeholder + "\n"; !strings.Contains(res.stdout, want) {
+		t.Errorf("stdout is missing %q\n--- stdout ---\n%s", want, res.stdout)
 	}
 }

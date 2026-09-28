@@ -2,6 +2,7 @@ package transport
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 )
@@ -23,4 +24,11 @@ func Classify(err error) (internalerror.Kind, string) {
 	}
 
 	return classified.Kind, InternalErrorMessage
+}
+
+func ClassifyInstanceFailure(log *slog.Logger, operation, instance string, err error) string {
+	_, message := Classify(err)
+	log.Error(operation+" instance failed", "instance", instance, "error", err)
+
+	return message
 }

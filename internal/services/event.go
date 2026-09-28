@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/setthasit/Lore/internal/connectors/embedder"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -36,7 +36,7 @@ type resolvedEvent struct {
 func resolveEvent(
 	ctx context.Context,
 	s eventSource,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	around string,
 	opts eventOptions,
 ) (resolvedEvent, error) {
@@ -74,7 +74,7 @@ func resolveEvent(
 func eventCandidates(
 	ctx context.Context,
 	s eventSource,
-	emb embedder.Embedder,
+	emb lore.Embedder,
 	event string,
 	topK int,
 ) ([]seedHit, error) {
@@ -100,7 +100,7 @@ func parseEventDate(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func windowAround(at time.Time, halfWidth time.Duration, derivation string, anchor entities.DocID) *entities.TimeWindow {
+func windowAround(at time.Time, halfWidth time.Duration, derivation string, anchor lore.DocID) *entities.TimeWindow {
 	return &entities.TimeWindow{
 		From:       at.Add(-halfWidth),
 		To:         at.Add(halfWidth),

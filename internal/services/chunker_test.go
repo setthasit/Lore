@@ -9,10 +9,10 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
-// The chunker's sizing contract, restated here so the tests fail if the
-// implementation's constants drift away from the documented targets.
+// Mirrors the chunker's own sizing constants, so a drift in either fails here.
 const (
 	bytesPerToken  = 4
 	minChunkTokens = 300
@@ -27,8 +27,8 @@ var (
 	updated = time.Date(2024, 3, 2, 9, 30, 0, 0, time.UTC)
 )
 
-func docWith(t entities.DocType, id entities.DocID, body string) entities.Document {
-	return entities.Document{
+func docWith(t lore.DocType, id lore.DocID, body string) lore.Document {
+	return lore.Document{
 		ID:        id,
 		Source:    "github",
 		Type:      t,
@@ -42,13 +42,11 @@ func docWith(t entities.DocType, id entities.DocID, body string) entities.Docume
 	}
 }
 
-// paragraph builds a distinguishable ~50-token single-line paragraph.
 func paragraph(section, index int) string {
 	return strings.TrimSpace(fmt.Sprintf("s%dp%d %s", section, index, strings.Repeat("alpha ", 32)))
 }
 
-// headedBody builds a markdown body of sections sized so that each section is
-// itself between minChunkTokens and maxChunkTokens.
+// Each section is itself between minChunkTokens and maxChunkTokens.
 func headedBody(sections, perSection int) string {
 	var b strings.Builder
 	for s := range sections {
@@ -71,7 +69,7 @@ func plainBody(paragraphs int) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func assertInvariants(t *testing.T, doc entities.Document, chunks []entities.Chunk) {
+func assertInvariants(t *testing.T, doc lore.Document, chunks []entities.Chunk) {
 	t.Helper()
 	for i, c := range chunks {
 		if c.Ordinal != i {
@@ -95,8 +93,6 @@ func assertInvariants(t *testing.T, doc entities.Document, chunks []entities.Chu
 	}
 }
 
-// carriedOverlap returns the context a chunk carried from its predecessor: the
-// text before its first paragraph break.
 func carriedOverlap(text string) string {
 	head, _, ok := strings.Cut(text, "\n\n")
 	if !ok {
@@ -123,7 +119,7 @@ func assertOverlap(t *testing.T, chunks []entities.Chunk) {
 
 func TestChunkCommitIsOneChunk(t *testing.T) {
 	body := "fix(sync): bound connector retries\n\n" + plainBody(4)
-	doc := docWith(entities.DocTypeCommit, "github:commit:abc123", "  "+body+"\n")
+	doc := docWith(lore.DocTypeCommit, "github:commit:abc123", "  "+body+"\n")
 
 	chunks := services.NewChunker().Chunk(doc)
 
@@ -145,42 +141,42 @@ func TestChunkCommitIsOneChunk(t *testing.T) {
 func TestChunkCommentIsOneChunkWithThreadID(t *testing.T) {
 	tests := []struct {
 		name       string
-		docType    entities.DocType
-		id         entities.DocID
+		docType    lore.DocType
+		id         lore.DocID
 		body       string
 		wantThread string
 	}{
 		{
 			name:       "review comment",
-			docType:    entities.DocTypeReviewComment,
+			docType:    lore.DocTypeReviewComment,
 			id:         "github:review_comment:acme/lore/pull/42#discussion_r7",
 			body:       "The retry budget should be per connector, not global.",
 			wantThread: "github:review_comment:acme/lore/pull/42",
 		},
 		{
 			name:       "issue comment",
-			docType:    entities.DocTypeIssueComment,
+			docType:    lore.DocTypeIssueComment,
 			id:         "github:issue_comment:acme/lore/issues/42#issuecomment-9",
 			body:       "Reproduced on the staging workspace.",
 			wantThread: "github:issue_comment:acme/lore/issues/42",
 		},
 		{
 			name:       "ticket comment",
-			docType:    entities.DocTypeTicketComment,
+			docType:    lore.DocTypeTicketComment,
 			id:         "jira:ticket_comment:PROJ-1#10042",
 			body:       "Deferred to the next sprint after the incident review.",
 			wantThread: "jira:ticket_comment:PROJ-1",
 		},
 		{
 			name:       "comment without a thread fragment is its own thread",
-			docType:    entities.DocTypeIssueComment,
+			docType:    lore.DocTypeIssueComment,
 			id:         "github:issue_comment:9",
 			body:       "Standalone comment.",
 			wantThread: "github:issue_comment:9",
 		},
 		{
 			name:       "long comment is still one chunk",
-			docType:    entities.DocTypeIssueComment,
+			docType:    lore.DocTypeIssueComment,
 			id:         "github:issue_comment:acme/lore/issues/7#issuecomment-1",
 			body:       headedBody(3, 7),
 			wantThread: "github:issue_comment:acme/lore/issues/7",
@@ -209,7 +205,7 @@ func TestChunkCommentIsOneChunkWithThreadID(t *testing.T) {
 
 func TestChunkPageSplitsOnHeadings(t *testing.T) {
 	const sections = 5
-	doc := docWith(entities.DocTypePage, "notion:page:design-sync", headedBody(sections, 7))
+	doc := docWith(lore.DocTypePage, "notion:page:design-sync", headedBody(sections, 7))
 
 	chunks := services.NewChunker().Chunk(doc)
 
@@ -237,7 +233,7 @@ func TestChunkPageSplitsOnHeadings(t *testing.T) {
 }
 
 func TestChunkFallsBackToParagraphGroups(t *testing.T) {
-	doc := docWith(entities.DocTypePR, "github:pr:acme/lore/42", plainBody(30))
+	doc := docWith(lore.DocTypePR, "github:pr:acme/lore/42", plainBody(30))
 
 	chunks := services.NewChunker().Chunk(doc)
 
@@ -256,8 +252,6 @@ func TestChunkFallsBackToParagraphGroups(t *testing.T) {
 		}
 	}
 
-	// Paragraph boundaries are respected: the first paragraph opens the first
-	// chunk and the last one closes the last chunk, whole.
 	if !strings.HasPrefix(chunks[0].Text, paragraph(0, 0)) {
 		t.Errorf("first chunk does not start at the first paragraph: %q", chunks[0].Text)
 	}
@@ -267,18 +261,18 @@ func TestChunkFallsBackToParagraphGroups(t *testing.T) {
 }
 
 func TestChunkDefaultStrategyPerDocType(t *testing.T) {
-	tests := []entities.DocType{
-		entities.DocTypePR,
-		entities.DocTypeIssue,
-		entities.DocTypeTicket,
-		entities.DocTypePage,
-		entities.DocTypePRReview,
-		entities.DocType("message"), // unknown / future type
+	tests := []lore.DocType{
+		lore.DocTypePR,
+		lore.DocTypeIssue,
+		lore.DocTypeTicket,
+		lore.DocTypePage,
+		lore.DocTypePRReview,
+		lore.DocType("message"), // unknown / future type
 	}
 
 	for _, docType := range tests {
 		t.Run(string(docType), func(t *testing.T) {
-			doc := docWith(docType, entities.NewDocID("github", docType, "1"), headedBody(4, 7))
+			doc := docWith(docType, lore.NewDocID("github", docType, "1"), headedBody(4, 7))
 
 			chunks := services.NewChunker().Chunk(doc)
 
@@ -310,7 +304,7 @@ func TestChunkSplitsOversizedParagraph(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			doc := docWith(entities.DocTypePage, "notion:page:wall-of-text", tt.body)
+			doc := docWith(lore.DocTypePage, "notion:page:wall-of-text", tt.body)
 
 			chunks := services.NewChunker().Chunk(doc)
 
@@ -329,17 +323,17 @@ func TestChunkSplitsOversizedParagraph(t *testing.T) {
 
 func TestChunkEmptyBodyYieldsNoChunks(t *testing.T) {
 	bodies := map[string]string{"empty": "", "whitespace only": "  \n\t\n  "}
-	docTypes := []entities.DocType{
-		entities.DocTypeCommit,
-		entities.DocTypeIssueComment,
-		entities.DocTypePage,
-		entities.DocType("message"),
+	docTypes := []lore.DocType{
+		lore.DocTypeCommit,
+		lore.DocTypeIssueComment,
+		lore.DocTypePage,
+		lore.DocType("message"),
 	}
 
 	for name, body := range bodies {
 		for _, docType := range docTypes {
 			t.Run(name+"/"+string(docType), func(t *testing.T) {
-				doc := docWith(docType, entities.NewDocID("github", docType, "1"), body)
+				doc := docWith(docType, lore.NewDocID("github", docType, "1"), body)
 
 				if chunks := services.NewChunker().Chunk(doc); len(chunks) != 0 {
 					t.Errorf("got %d chunks, want none: %+v", len(chunks), chunks)

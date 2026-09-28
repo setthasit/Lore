@@ -12,6 +12,7 @@ import (
 
 	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
@@ -22,13 +23,14 @@ type Config struct {
 	Listener  net.Listener
 	Services  transport.Services
 	Synthesis services.SynthesisService
+	Sink      *secrets.Sink
 	Log       *slog.Logger
 	TLS       *tls.Config
 }
 
 // Blocks until ctx is done. A nil Config.TLS serves in the clear.
 func Serve(ctx context.Context, cfg Config) error {
-	server := grpclib.NewServer(transportCredentials(cfg.TLS)...)
+	server := grpclib.NewServer(append(transportCredentials(cfg.TLS), scrubbingInterceptors(cfg.Sink)...)...)
 	lorev1.RegisterQueryServiceServer(server, newQueryServer(cfg.Services, cfg.Synthesis, cfg.Log))
 	lorev1.RegisterSyncServiceServer(server, newSyncServer(cfg.Services, ctx.Done(), cfg.Log))
 

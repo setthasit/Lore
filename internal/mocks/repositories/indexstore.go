@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	entities "github.com/setthasit/Lore/internal/entities"
+	lore "github.com/setthasit/Lore/sdk"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -56,10 +57,10 @@ func (mr *MockIndexStoreMockRecorder) Close() *gomock.Call {
 }
 
 // Cursor mocks base method.
-func (m *MockIndexStore) Cursor(ctx context.Context, connector string) (entities.Cursor, error) {
+func (m *MockIndexStore) Cursor(ctx context.Context, connector string) (lore.Cursor, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Cursor", ctx, connector)
-	ret0, _ := ret[0].(entities.Cursor)
+	ret0, _ := ret[0].(lore.Cursor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -85,7 +86,7 @@ func (mr *MockIndexStoreMockRecorder) DeletePendingRefs(ctx, refs any) *gomock.C
 }
 
 // DocumentsByID mocks base method.
-func (m *MockIndexStore) DocumentsByID(ctx context.Context, ids []entities.DocID) ([]entities.DocumentMeta, error) {
+func (m *MockIndexStore) DocumentsByID(ctx context.Context, ids []lore.DocID) ([]entities.DocumentMeta, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DocumentsByID", ctx, ids)
 	ret0, _ := ret[0].([]entities.DocumentMeta)
@@ -100,10 +101,10 @@ func (mr *MockIndexStoreMockRecorder) DocumentsByID(ctx, ids any) *gomock.Call {
 }
 
 // DocumentsWithBody mocks base method.
-func (m *MockIndexStore) DocumentsWithBody(ctx context.Context, ids []entities.DocID) ([]entities.Document, error) {
+func (m *MockIndexStore) DocumentsWithBody(ctx context.Context, ids []lore.DocID) ([]lore.Document, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DocumentsWithBody", ctx, ids)
-	ret0, _ := ret[0].([]entities.Document)
+	ret0, _ := ret[0].([]lore.Document)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -159,7 +160,7 @@ func (mr *MockIndexStoreMockRecorder) Meta(ctx, key any) *gomock.Call {
 }
 
 // Neighbors mocks base method.
-func (m *MockIndexStore) Neighbors(ctx context.Context, ids []entities.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error) {
+func (m *MockIndexStore) Neighbors(ctx context.Context, ids []lore.DocID, kinds []entities.EdgeKind, dir entities.Direction) ([]entities.Edge, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Neighbors", ctx, ids, kinds, dir)
 	ret0, _ := ret[0].([]entities.Edge)
@@ -203,7 +204,7 @@ func (mr *MockIndexStoreMockRecorder) ReleaseLease(ctx, holder any) *gomock.Call
 }
 
 // ReplaceChunks mocks base method.
-func (m *MockIndexStore) ReplaceChunks(ctx context.Context, docID entities.DocID, chunks []entities.Chunk) error {
+func (m *MockIndexStore) ReplaceChunks(ctx context.Context, docID lore.DocID, chunks []entities.Chunk) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ReplaceChunks", ctx, docID, chunks)
 	ret0, _ := ret[0].(error)
@@ -262,7 +263,7 @@ func (mr *MockIndexStoreMockRecorder) SearchVector(ctx, embedding, f, k any) *go
 }
 
 // SetCursor mocks base method.
-func (m *MockIndexStore) SetCursor(ctx context.Context, connector string, c entities.Cursor) error {
+func (m *MockIndexStore) SetCursor(ctx context.Context, connector string, c lore.Cursor) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SetCursor", ctx, connector, c)
 	ret0, _ := ret[0].(error)
@@ -320,7 +321,7 @@ func (mr *MockIndexStoreMockRecorder) TryAcquireLease(ctx, holder any) *gomock.C
 }
 
 // UpsertDocuments mocks base method.
-func (m *MockIndexStore) UpsertDocuments(ctx context.Context, docs []entities.Document) error {
+func (m *MockIndexStore) UpsertDocuments(ctx context.Context, docs []lore.Document) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpsertDocuments", ctx, docs)
 	ret0, _ := ret[0].(error)

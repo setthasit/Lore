@@ -1,10 +1,10 @@
 package mocks
 
 //go:generate go tool mockgen -destination repositories/indexstore.go -package mock_repositories github.com/setthasit/Lore/internal/repositories IndexStore
-//go:generate go tool mockgen -destination entities/connector.go -package mock_entities github.com/setthasit/Lore/internal/entities Connector
-//go:generate go tool mockgen -destination embedder/embedder.go -package mock_embedder github.com/setthasit/Lore/internal/connectors/embedder Embedder
-//go:generate go tool mockgen -destination llm/llm.go -package mock_llm github.com/setthasit/Lore/internal/connectors/llm LLM
-//go:generate go tool mockgen -destination gitrepo/gitrepo.go -package mock_gitrepo github.com/setthasit/Lore/internal/connectors/gitrepo GitRepo
+//go:generate go tool mockgen -destination lore/connector.go -package mock_lore github.com/setthasit/Lore/sdk Connector
+//go:generate go tool mockgen -destination lore/embedder.go -package mock_lore github.com/setthasit/Lore/sdk Embedder
+//go:generate go tool mockgen -destination lore/completer.go -package mock_lore github.com/setthasit/Lore/sdk Completer
+//go:generate go tool mockgen -destination lore/coderepo.go -package mock_lore github.com/setthasit/Lore/sdk CodeRepo
 //go:generate go tool mockgen -destination services/chunker.go -package mock_services github.com/setthasit/Lore/internal/services Chunker
 //go:generate go tool mockgen -destination services/linkresolver.go -package mock_services github.com/setthasit/Lore/internal/services LinkResolver
 //go:generate go tool mockgen -destination services/query.go -package mock_services github.com/setthasit/Lore/internal/services QueryService
