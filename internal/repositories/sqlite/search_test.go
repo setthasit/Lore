@@ -72,9 +72,14 @@ var searchCorpus = []corpusEntry{{
 
 func seedSearchCorpus(t *testing.T, s *Store) {
 	t.Helper()
+	seedCorpus(t, s, searchCorpus)
+}
+
+func seedCorpus(t *testing.T, s *Store, entries []corpusEntry) {
+	t.Helper()
 	ctx := context.Background()
 
-	for _, e := range searchCorpus {
+	for _, e := range entries {
 		doc := lore.Document{
 			ID:        e.id,
 			Source:    e.source,
@@ -171,6 +176,68 @@ func TestSearchLexicalRanksByRelevance(t *testing.T) {
 	}
 }
 
+func TestSearchLexicalMatchesADottedNumberAsOnePhrase(t *testing.T) {
+	s := openTestStore(t)
+	seedSearchCorpus(t, s)
+	section15 := corpusEntry{
+		id:      lore.NewDocID("notion", lore.DocTypePage, "spec/15.5"),
+		source:  "notion",
+		docType: lore.DocTypePage,
+		created: day(6, 1),
+		text:    "15.5 Time and fast forward: advancing the clock is a single process step",
+	}
+	section16 := corpusEntry{
+		id:      lore.NewDocID("notion", lore.DocTypePage, "spec/16.5"),
+		source:  "notion",
+		docType: lore.DocTypePage,
+		created: day(6, 2),
+		text: "16.5 Content packs: pack 5 is one process step and pack 15 is another process step; " +
+			"installing pack 5 then pack 15 repeats that process step",
+	}
+	seedCorpus(t, s, []corpusEntry{section15, section16})
+
+	hits, err := s.SearchLexical(context.Background(), "section 15.5 process step", entities.Filters{}, 10)
+	if err != nil {
+		t.Fatalf("SearchLexical: %v", err)
+	}
+
+	want := []string{string(section15.id), string(section16.id)}
+	if got := hitIDs(hits); !slices.Equal(got, want) {
+		t.Errorf("hits = %v, want %v (the 15.5 section above one that only mentions 15 and 5)", got, want)
+	}
+}
+
+func TestSearchLexicalMatchesACompoundIdentifierAsOnePhrase(t *testing.T) {
+	s := openTestStore(t)
+	seedSearchCorpus(t, s)
+	compound := corpusEntry{
+		id:      lore.NewDocID("github", lore.DocTypeCommit, "fastforward0001"),
+		source:  "github",
+		docType: lore.DocTypeCommit,
+		created: day(6, 1),
+		text:    "the fast_forward option moves the branch pointer without a merge commit",
+	}
+	parts := corpusEntry{
+		id:      lore.NewDocID("github", lore.DocTypeIssue, "99"),
+		source:  "github",
+		docType: lore.DocTypeIssue,
+		created: day(6, 2),
+		text: "Builds must stay fast. We forward failures to on-call. A fast test suite helps. " +
+			"Please forward flaky runs. Fast reviews matter. Forward the summary weekly.",
+	}
+	seedCorpus(t, s, []corpusEntry{compound, parts})
+
+	hits, err := s.SearchLexical(context.Background(), "explain fast_forward", entities.Filters{}, 10)
+	if err != nil {
+		t.Fatalf("SearchLexical: %v", err)
+	}
+
+	want := []string{string(compound.id)}
+	if got := hitIDs(hits); !slices.Equal(got, want) {
+		t.Errorf("hits = %v, want %v (not the chunk that only mentions fast and forward apart)", got, want)
+	}
+}
+
 func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 	s := openTestStore(t)
 	seedSearchCorpus(t, s)
@@ -215,6 +282,10 @@ func TestSearchLexicalAcceptsAnyUserText(t *testing.T) {
 	}
 	if len(hits) != 0 {
 		t.Errorf("hits = %v, want none", hitIDs(hits))
+	}
+
+	if _, err := s.SearchLexical(ctx, `"§15.5" AND NOT * NEAR(`, entities.Filters{}, 10); err != nil {
+		t.Errorf("SearchLexical (quoted section and operators): %v", err)
 	}
 }
 
