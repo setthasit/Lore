@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/ncruces/go-sqlite3 v0.23.1
 	github.com/spf13/cobra v1.10.2
 	github.com/tetratelabs/wazero v1.12.0
