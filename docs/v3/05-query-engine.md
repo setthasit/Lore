@@ -132,7 +132,12 @@ The primary assistant entry point. Zero code required.
 1. **Event resolution** (when `around` given) → time window.
 2. **Seed**: hybrid retrieval (BM25 + vectors + RRF) of `question`, with
    filters (`source`, `repo`, `doc_type`, `since`/`until`, resolved window);
-   lift top-k chunks to parent documents.
+   lift top-k chunks to parent documents. The BM25 arm of every hybrid
+   retrieval double-quotes each query token and OR-joins them. A run of
+   letters and digits joined by single `.`, `_`, `-` or `/` stays one token,
+   so the quoting makes FTS5 match `15.5` or `fast_forward` as a phrase rather
+   than as separate terms (`internal/repositories/sqlite/search.go`,
+   `ftsMatchExpr`).
 3. **Graph walk** from each seed, `query.walk_depth` hops, both directions: a matching
    ticket pulls in its design doc, the PR that implemented it, the review
    thread that debated it — and anything that later referenced *it*.

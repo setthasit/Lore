@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"iter"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	sqlitevec "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 
@@ -111,13 +113,15 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, f entitie
 
 // Every token is emitted quoted, which is what keeps arbitrary user text from
 // being a syntax error: inside quotes "AND", "NOT", "NEAR" and "*" are ordinary
-// terms, and the split treats a quote as a separator so no token can contain
-// one. Tokens are OR-ed, not AND-ed as FTS5 defaults to, because a conjoined
-// natural-language question matches nothing. Returns "" for text with no
-// indexable token — an empty MATCH is the one expression FTS5 rejects.
+// terms, and a quote always breaks a token so no token can contain one. A
+// compound token such as 15.5 or fast_forward is quoted whole, so FTS5 matches
+// its parts as an adjacent phrase rather than as independent terms. Tokens are
+// OR-ed, not AND-ed as FTS5 defaults to, because a conjoined natural-language
+// question matches nothing. Returns "" for text with no indexable token — an
+// empty MATCH is the one expression FTS5 rejects.
 func ftsMatchExpr(query string) string {
 	var b strings.Builder
-	for token := range strings.FieldsFuncSeq(query, isTokenBreak) {
+	for token := range matchTokens(query) {
 		if b.Len() > 0 {
 			b.WriteString(" OR ")
 		}
@@ -128,8 +132,43 @@ func ftsMatchExpr(query string) string {
 	return b.String()
 }
 
-func isTokenBreak(r rune) bool {
-	return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+func matchTokens(query string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		start := -1
+		for i, r := range query {
+			if !isTokenBreak(query, i, r) {
+				if start < 0 {
+					start = i
+				}
+				continue
+			}
+			if start >= 0 && !yield(query[start:i]) {
+				return
+			}
+			start = -1
+		}
+		if start >= 0 {
+			yield(query[start:])
+		}
+	}
+}
+
+const compoundConnectors = "._-/"
+
+func isTokenBreak(query string, i int, r rune) bool {
+	if isWordRune(r) {
+		return false
+	}
+	if !strings.ContainsRune(compoundConnectors, r) {
+		return true
+	}
+	prev, _ := utf8.DecodeLastRuneInString(query[:i])
+	next, _ := utf8.DecodeRuneInString(query[i+utf8.RuneLen(r):])
+	return !isWordRune(prev) || !isWordRune(next)
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
 // The created_at bounds are inclusive and compare as plain strings.
