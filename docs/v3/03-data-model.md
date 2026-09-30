@@ -90,7 +90,7 @@ would be one package behind the `IndexStore` interface.
 | `pending_refs` | RawRefs that did not resolve yet (target not ingested), keyed by source document, kind, value and instance scope |
 | `cursors` | Per-connector incremental sync position |
 | `sync_lock` | Single-row lease: holder, acquired_at, heartbeat_at |
-| `meta` | Schema version, vector width, embedder identity (provider+model+dims). The store owns the first two and refuses to overwrite them through `SetMeta` (`internal/repositories/sqlite/sync.go`, `Store.SetMeta`) |
+| `meta` | Schema version, vector width, embedder identity (provider+model+dims), chunk format. The store owns the first two and refuses to overwrite them through `SetMeta` (`internal/repositories/sqlite/sync.go`, `Store.SetMeta`) |
 
 Notes:
 
@@ -100,6 +100,14 @@ Notes:
   (`internal/services/sync.go`, `reconcileIdentity`). Nothing detects it at
   startup or at query time, so queries before that round answer against the
   old vectors.
+- `meta` also stores `chunk_format`, the version of the text the chunker
+  writes (`internal/services/chunker.go`, `chunkFormat`, now `2`). It is a
+  second compatibility rule beside the embedder identity. A sync round adopts
+  it only when none is recorded and the index holds no chunks. It refuses any
+  other recorded format, or none recorded on an index that holds chunks
+  (`internal/services/sync.go`, `reconcileChunkFormat`). The remedy and what
+  `--reembed` records are in [04](04-connectors-and-sync.md#sync-round).
+  Queries keep answering from an old-format index.
 - Ref-lookup indexes: `documents.url`, ticket keys and SHA prefixes are
   resolvable via indexed columns (`external_key`, `sha_prefix`) populated at
   ingest — `ResolveRef` and the LinkResolver both use them; no table scans.
@@ -204,12 +212,23 @@ type-aware, with a defined default for types the table does not name:
 | DocType | Strategy |
 |---|---|
 | commit | Whole message = one chunk |
-| pr / issue / ticket / page | Split on markdown headings / paragraph groups, target ~300–500 tokens, small overlap (`minChunkTokens`, `maxChunkTokens`, `overlapTokens`) |
+| pr / issue / ticket / page | Split on markdown headings / paragraph groups, target ~300–500 tokens, small overlap (`minChunkTokens`, `maxChunkTokens`, `overlapTokens`). Each chunk begins with the heading lines of its enclosing sections |
 | review_comment / issue_comment / ticket_comment | One comment = one chunk, carrying the thread id its `DocID` prefix names (`threadID`) |
-| *(any other / future type)* | Default: heading/paragraph split, ~300–500 tokens, small overlap |
+| *(any other / future type)* | Default: heading/paragraph split, ~300–500 tokens, small overlap. Each chunk begins with the heading lines of its enclosing sections |
 
 Strategy selection is the type switch in `internal/services/chunker.go`,
 `chunker.Chunk`, and an unnamed type falls through to the default branch.
+
+A split chunk's stored text is its heading path, a blank line, the overlap
+from the previous chunk, and then its own content (`splitBody`). The path
+lists the enclosing section headings outermost first, each as the line
+written in the body (`## Rollout`). A chunk outside every section has no path.
+The first chunk has no overlap. A heading the chunk itself starts with is
+not repeated in its path. Only ATX headings count: one to six `#` followed by
+a space or tab (`headingLevel`). A `#` line inside a CommonMark code fence is
+code, not a heading (`nextFence`). The path does not count toward
+`maxChunkTokens`. It is not carried into the next chunk's overlap. Commit
+and comment chunks carry no path.
 
 A chunk is body text only. There is no title field to weight a commit subject
 into: `entities.Chunk` carries no title, and `chunks_fts` is declared

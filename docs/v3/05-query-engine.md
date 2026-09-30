@@ -251,13 +251,14 @@ Input: `EvidenceBundle` + original question. Behavior:
   does it once: `ensureMeta` refuses a file whose schema generation or vector
   width is not this build's (`internal/repositories/sqlite/schema.go`,
   `Store.bootstrap`), so a query runs against an index that already opened
-  cleanly. The embedder identity is **not** checked here: the only comparison
-  is `reconcileIdentity`, which a sync round runs
-  before it ingests (`internal/services/sync.go`, `reconcileIdentity`, reached
-  from `runRound`), and `statusService.EmbedderIdentity` reports both sides
-  without judging them. So a workspace whose embedder changed and has not
-  re-synced answers queries against a foreign vector space, silently, until the
-  next sync refuses.
+  cleanly. Neither the embedder identity nor the chunk format is checked here.
+  A sync round checks both before it ingests (`internal/services/sync.go`,
+  `reconcileIdentity` and `reconcileChunkFormat`, reached from `runRound`).
+  `statusService.EmbedderIdentity` reports both embedder identities without
+  judging them. So a workspace whose embedder changed and has not re-synced
+  answers queries against a foreign vector space, silently, until the next
+  sync refuses. An index split by an older chunk format keeps answering from
+  its old chunks until `lore sync --reembed` rebuilds them.
 - `find_decision` / `impact_of` / `trace`: no repo required, ever. Those three
   services hold no `CodeRepo` at all (`NewQueryService`, `NewImpactService`,
   `NewTraceService`).

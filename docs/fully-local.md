@@ -200,9 +200,11 @@ meaningless to another, so the next sync refuses to mix them:
 
 > embedder identity mismatch: this index was built with "openai/text-embedding-3-small/1536" but the workspace is now configured for "ollama/nomic-embed-text/768" — vectors from one embedder are meaningless to another, so run `lore sync --reembed` to wipe the chunk layer and rebuild it with "ollama/nomic-embed-text/768"
 
-`lore sync --reembed` rewinds every cursor, wipes the chunk layer and re-reads every
-source from the beginning. `lore sync --source <instance>` exists for ordinary sync rounds,
-but combining it with `--reembed` is refused: "cannot re-embed a single source: a
+`lore sync --reembed` rewinds every cursor, wipes the chunk layer, records the current
+embedder identity and chunk format (see [Upgrading to a new chunk
+format](#upgrading-to-a-new-chunk-format)), and re-reads every source from the beginning.
+`lore sync --source <instance>` exists for ordinary sync rounds, but combining it with
+`--reembed` is refused: "cannot re-embed a single source: a
 re-embed wipes every source's chunks and rewinds every cursor, so it must run across the
 whole workspace". A re-embed is always workspace-wide.
 
@@ -226,6 +228,19 @@ lore sync
 
 Use `--reembed` when the width is unchanged (same-width model swap, or a re-chunk), and
 delete the file when the width changes.
+
+## Upgrading to a new chunk format
+
+The index's `meta` table also records `chunk_format`, the version of the text Lore splits
+documents into. An index first synced by an older Lore has none recorded. Once such an
+index holds chunks, the next sync refuses it:
+
+> chunk format mismatch: this index was split by an older text format (unrecorded, current "2") — its passages must be rebuilt to carry heading context, so run `lore sync --reembed` to wipe the chunk layer and rebuild it
+
+An index with no format recorded and no chunks adopts the current format instead. A
+recorded format other than the current one is always refused the same way, quoted in place
+of `unrecorded`. Run `lore sync --reembed` once to rebuild every chunk in the current
+format. Queries keep answering from the old passages until you do. Only sync stops.
 
 ## Cost and quality tradeoffs
 

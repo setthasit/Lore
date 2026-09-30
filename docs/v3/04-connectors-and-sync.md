@@ -255,13 +255,27 @@ flowchart LR
 
 ### Sync round
 
-Once per round, before any instance is touched, `reconcileIdentity`
-(`internal/services/sync.go`, first statement of `runRound`) compares the
-configured vector-space identity with the one `meta` records. A first sync
-adopts it, a match proceeds, a mismatch refuses the whole round with the
-`lore sync --reembed` remedy, and `--reembed` rewinds every cursor and wipes the
-chunk layer instead of comparing (`reembed`). This is the only place the two
-identities are compared.
+Once per round, before any instance is touched, `runRound` runs two
+compatibility checks against `meta` (`internal/services/sync.go`). First,
+`reconcileIdentity` compares the configured vector-space identity with the one
+`meta` records. A first sync adopts it. A match proceeds. A mismatch refuses the
+whole round with the `lore sync --reembed` remedy. `--reembed` rewinds every
+cursor and wipes the chunk layer instead of comparing (`reembed`).
+
+Second, `reconcileChunkFormat` compares the chunk format `meta` records with
+`chunkFormat` (`internal/services/chunker.go`), the version of the text the
+chunker writes. A match proceeds. An index with no format recorded adopts the
+current one only while it holds no chunks. Any other value, or no value on an
+index that holds chunks, refuses the whole round with the same
+`lore sync --reembed` remedy. `reembed` records the current format after it
+wipes the chunk layer, so a `--reembed` round passes this check.
+
+A refused round reaches no connector. Queries run neither check, so an index
+that sync refuses keeps answering from the chunks it already holds.
+These two checks are the only places the embedder identity or the chunk format
+can refuse work. `lore --version` also shows both embedder identities and flags
+a mismatch (`internal/services/status.go`, `statusService.EmbedderIdentity`).
+It refuses nothing. It does not read the chunk format.
 
 Then, for each configured source instance:
 
