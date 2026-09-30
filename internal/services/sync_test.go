@@ -26,8 +26,9 @@ const (
 	currentIdentity         = "openai/text-embedding-3-small/1536"
 	previousIdentity        = "ollama/nomic-embed-text/768"
 
-	metaKeyChunkFormat = "chunk_format"
-	currentChunkFormat = "2"
+	metaKeyChunkFormat  = "chunk_format"
+	currentChunkFormat  = "2"
+	previousChunkFormat = "1"
 )
 
 var errSyncStore = errors.New("store is on fire")
@@ -73,8 +74,12 @@ func (m syncMocks) acquiredLease() {
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 }
 
-func (m syncMocks) matchingIndexMeta() {
+func (m syncMocks) matchingIdentity() {
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
+}
+
+func (m syncMocks) matchingIndexMeta() {
+	m.matchingIdentity()
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil)
 }
 
@@ -805,6 +810,121 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{Reembed: true})
 			assertSyncKind(t, err, internalerror.KindInternal)
 		})
+	}
+}
+
+func TestSyncRefusesAnIndexSplitByAnOlderFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		stored       string
+		countsChunks bool
+		wantStored   string
+	}{
+		{name: "format unrecorded on an index holding passages", stored: "", countsChunks: true, wantStored: "unrecorded"},
+		{
+			name:       "format recorded by an older chunker",
+			stored:     previousChunkFormat,
+			wantStored: strconv.Quote(previousChunkFormat),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(tt.stored, nil)
+			if tt.countsChunks {
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{Chunks: 1}, nil)
+			}
+
+			conn := m.connector("github")
+
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, internalerror.KindPrecondition)
+
+			message := syncMessage(t, err)
+			for _, want := range []string{"older text format", tt.wantStored, "lore sync --reembed"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("Sync() message = %q, want it to name %q", message, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncChunkFormatStoreFailureStopsTheRound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(m syncMocks)
+	}{
+		{
+			name: "the chunk format cannot be read",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", errSyncStore)
+			},
+		},
+		{
+			name: "the chunks cannot be counted",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil)
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errSyncStore)
+			},
+		},
+		{
+			name: "the chunk format cannot be recorded",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil)
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, nil)
+				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(errSyncStore)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			tt.setup(m)
+
+			conn := m.connector("github")
+
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, internalerror.KindInternal)
+		})
+	}
+}
+
+func TestSyncAdoptsTheChunkFormatOnAnEmptyIndex(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIdentity()
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+
+	gomock.InOrder(
+		m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil),
+		m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, nil),
+		m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(nil),
+		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
+	)
+
+	m.linkedPending()
+
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
 	}
 }
 
