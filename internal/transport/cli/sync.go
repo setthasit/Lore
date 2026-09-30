@@ -43,7 +43,7 @@ func newSyncCommand(resolve Resolver, configPath *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&reembed, "reembed", false,
-		"rebuild every chunk and vector against the configured embedder; needed after an embedder change")
+		"rebuild every chunk and vector against the configured embedder; needed after an embedder or chunk format change")
 	cmd.Flags().StringVar(&source, "source", "",
 		"sync only this source instance, by the id it has in lore.yaml; omit it to sync every configured source")
 	return cmd
