@@ -25,6 +25,9 @@ const (
 	metaKeyEmbedderIdentity = "embedder_identity"
 	currentIdentity         = "openai/text-embedding-3-small/1536"
 	previousIdentity        = "ollama/nomic-embed-text/768"
+
+	metaKeyChunkFormat = "chunk_format"
+	currentChunkFormat = "2"
 )
 
 var errSyncStore = errors.New("store is on fire")
@@ -70,8 +73,9 @@ func (m syncMocks) acquiredLease() {
 	m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
 }
 
-func (m syncMocks) matchingIdentity() {
+func (m syncMocks) matchingIndexMeta() {
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil)
 }
 
 func (m syncMocks) connector(name string) *mock_lore.MockConnector {
@@ -212,7 +216,7 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := syncDoc("github:pr:1")
 	next := lore.Cursor{"updated_at": "2024-03-02T09:30:00Z"}
@@ -325,7 +329,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			conn := m.connector("github")
@@ -351,7 +355,7 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	first := lore.Cursor{"page": "1"}
 	stream := newSyncStream(
@@ -406,7 +410,7 @@ func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			conn := m.connector("github")
@@ -438,7 +442,7 @@ func TestSyncRefusesABatchCarryingAnUnknownReferenceKindBeforeItIsStored(t *test
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	// The unknown kind rides the second document, so a check that wrote as it went would already have stored the first.
@@ -472,7 +476,7 @@ func TestSyncRunsTheRemainingInstancesAfterOneFails(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
 	cursor := lore.Cursor{"last_edited_time": "no-1"}
@@ -560,7 +564,7 @@ func TestSyncRestrictsTheRoundToTheNamedSource(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	github, notion := m.connector("github"), m.connector("notion")
@@ -579,7 +583,7 @@ func TestSyncWithoutASourceRunsEveryConnector(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	var connectors []lore.Connector
@@ -663,7 +667,7 @@ func TestSyncReportsTheDeadLeaseItTookOver(t *testing.T) {
 			m.store.EXPECT().Lease(gomock.Any()).Return(tt.previous, tt.leaseErr)
 			m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 			m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			res, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{})
@@ -708,6 +712,7 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 	gomock.InOrder(
 		m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return("", nil),
 		m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+		m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil),
 		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 	)
 
@@ -747,6 +752,8 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 				m.store.EXPECT().SetCursor(gomock.Any(), "notion", nil).Return(nil),
 				m.store.EXPECT().WipeChunks(gomock.Any()).Return(nil),
 				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(nil),
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil),
 			)
@@ -806,7 +813,7 @@ func TestSyncProcessesConnectorsIndependently(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	ghDoc := syncDoc("github:pr:1")
 	noDoc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
@@ -844,7 +851,7 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := syncDoc("github:pr:1")
 	doc.Body = ""
@@ -873,7 +880,7 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	want := syncHolder()
 
 	m := newSyncMocks(t)
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), want).Return(true, nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
@@ -897,7 +904,7 @@ func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	if _, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
@@ -909,7 +916,7 @@ func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

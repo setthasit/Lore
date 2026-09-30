@@ -38,6 +38,10 @@ const maxHeadingLevel = 6
 
 const minFenceRun = 3
 
+// chunkFormat changes whenever chunk text for an unchanged document would change,
+// because a stored index split by another format is refused until rebuilt.
+const chunkFormat = "2"
+
 type chunker struct{}
 
 var _ Chunker = chunker{}

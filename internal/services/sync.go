@@ -15,7 +15,10 @@ import (
 	"github.com/setthasit/Lore/sdk"
 )
 
-const metaKeyEmbedderIdentity = "embedder_identity"
+const (
+	metaKeyEmbedderIdentity = "embedder_identity"
+	metaKeyChunkFormat      = "chunk_format"
+)
 
 type SyncOptions struct {
 	// Restricts the round to the connector of that name; empty syncs every configured connector.
@@ -158,6 +161,10 @@ func (s *syncOrchestrator) runRound(
 	progress *syncProgress,
 ) ([]InstanceFailure, error) {
 	if err := s.reconcileIdentity(round, opts); err != nil {
+		return nil, roundFailure(round, err)
+	}
+
+	if err := s.reconcileChunkFormat(round); err != nil {
 		return nil, roundFailure(round, err)
 	}
 
@@ -332,6 +339,46 @@ func (s *syncOrchestrator) reembed(ctx context.Context, identity string) error {
 	if err := s.store.SetMeta(ctx, metaKeyEmbedderIdentity, identity); err != nil {
 		return internalerror.NewInternalError(
 			fmt.Sprintf("could not record the embedder identity %q", identity), err)
+	}
+
+	return s.recordChunkFormat(ctx)
+}
+
+func (s *syncOrchestrator) reconcileChunkFormat(ctx context.Context) error {
+	stored, err := s.store.Meta(ctx, metaKeyChunkFormat)
+	if err != nil {
+		return internalerror.NewInternalError("could not read the index's chunk format", err)
+	}
+
+	switch stored {
+	case chunkFormat:
+		return nil
+	case "":
+		stats, err := s.store.Stats(ctx)
+		if err != nil {
+			return internalerror.NewInternalError("could not count the index's chunks", err)
+		}
+
+		if stats.Chunks == 0 {
+			return s.recordChunkFormat(ctx)
+		}
+
+		return chunkFormatMismatch("unrecorded")
+	default:
+		return chunkFormatMismatch(strconv.Quote(stored))
+	}
+}
+
+func chunkFormatMismatch(stored string) error {
+	return internalerror.NewPreconditionError(fmt.Sprintf(
+		"chunk format mismatch: this index was split by an older text format (%s, current %q) — its passages must be rebuilt to carry heading context, so run `lore sync --reembed` to wipe the chunk layer and rebuild it",
+		stored, chunkFormat), nil)
+}
+
+func (s *syncOrchestrator) recordChunkFormat(ctx context.Context) error {
+	if err := s.store.SetMeta(ctx, metaKeyChunkFormat, chunkFormat); err != nil {
+		return internalerror.NewInternalError(
+			fmt.Sprintf("could not record the chunk format %q", chunkFormat), err)
 	}
 
 	return nil
