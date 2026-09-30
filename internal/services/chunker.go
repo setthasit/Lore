@@ -27,12 +27,16 @@ const (
 	overlapBytes  = overlapTokens * bytesPerToken
 )
 
-// blockSeparator joins blocks, and separates carried overlap from a chunk's own content.
+// blockSeparator joins blocks, and separates heading path, carried overlap and a chunk's own content.
 const blockSeparator = "\n\n"
 
 const threadSeparator = "#"
 
 const wordBreaks = " \t\n"
+
+const maxHeadingLevel = 6
+
+const minFenceRun = 3
 
 type chunker struct{}
 
@@ -68,35 +72,51 @@ func threadID(id lore.DocID) string {
 // A heading only closes a chunk that has already reached minChunkTokens.
 func splitBody(doc lore.Document, body string) []entities.Chunk {
 	chunks := make([]entities.Chunk, 0, len(body)/maxChunkBytes+1)
-	emit := func(text string) {
-		if len(chunks) > 0 {
-			text = overlapOf(chunks[len(chunks)-1].Text) + blockSeparator + text
+	var prevText string
+	emit := func(path []block, text string) {
+		if prevText != "" {
+			text = overlapOf(prevText) + blockSeparator + text
+		}
+		prevText = text
+		if len(path) > 0 {
+			text = strings.Join(headingLines(path), "\n") + blockSeparator + text
 		}
 		chunks = append(chunks, chunkOf(doc, len(chunks), text, ""))
 	}
 
 	var (
-		pending  []string
-		curBytes int
+		pending     []string
+		pendingPath []block
+		curBytes    int
+		open        []block
 	)
 	flush := func() {
 		if len(pending) == 0 {
 			return
 		}
-		emit(strings.Join(pending, blockSeparator))
+		emit(pendingPath, strings.Join(pending, blockSeparator))
 		pending, curBytes = pending[:0], 0
 	}
 
 	for _, b := range blocksOf(body) {
 		size := len(b.text)
-		if curBytes > 0 && (b.heading && curBytes >= minChunkBytes || curBytes+len(blockSeparator)+size > maxChunkBytes) {
+		if curBytes > 0 && (b.level > 0 && curBytes >= minChunkBytes || curBytes+len(blockSeparator)+size > maxChunkBytes) {
 			flush()
+		}
+		if b.level > 0 {
+			open = closeSections(open, b.level)
+		}
+		if curBytes == 0 {
+			pendingPath = append(pendingPath[:0], open...)
+		}
+		if b.level > 0 {
+			open = append(open, b)
 		}
 		if size > maxChunkBytes {
 			// Keep the tail pending so following blocks can still pack onto it.
 			pieces := splitLong(b.text)
 			for _, p := range pieces[:len(pieces)-1] {
-				emit(p)
+				emit(pendingPath, p)
 			}
 			b.text = pieces[len(pieces)-1]
 			size = len(b.text)
@@ -111,9 +131,24 @@ func splitBody(doc lore.Document, body string) []entities.Chunk {
 	return chunks
 }
 
+func closeSections(open []block, level int) []block {
+	for len(open) > 0 && open[len(open)-1].level >= level {
+		open = open[:len(open)-1]
+	}
+	return open
+}
+
+func headingLines(path []block) []string {
+	lines := make([]string, len(path))
+	for i, h := range path {
+		lines[i] = h.text
+	}
+	return lines
+}
+
 type block struct {
-	text    string
-	heading bool
+	text  string
+	level int
 }
 
 // Heading text stays in the chunk: it is the section's context, unlike the title.
@@ -121,6 +156,7 @@ func blocksOf(body string) []block {
 	var (
 		blocks []block
 		lines  []string
+		fence  string
 	)
 	flush := func() {
 		if len(lines) == 0 {
@@ -132,12 +168,17 @@ func blocksOf(body string) []block {
 
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
+		level := 0
+		if fence == "" {
+			level = headingLevel(trimmed)
+		}
+		fence = nextFence(fence, trimmed)
 		switch {
 		case trimmed == "":
 			flush()
-		case isHeading(trimmed):
+		case level > 0:
 			flush()
-			blocks = append(blocks, block{text: trimmed, heading: true})
+			blocks = append(blocks, block{text: trimmed, level: level})
 		default:
 			lines = append(lines, line)
 		}
@@ -147,12 +188,45 @@ func blocksOf(body string) []block {
 	return blocks
 }
 
-func isHeading(line string) bool {
+// headingLevel returns the markdown ATX heading level of line, or 0 when it is not a heading.
+func headingLevel(line string) int {
 	level := 0
 	for level < len(line) && line[level] == '#' {
 		level++
 	}
-	return level > 0 && level <= 6 && level < len(line) && strings.ContainsRune(wordBreaks, rune(line[level]))
+	if level > maxHeadingLevel || level == len(line) || !strings.ContainsRune(wordBreaks, rune(line[level])) {
+		return 0
+	}
+	return level
+}
+
+// nextFence returns the fence run still open after line, or "" outside code.
+func nextFence(open, line string) string {
+	run := fenceRun(line)
+	if open == "" {
+		if run != "" && run[0] == '`' && strings.ContainsRune(line[len(run):], '`') {
+			return ""
+		}
+		return run
+	}
+	if run != "" && run[0] == open[0] && len(run) >= len(open) && strings.TrimSpace(line[len(run):]) == "" {
+		return ""
+	}
+	return open
+}
+
+func fenceRun(line string) string {
+	if line == "" || line[0] != '`' && line[0] != '~' {
+		return ""
+	}
+	n := 1
+	for n < len(line) && line[n] == line[0] {
+		n++
+	}
+	if n < minFenceRun {
+		return ""
+	}
+	return line[:n]
 }
 
 // splitLong returns at least one piece for non-empty text; the last may be short.
