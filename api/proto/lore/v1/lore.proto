@@ -55,6 +55,8 @@ message TraceRequest {
   Direction direction = 2;
   int32 depth = 3;
   optional bool synthesize = 4;
+  // An optional question. When set, the anchor excerpt holds the passages of the document that match it.
+  string focus = 5;
 }
 
 message TraceResponse {
