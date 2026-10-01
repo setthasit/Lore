@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -552,6 +554,57 @@ func TestSearchRejectsBadArguments(t *testing.T) {
 	}
 	if _, err := s.SearchVector(ctx, nil, entities.Filters{}, 5); err == nil {
 		t.Error("SearchVector accepted an empty query vector")
+	}
+}
+
+func TestSearchLexicalErrorOmitsCallerText(t *testing.T) {
+	const (
+		callerText    = "callertypedthis"
+		callerSource  = "sourcefromcaller"
+		callerRepoRef = "owner/repofromcaller"
+		query         = "sqlite " + callerText
+	)
+	filters := entities.Filters{Source: callerSource, RepoRef: callerRepoRef}
+
+	t.Run("the statement fails", func(t *testing.T) {
+		s := openTestStore(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := s.SearchLexical(ctx, query, filters, 10)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want one wrapping the cancellation", err)
+		}
+		assertErrorOmits(t, err, callerText, callerSource, callerRepoRef)
+	})
+
+	t.Run("a matching row is unreadable", func(t *testing.T) {
+		s := openTestStore(t)
+		seedSearchCorpus(t, s)
+		ctx := context.Background()
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE chunks SET created_at = 'not a timestamp', source = ?, repo_ref = ?`,
+			callerSource, callerRepoRef)
+		if err != nil {
+			t.Fatalf("corrupt the chunks the filters match: %v", err)
+		}
+
+		_, err = s.SearchLexical(ctx, query, filters, 10)
+		var parseErr *time.ParseError
+		if !errors.As(err, &parseErr) {
+			t.Fatalf("error = %v, want one wrapping the timestamp parse failure", err)
+		}
+		assertErrorOmits(t, err, callerText, callerSource, callerRepoRef)
+	})
+}
+
+func assertErrorOmits(t *testing.T, err error, callerTexts ...string) {
+	t.Helper()
+
+	for _, callerText := range callerTexts {
+		if strings.Contains(err.Error(), callerText) {
+			t.Errorf("error %q carries the caller text %q", err, callerText)
+		}
 	}
 }
 
