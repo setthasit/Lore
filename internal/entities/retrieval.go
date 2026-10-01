@@ -13,6 +13,7 @@ type Filters struct {
 	DocType     lore.DocType
 	CreatedFrom time.Time
 	CreatedTo   time.Time
+	DocID       lore.DocID
 }
 
 type Chunk struct {

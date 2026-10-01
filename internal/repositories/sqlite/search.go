@@ -202,6 +202,9 @@ func filterClause(alias string, f entities.Filters) (string, []any) {
 	if !f.CreatedTo.IsZero() {
 		add("created_at <= ?", formatTime(f.CreatedTo))
 	}
+	if f.DocID != "" {
+		add("doc_id = ?", string(f.DocID))
+	}
 	return b.String(), args
 }
 
