@@ -367,6 +367,10 @@ make gen.proto     # regenerate the lore.v1 stubs from api/proto
 make certs.dev     # local certificate authority + server/client pairs for mTLS
 ```
 
+`make gen.proto` needs `protoc` and `protoc-gen-go-grpc` on PATH. [`mise.toml`](mise.toml)
+pins both for [mise](https://mise.jdx.dev). Run `mise install` once, then
+`mise exec -- make gen.proto`.
+
 Tests need no external service: connectors run against `httptest` fixture servers, the
 store against a temp SQLite file, and the end-to-end suite drives the real MCP transports
 over a live DI graph — an MCP client session over streamable HTTP on a real socket,

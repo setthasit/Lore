@@ -1,0 +1,4 @@
+[tools]
+# Generated Go stubs report protoc 33.1 as v6.33.1.
+protoc = "33.1"
+"go:google.golang.org/grpc/cmd/protoc-gen-go-grpc" = "1.2.0"
