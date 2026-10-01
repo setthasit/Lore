@@ -12,6 +12,7 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	"github.com/setthasit/Lore/internal/mocks/lore"
 	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/sdk"
@@ -32,9 +33,10 @@ type traceFixture struct {
 func newTraceFixture(t *testing.T) traceFixture {
 	t.Helper()
 
-	store := mock_repositories.NewMockIndexStore(gomock.NewController(t))
+	ctrl := gomock.NewController(t)
+	store := mock_repositories.NewMockIndexStore(ctrl)
 
-	return traceFixture{store: store, svc: services.NewTraceService(store)}
+	return traceFixture{store: store, svc: services.NewTraceService(store, mock_lore.NewMockEmbedder(ctrl))}
 }
 
 func (f traceFixture) expectResolve(candidates ...entities.DocumentMeta) *gomock.Call {

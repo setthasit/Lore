@@ -1,10 +1,13 @@
 package services
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
@@ -13,7 +16,7 @@ import (
 )
 
 type TraceService interface {
-	// The anchor node's Excerpt is the document's whole body, not a span.
+	// The anchor node's Excerpt is its body, cut with a trailing notice when over the cap, or the passages matching Focus when any match.
 	Trace(ctx context.Context, req TraceRequest) (*entities.EvidenceBundle, error)
 }
 
@@ -21,21 +24,28 @@ type TraceRequest struct {
 	Ref       string
 	Direction string
 	Depth     int
+	Focus     string
 }
 
 const (
 	defaultTraceDepth = 2
 	maxTraceDepth     = 2
+
+	maxTraceExcerptRunes = 8000
+	maxFocusPassages     = 3
+	skippedPassageMark   = "…"
+	focusHint            = " Pass focus with a question to get the passages that match it."
 )
 
 type traceService struct {
 	store repositories.IndexStore
+	emb   lore.Embedder
 }
 
 var _ TraceService = (*traceService)(nil)
 
-func NewTraceService(store repositories.IndexStore) TraceService {
-	return &traceService{store: store}
+func NewTraceService(store repositories.IndexStore, emb lore.Embedder) TraceService {
+	return &traceService{store: store, emb: emb}
 }
 
 func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.EvidenceBundle, error) {
@@ -43,6 +53,7 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 	if ref == "" {
 		return nil, internalerror.NewBadRequestError("ref must not be empty", nil)
 	}
+	focus := strings.TrimSpace(req.Focus)
 	direction, err := traceDirection(req.Direction)
 	if err != nil {
 		return nil, err
@@ -56,6 +67,10 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 	if err != nil {
 		return nil, err
 	}
+	excerpt, focusGaps, err := t.traceExcerpt(ctx, anchor, body, focus)
+	if err != nil {
+		return nil, err
+	}
 
 	walked, err := walkGraph(ctx, t.store, []lore.DocID{anchor.ID},
 		walkOptions{Depth: traceDepth(req.Depth), Direction: direction})
@@ -63,7 +78,7 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 		return nil, internalerror.NewInternalError("walking the provenance graph failed", err)
 	}
 
-	nodes := traceNodes(anchor, body, walked)
+	nodes := traceNodes(anchor, excerpt, walked)
 	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
 
 	return &entities.EvidenceBundle{
@@ -79,7 +94,7 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 		},
 		Nodes:  nodes,
 		Chains: chains,
-		Gaps:   standaloneSeedGaps(nodes, chains),
+		Gaps:   append(standaloneSeedGaps(nodes, chains), focusGaps...),
 	}, nil
 }
 
@@ -118,9 +133,80 @@ func (t *traceService) traceAnchor(ctx context.Context, ref string) (entities.Do
 	return anchor, nil
 }
 
-func traceNodes(anchor entities.DocumentMeta, body string, walked walkResult) []entities.EvidenceNode {
+func (t *traceService) traceExcerpt(
+	ctx context.Context,
+	anchor entities.DocumentMeta,
+	body string,
+	focus string,
+) (string, []string, error) {
+	if focus == "" {
+		return capExcerpt(body, focusHint), nil, nil
+	}
+
+	ranked, err := hybridSearch(ctx, t.store, t.emb, focus, entities.Filters{DocID: anchor.ID}, maxFocusPassages)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(ranked) == 0 {
+		gap := fmt.Sprintf("focus %q matched no passage of %s (%s)", focus, anchor.Title, anchor.ID)
+		return capExcerpt(body, focusHint), []string{gap}, nil
+	}
+
+	passages := ranked[:min(len(ranked), maxFocusPassages)]
+	slices.SortFunc(passages, func(a, b fusedChunk) int { return cmp.Compare(a.Ordinal, b.Ordinal) })
+
+	return capExcerpt(joinPassages(passages), ""), nil, nil
+}
+
+func joinPassages(inPageOrder []fusedChunk) string {
+	var joined strings.Builder
+	for i, passage := range inPageOrder {
+		if i > 0 {
+			joined.WriteString(blockSeparator)
+			if passage.Ordinal != inPageOrder[i-1].Ordinal+1 {
+				joined.WriteString(skippedPassageMark + blockSeparator)
+			}
+		}
+		joined.WriteString(passage.Text)
+	}
+
+	return joined.String()
+}
+
+func capExcerpt(text, hint string) string {
+	shown := runePrefix(text, maxTraceExcerptRunes)
+	if len(shown) == len(text) {
+		return text
+	}
+
+	return shown + blockSeparator + fmt.Sprintf("[truncated: %s of %s characters shown.%s]",
+		groupThousands(maxTraceExcerptRunes), groupThousands(utf8.RuneCountInString(text)), hint)
+}
+
+func runePrefix(text string, limit int) string {
+	seen := 0
+	for start := range text {
+		if seen == limit {
+			return text[:start]
+		}
+		seen++
+	}
+
+	return text
+}
+
+func groupThousands(n int) string {
+	digits := strconv.Itoa(n)
+	for at := len(digits) - 3; at > 0; at -= 3 {
+		digits = digits[:at] + "," + digits[at:]
+	}
+
+	return digits
+}
+
+func traceNodes(anchor entities.DocumentMeta, excerpt string, walked walkResult) []entities.EvidenceNode {
 	collected := newNodeSet(len(walked.Paths) + 1)
-	collected.add(entities.EvidenceNode{Doc: anchor, Excerpt: body, Role: entities.RoleSeed, Score: 1})
+	collected.add(entities.EvidenceNode{Doc: anchor, Excerpt: excerpt, Role: entities.RoleSeed, Score: 1})
 
 	collected.addWalked(walked, graphRole)
 	slices.SortFunc(collected.nodes, byChronology)
