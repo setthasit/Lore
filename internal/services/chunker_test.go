@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,27 +47,32 @@ func paragraph(section, index int) string {
 	return strings.TrimSpace(fmt.Sprintf("s%dp%d %s", section, index, strings.Repeat("alpha ", 32)))
 }
 
-// Each section is itself between minChunkTokens and maxChunkTokens.
-func headedBody(sections, perSection int) string {
+func paragraphs(section, count int) string {
 	var b strings.Builder
-	for s := range sections {
-		fmt.Fprintf(&b, "## Section %d\n\n", s)
-		for p := range perSection {
-			b.WriteString(paragraph(s, p))
-			b.WriteString("\n\n")
-		}
+	for p := range count {
+		b.WriteString(paragraph(section, p))
+		b.WriteString("\n\n")
 	}
 
 	return b.String()
 }
 
-func plainBody(paragraphs int) string {
-	parts := make([]string, 0, paragraphs)
-	for p := range paragraphs {
-		parts = append(parts, paragraph(0, p))
+func headedSection(section int, heading string, count int) string {
+	return heading + "\n\n" + paragraphs(section, count)
+}
+
+// Each section is itself between minChunkTokens and maxChunkTokens.
+func headedBody(sections, perSection int) string {
+	var b strings.Builder
+	for s := range sections {
+		b.WriteString(headedSection(s, fmt.Sprintf("## Section %d", s), perSection))
 	}
 
-	return strings.Join(parts, "\n\n")
+	return b.String()
+}
+
+func plainBody(count int) string {
+	return strings.TrimSpace(paragraphs(0, count))
 }
 
 func assertInvariants(t *testing.T, doc lore.Document, chunks []entities.Chunk) {
@@ -100,6 +106,29 @@ func carriedOverlap(text string) string {
 	}
 
 	return head
+}
+
+func assertHeadingPaths(t *testing.T, chunks []entities.Chunk, wantPaths []string) []entities.Chunk {
+	t.Helper()
+	if len(chunks) != len(wantPaths)+1 {
+		t.Fatalf("got %d chunks, want %d", len(chunks), len(wantPaths)+1)
+	}
+	stripped := slices.Clone(chunks)
+	for i, want := range wantPaths {
+		c := &stripped[i+1]
+		if want == "" {
+			continue
+		}
+		text, ok := strings.CutPrefix(c.Text, want+"\n\n")
+		if !ok {
+			t.Errorf("chunk %d = %q, want it to start with heading path %q", c.Ordinal, c.Text, want)
+			continue
+		}
+		c.Text = text
+	}
+	assertOverlap(t, stripped)
+
+	return stripped
 }
 
 func assertOverlap(t *testing.T, chunks []entities.Chunk) {
@@ -340,5 +369,141 @@ func TestChunkEmptyBodyYieldsNoChunks(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+const (
+	architectureHeading = "# 15 Architecture"
+	timeSection         = "15.5"
+	timeHeading         = "## " + timeSection + " Time and fast forward"
+	timePath            = architectureHeading + "\n" + timeHeading
+	schedulingHeading   = "## 15.6 Scheduling"
+)
+
+func TestChunkCarriesItsHeadingPathMidSection(t *testing.T) {
+	body := architectureHeading + "\n\n" + headedSection(0, timeHeading, 30)
+	doc := docWith(lore.DocTypePage, "notion:page:design-architecture", body)
+
+	chunks := services.NewChunker().Chunk(doc)
+
+	if len(chunks) < 3 {
+		t.Fatalf("got %d chunks, want the section split into several", len(chunks))
+	}
+	assertInvariants(t, doc, chunks)
+	stripped := assertHeadingPaths(t, chunks, slices.Repeat([]string{timePath}, len(chunks)-1))
+
+	if want := architectureHeading + "\n\n" + timeHeading + "\n\n" + paragraph(0, 0); !strings.HasPrefix(chunks[0].Text, want) {
+		t.Errorf("first chunk = %q, want it to start with %q", chunks[0].Text, want)
+	}
+	for _, c := range stripped[1:] {
+		if strings.Contains(c.Text, timeSection) {
+			t.Errorf("chunk %d names its section outside the heading path, so the path is untested: %q", c.Ordinal, c.Text)
+		}
+		if got := tokens(c.Text); got > maxChunkTokens+overlapTokens {
+			t.Errorf("chunk %d = %d tokens without its heading path, want <= %d", c.Ordinal, got, maxChunkTokens+overlapTokens)
+		}
+	}
+}
+
+func TestChunkHeadingPathDropsClosedSections(t *testing.T) {
+	tests := []struct {
+		name      string
+		next      string
+		wantPaths []string
+	}{
+		{
+			name:      "a sibling section keeps the enclosing section open",
+			next:      "## 16 Operations",
+			wantPaths: []string{architectureHeading, architectureHeading + "\n## 16 Operations"},
+		},
+		{
+			name:      "a same-level section closes the enclosing section",
+			next:      "# 16 Operations",
+			wantPaths: []string{"", "# 16 Operations"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := architectureHeading + "\n\n" + headedSection(0, timeHeading, 7) + headedSection(1, tt.next, 14)
+			doc := docWith(lore.DocTypePage, "notion:page:design-architecture", body)
+
+			chunks := services.NewChunker().Chunk(doc)
+
+			assertInvariants(t, doc, chunks)
+			stripped := assertHeadingPaths(t, chunks, tt.wantPaths)
+
+			if content := strings.TrimPrefix(stripped[1].Text, carriedOverlap(stripped[1].Text)+"\n\n"); !strings.HasPrefix(content, tt.next) {
+				t.Errorf("chunk 1 content does not start at %q: %q", tt.next, chunks[1].Text)
+			}
+			for _, c := range chunks[1:] {
+				if strings.Contains(c.Text, timeHeading) {
+					t.Errorf("chunk %d under %q still carries the closed %q: %q", c.Ordinal, tt.next, timeHeading, c.Text)
+				}
+			}
+		})
+	}
+}
+
+func TestChunkDoesNotRepeatTheHeadingItStartsWith(t *testing.T) {
+	tests := []struct {
+		name     string
+		next     string
+		wantPath string
+	}{
+		{name: "sibling section", next: schedulingHeading, wantPath: architectureHeading},
+		{name: "nested section", next: "### 15.5.1 Clock skew", wantPath: timePath},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			next := headedSection(1, tt.next, 3)
+			body := architectureHeading + "\n\n" + headedSection(0, timeHeading, 7) + next
+			doc := docWith(lore.DocTypePage, "notion:page:design-architecture", body)
+
+			chunks := services.NewChunker().Chunk(doc)
+
+			if len(chunks) != 2 {
+				t.Fatalf("got %d chunks, want 2", len(chunks))
+			}
+			assertInvariants(t, doc, chunks)
+
+			want := tt.wantPath + "\n\n" + paragraph(0, 6) + "\n\n" + strings.TrimSpace(next)
+			if chunks[1].Text != want {
+				t.Errorf("chunk 1 = %q, want %q", chunks[1].Text, want)
+			}
+		})
+	}
+}
+
+func TestChunkIgnoresHeadingsInsideCodeFences(t *testing.T) {
+	tests := []struct {
+		name  string
+		fence string
+	}{
+		{name: "backtick fence", fence: "```go\n# comment\n```"},
+		{name: "tilde fence", fence: "~~~\n# comment\n~~~"},
+		{name: "a longer run closes", fence: "```\n# comment\n`````"},
+		{name: "the other character does not close", fence: "```\n~~~\n# comment\n```"},
+		{name: "a shorter run does not close", fence: "````\n```\n# comment\n````"},
+		{name: "a run with an info string does not close", fence: "```\n```go\n# comment\n```"},
+	}
+	wantPaths := []string{timePath, architectureHeading, architectureHeading + "\n" + schedulingHeading}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := architectureHeading + "\n\n" + timeHeading + "\n\n" + tt.fence + "\n\n" + paragraphs(0, 16) +
+				headedSection(1, schedulingHeading, 12)
+			doc := docWith(lore.DocTypePage, "notion:page:design-architecture", body)
+
+			chunks := services.NewChunker().Chunk(doc)
+
+			assertInvariants(t, doc, chunks)
+			assertHeadingPaths(t, chunks, wantPaths)
+
+			if !strings.Contains(chunks[0].Text, tt.fence) {
+				t.Errorf("chunk 0 does not hold the fenced block %q intact: %q", tt.fence, chunks[0].Text)
+			}
+		})
 	}
 }

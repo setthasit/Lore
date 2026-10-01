@@ -25,6 +25,10 @@ const (
 	metaKeyEmbedderIdentity = "embedder_identity"
 	currentIdentity         = "openai/text-embedding-3-small/1536"
 	previousIdentity        = "ollama/nomic-embed-text/768"
+
+	metaKeyChunkFormat  = "chunk_format"
+	currentChunkFormat  = "2"
+	previousChunkFormat = "1"
 )
 
 var errSyncStore = errors.New("store is on fire")
@@ -72,6 +76,11 @@ func (m syncMocks) acquiredLease() {
 
 func (m syncMocks) matchingIdentity() {
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(currentIdentity, nil)
+}
+
+func (m syncMocks) matchingIndexMeta() {
+	m.matchingIdentity()
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil)
 }
 
 func (m syncMocks) connector(name string) *mock_lore.MockConnector {
@@ -212,7 +221,7 @@ func TestSyncCheckpointsOnlyAfterTheBatchIsCommitted(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := syncDoc("github:pr:1")
 	next := lore.Cursor{"updated_at": "2024-03-02T09:30:00Z"}
@@ -325,7 +334,7 @@ func TestSyncFailureKeepsTheLastCommittedCursor(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			conn := m.connector("github")
@@ -351,7 +360,7 @@ func TestSyncKeepsEarlierCheckpointsWhenAConnectorDiesMidStream(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	first := lore.Cursor{"page": "1"}
 	stream := newSyncStream(
@@ -406,7 +415,7 @@ func TestSyncRejectsABatchAnInstanceMislabelled(t *testing.T) {
 
 			m := newSyncMocks(t)
 			m.acquiredLease()
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			conn := m.connector("github")
@@ -438,7 +447,7 @@ func TestSyncRefusesABatchCarryingAnUnknownReferenceKindBeforeItIsStored(t *test
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	// The unknown kind rides the second document, so a check that wrote as it went would already have stored the first.
@@ -472,7 +481,7 @@ func TestSyncRunsTheRemainingInstancesAfterOneFails(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
 	cursor := lore.Cursor{"last_edited_time": "no-1"}
@@ -560,7 +569,7 @@ func TestSyncRestrictsTheRoundToTheNamedSource(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	github, notion := m.connector("github"), m.connector("notion")
@@ -579,7 +588,7 @@ func TestSyncWithoutASourceRunsEveryConnector(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	var connectors []lore.Connector
@@ -663,7 +672,7 @@ func TestSyncReportsTheDeadLeaseItTookOver(t *testing.T) {
 			m.store.EXPECT().Lease(gomock.Any()).Return(tt.previous, tt.leaseErr)
 			m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 			m.store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil)
-			m.matchingIdentity()
+			m.matchingIndexMeta()
 			m.linkedPending()
 
 			res, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{})
@@ -708,6 +717,7 @@ func TestSyncAdoptsTheEmbedderIdentityOnFirstSync(t *testing.T) {
 	gomock.InOrder(
 		m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return("", nil),
 		m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+		m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil),
 		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 	)
 
@@ -747,6 +757,8 @@ func TestSyncReembedRewindsWipesThenRecordsIdentity(t *testing.T) {
 				m.store.EXPECT().SetCursor(gomock.Any(), "notion", nil).Return(nil),
 				m.store.EXPECT().WipeChunks(gomock.Any()).Return(nil),
 				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyEmbedderIdentity, currentIdentity).Return(nil),
+				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(nil),
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(currentChunkFormat, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
 				m.store.EXPECT().Cursor(gomock.Any(), "notion").Return(nil, nil),
 			)
@@ -801,12 +813,127 @@ func TestSyncReembedFailureLeavesTheIdentityAlone(t *testing.T) {
 	}
 }
 
-func TestSyncProcessesConnectorsIndependently(t *testing.T) {
+func TestSyncRefusesAnIndexSplitByAnOlderFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		stored       string
+		countsChunks bool
+		wantStored   string
+	}{
+		{name: "format unrecorded on an index holding passages", stored: "", countsChunks: true, wantStored: "unrecorded"},
+		{
+			name:       "format recorded by an older chunker",
+			stored:     previousChunkFormat,
+			wantStored: strconv.Quote(previousChunkFormat),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(tt.stored, nil)
+			if tt.countsChunks {
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{Chunks: 1}, nil)
+			}
+
+			conn := m.connector("github")
+
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, internalerror.KindPrecondition)
+
+			message := syncMessage(t, err)
+			for _, want := range []string{"older text format", tt.wantStored, "lore sync --reembed"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("Sync() message = %q, want it to name %q", message, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncChunkFormatStoreFailureStopsTheRound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(m syncMocks)
+	}{
+		{
+			name: "the chunk format cannot be read",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", errSyncStore)
+			},
+		},
+		{
+			name: "the chunks cannot be counted",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil)
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errSyncStore)
+			},
+		},
+		{
+			name: "the chunk format cannot be recorded",
+			setup: func(m syncMocks) {
+				m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil)
+				m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, nil)
+				m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(errSyncStore)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newSyncMocks(t)
+			m.acquiredLease()
+			m.matchingIdentity()
+			tt.setup(m)
+
+			conn := m.connector("github")
+
+			_, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{})
+			assertSyncKind(t, err, internalerror.KindInternal)
+		})
+	}
+}
+
+func TestSyncAdoptsTheChunkFormatOnAnEmptyIndex(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
 	m.matchingIdentity()
+
+	conn := m.connector("github")
+	conn.EXPECT().Changes(gomock.Any(), nil).Return(newSyncStream().seq())
+
+	gomock.InOrder(
+		m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return("", nil),
+		m.store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, nil),
+		m.store.EXPECT().SetMeta(gomock.Any(), metaKeyChunkFormat, currentChunkFormat).Return(nil),
+		m.store.EXPECT().Cursor(gomock.Any(), "github").Return(nil, nil),
+	)
+
+	m.linkedPending()
+
+	if _, err := m.orchestrator(conn).Sync(context.Background(), services.SyncOptions{}); err != nil {
+		t.Fatalf("Sync() = %v, want nil", err)
+	}
+}
+
+func TestSyncProcessesConnectorsIndependently(t *testing.T) {
+	t.Parallel()
+
+	m := newSyncMocks(t)
+	m.acquiredLease()
+	m.matchingIndexMeta()
 
 	ghDoc := syncDoc("github:pr:1")
 	noDoc := lore.Document{ID: "notion:page:9", Source: "notion", Type: lore.DocTypePage}
@@ -844,7 +971,7 @@ func TestSyncClearsTheChunksOfADocumentThatChunksToNothing(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	doc := syncDoc("github:pr:1")
 	doc.Body = ""
@@ -873,7 +1000,7 @@ func TestSyncLeaseHolderNamesThisProcess(t *testing.T) {
 	want := syncHolder()
 
 	m := newSyncMocks(t)
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.freeLease()
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), want).Return(true, nil)
 	m.store.EXPECT().ReleaseLease(gomock.Any(), want).Return(nil)
@@ -897,7 +1024,7 @@ func TestSyncWithoutConnectorsDoesNothing(t *testing.T) {
 
 	m := newSyncMocks(t)
 	m.acquiredLease()
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 	m.linkedPending()
 
 	if _, err := m.orchestrator().Sync(context.Background(), services.SyncOptions{}); err != nil {
@@ -909,7 +1036,7 @@ func TestSyncReleasesTheLeaseAfterContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	m := newSyncMocks(t)
-	m.matchingIdentity()
+	m.matchingIndexMeta()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

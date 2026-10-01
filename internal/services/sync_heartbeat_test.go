@@ -111,6 +111,7 @@ func newHeartbeatRound(t *testing.T, connectors ...lore.Connector) (*syncOrchest
 	m.store.EXPECT().Lease(gomock.Any()).Return(nil, nil)
 	m.store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity.String(), nil)
+	m.store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(chunkFormat, nil)
 
 	return &syncOrchestrator{
 		store:      m.store,

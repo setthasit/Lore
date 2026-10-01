@@ -93,7 +93,7 @@ repos: []                                  # local clones, for blame and history
 
 embedder:
   provider: openai                         # credentials come from OPENAI_API_KEY
-  model: text-embedding-3-small            # changing the model needs: lore sync --reembed
+  model: text-embedding-3-small            # a new model or chunk format needs: lore sync --reembed
 
 # llm:                                     # lore ask and --explain answer in prose only with this
 #   provider: openai

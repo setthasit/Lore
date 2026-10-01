@@ -246,8 +246,9 @@ Central `internalerror`-style package: typed constructors
   classification.
 - Services: classify into internal error types. Notable precondition errors:
   "no repositories registered" (`why`/`history_of` on ask-only workspace),
-  "embedder identity mismatch — run `lore sync --reembed`" (a sync round, which
-  is the only caller that compares the two).
+  "embedder identity mismatch: … so run `lore sync --reembed`" and "chunk
+  format mismatch: … so run `lore sync --reembed`" (a sync round, which is the
+  only caller that runs either check).
 - Transports: map to protocol-native codes. gRPC reads the kind off the
   internal error (`internal/transport/grpc/errors.go`, `rpcCodes`), MCP returns
   a tool error result (`internal/transport/mcp/server.go`, `toolError`), and the

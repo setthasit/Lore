@@ -234,6 +234,7 @@ func newUncontendedRound(t *testing.T, chunks map[lore.DocID]int) (*syncOrchestr
 	store.EXPECT().TryAcquireLease(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 	store.EXPECT().ReleaseLease(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	store.EXPECT().Meta(gomock.Any(), metaKeyEmbedderIdentity).Return(heartbeatIdentity.String(), nil).AnyTimes()
+	store.EXPECT().Meta(gomock.Any(), metaKeyChunkFormat).Return(chunkFormat, nil).AnyTimes()
 
 	return &syncOrchestrator{
 		store:     store,

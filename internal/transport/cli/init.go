@@ -183,7 +183,7 @@ func (s *scaffold) embedderBlock() string {
 		"embedder:\n" +
 		scaffoldLine("  ", "provider: "+s.embedder.Name, credentialNote(s.embedder)) +
 		scaffoldLine("  ", "model: "+scalar(s.embedder.DefaultModels[lore.CapabilityEmbed]),
-			"changing the model needs: lore sync --reembed")
+			"a new model or chunk format needs: lore sync --reembed")
 }
 
 func (s *scaffold) llmBlock() string {

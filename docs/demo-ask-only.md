@@ -447,8 +447,11 @@ The tool result is the bundle JSON `lore ask --raw` prints — same field names,
   round-trips, so a local embedder trades API latency for CPU.
 - **Later syncs are incremental.** Each source keeps a watermark and asks only for
   what changed. Re-running `lore sync` on an untouched sandbox does almost nothing.
-- **Changing `embedder.model` invalidates the vectors.** `lore sync --reembed`
-  rebuilds every chunk and vector; nothing else does.
+- **A new embedder or chunk format invalidates the index.** Changing
+  `embedder.model` invalidates the vectors. An upgrade that changes how Lore
+  splits documents invalidates the chunks. In both cases sync refuses the index
+  until `lore sync --reembed` rebuilds every chunk and vector. Nothing else
+  rebuilds them.
 - **Linking is honest, and honestly sparse.** Edges come from references people
   actually wrote. A real workspace where nobody pastes ticket keys or links yields
   documents that retrieve well and chain to nothing — which shows up as
