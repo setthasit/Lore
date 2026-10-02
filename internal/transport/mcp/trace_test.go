@@ -1,23 +1,31 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.uber.org/mock/gomock"
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
 )
 
 const (
-	testRef   = "abc1234"
-	testCause = "dial 10.1.2.3:5432: connection refused"
+	testRef          = "abc1234"
+	testCause        = "dial 10.1.2.3:5432: connection refused"
+	traceFocus       = "how fast forward uses a closed form"
+	paddedTraceFocus = "  How Fast-Forward uses a closed form \n"
 )
+
+var overLimitTraceFocus = strings.Repeat("f", 1001)
 
 type refCandidate struct {
 	id    string
@@ -60,6 +68,52 @@ func traceArgs(ref string) map[string]any {
 	return map[string]any{"ref": ref}
 }
 
+type traceRecorder struct {
+	mu       sync.Mutex
+	requests []services.TraceRequest
+}
+
+func recordTraceRequests(trace *mock_services.MockTraceService, bundle *entities.EvidenceBundle) *traceRecorder {
+	recorder := &traceRecorder{}
+	trace.EXPECT().
+		Trace(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req services.TraceRequest) (*entities.EvidenceBundle, error) {
+			recorder.mu.Lock()
+			defer recorder.mu.Unlock()
+			recorder.requests = append(recorder.requests, req)
+
+			return bundle, nil
+		}).
+		AnyTimes()
+
+	return recorder
+}
+
+func (r *traceRecorder) assertOnlyRequest(t *testing.T, want services.TraceRequest) {
+	t.Helper()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) != 1 || r.requests[0] != want {
+		t.Errorf("trace requests = %#v, want exactly one, %#v", r.requests, want)
+	}
+}
+
+func fieldType(t *testing.T, properties map[string]any, field string) string {
+	t.Helper()
+
+	property, ok := properties[field].(map[string]any)
+	if !ok {
+		t.Fatalf("property %q is %T, want map[string]any", field, properties[field])
+	}
+	kind, ok := property["type"].(string)
+	if !ok {
+		t.Fatalf("type of %q is %T, want string", field, property["type"])
+	}
+
+	return kind
+}
+
 func TestTraceParsesArguments(t *testing.T) {
 	tests := []struct {
 		name string
@@ -96,18 +150,47 @@ func TestTraceParsesArguments(t *testing.T) {
 			args: map[string]any{"ref": testRef, "depth": -1},
 			want: services.TraceRequest{Ref: testRef, Depth: -1},
 		},
+		{
+			name: "focus",
+			args: map[string]any{"ref": testRef, "focus": traceFocus},
+			want: services.TraceRequest{Ref: testRef, Focus: traceFocus},
+		},
+		{
+			name: "the service owns trimming the focus",
+			args: map[string]any{"ref": testRef, "focus": paddedTraceFocus},
+			want: services.TraceRequest{Ref: testRef, Focus: paddedTraceFocus},
+		},
+		{
+			name: "the service owns the focus length limit",
+			args: map[string]any{"ref": testRef, "focus": overLimitTraceFocus},
+			want: services.TraceRequest{Ref: testRef, Focus: overLimitTraceFocus},
+		},
+		{
+			name: "focus with direction",
+			args: map[string]any{"ref": testRef, "direction": "in", "focus": traceFocus},
+			want: services.TraceRequest{Ref: testRef, Direction: "in", Focus: traceFocus},
+		},
+		{
+			name: "focus with depth",
+			args: map[string]any{"ref": testRef, "depth": 3, "focus": traceFocus},
+			want: services.TraceRequest{Ref: testRef, Depth: 3, Focus: traceFocus},
+		},
+		{
+			name: "focus with direction and depth",
+			args: map[string]any{"ref": testRef, "direction": "in", "depth": 3, "focus": traceFocus},
+			want: services.TraceRequest{Ref: testRef, Direction: "in", Depth: 3, Focus: traceFocus},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newToolFixture(t)
-			f.trace.EXPECT().
-				Trace(gomock.Any(), tt.want).
-				Return(&entities.EvidenceBundle{Question: "provenance of " + testRef}, nil)
+			recorder := recordTraceRequests(f.trace, testBundle())
 
-			if res := f.callTool(t, "trace", tt.args); res.IsError {
-				t.Fatalf("unexpected tool error: %s", errorText(t, res))
-			}
+			res := f.callTool(t, "trace", tt.args)
+
+			recorder.assertOnlyRequest(t, tt.want)
+			assertResultJSON(t, res, testBundleJSON)
 		})
 	}
 }
@@ -119,6 +202,41 @@ func TestTraceRequiresRef(t *testing.T) {
 
 	if !strings.Contains(got, "ref") {
 		t.Errorf("error = %q, want it to name the missing ref", got)
+	}
+}
+
+func TestTraceToolDeclaration(t *testing.T) {
+	f := newToolFixture(t)
+
+	tool := f.declaration(t, "trace")
+
+	for _, stale := range []string{"its own full text", "whole body"} {
+		if strings.Contains(tool.Description, stale) {
+			t.Errorf("description = %q, want it to stop promising %q", tool.Description, stale)
+		}
+	}
+	for _, phrase := range []string{"up to 8,000 characters", "over 8,000 characters", "first 8,000", "Pass focus"} {
+		if !strings.Contains(tool.Description, phrase) {
+			t.Errorf("description = %q, want it to carry %q", tool.Description, phrase)
+		}
+	}
+	schema, ok := tool.InputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("input schema is %T, want map[string]any", tool.InputSchema)
+	}
+	if got := schema["required"]; !reflect.DeepEqual(got, []any{"ref"}) {
+		t.Errorf("required = %v, want [ref]", got)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties is %T, want map[string]any", schema["properties"])
+	}
+	if got := fieldType(t, properties, "focus"); got != "string" {
+		t.Errorf("type of focus = %q, want string", got)
+	}
+	const want = "a question; when set, the anchor excerpt holds only the passages of the document that answer it"
+	if got := fieldDescription(t, properties, "focus"); got != want {
+		t.Errorf("description of focus = %q, want %q", got, want)
 	}
 }
 
