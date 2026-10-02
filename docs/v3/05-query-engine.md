@@ -55,8 +55,9 @@ Shared machinery:
 - **Gaps**: explicit honesty for every query tool. A seed no chain reached
   (`standaloneSeedGaps`, same five callers), a blamed commit no source ingested
   (`internal/services/coderepo.go`, `unsyncedCommitGap`), an unresolved event
-  (`internal/services/event.go`, `resolveEvent`) and an empty impact window
-  (`internal/services/impact.go`, `impactGaps`).
+  (`internal/services/event.go`, `resolveEvent`), an empty impact window
+  (`internal/services/impact.go`, `impactGaps`) and a `trace` focus that
+  matched no passage (`internal/services/trace.go`, `traceExcerpt`).
 
 ## EvidenceBundle — the one result shape
 
@@ -99,8 +100,9 @@ Invariants:
 - **Every query tool fills `Chains` and `Gaps`** — the ask-only path is not a
   second-class citizen. Confirmed by the five callers of `assembleChains` and
   `standaloneSeedGaps` named above.
-- Excerpts are extracted spans; full bodies are available via `trace` on the
-  node's ID, keeping default responses token-cheap for MCP clients.
+- Excerpts are extracted spans. That keeps default responses token-cheap for
+  MCP clients. `trace` on the node's ID returns more of the document: its body
+  up to 8,000 characters, or the passages matching a `focus` question.
 
 ## Event resolution
 
@@ -174,17 +176,55 @@ Code-anchored variant; requires a registered local clone.
 defaults to "why does `<file>:<L1>-<L2>` exist in its current form"
 (`whyQuestionOf`).
 
-### `trace(ref, direction?, depth?)`
+### `trace(ref, direction?, depth?, focus?)`
 
 Accepts a commit SHA, PR/issue number, ticket key, or document URL/ID →
 `ResolveRef` → exactly one document, with an ambiguous ref answered by a bad
 request listing every candidate and its URL (`internal/services/ref.go`,
 `resolveOneRef`, `ambiguousRef`) → returns its provenance neighborhood
 (`depth` capped at `maxTraceDepth` = 2, `direction` = out / in / both, default
-both) plus its **full body** (`documentBody`), nodes ordered chronologically
-(`byChronology`).
+both) plus a **bounded excerpt of its body** (below), nodes ordered
+chronologically (`byChronology`).
 The drill-down companion: breadth from `find_decision`/`why`, depth from
 `trace`.
+
+The anchor node's excerpt depends on `focus`, an optional question
+(`internal/services/trace.go`, `traceExcerpt`):
+
+- **No `focus`**: the excerpt is the document body (`documentBody`). A body of
+  at most 8,000 characters (`maxTraceExcerptRunes`) is returned whole. A longer
+  one is cut to its first 8,000 characters, followed by a blank line and a
+  marker that states the real total (`capExcerpt`):
+  `[truncated: 8,000 of 70,000 characters shown. Pass focus with a question to get the passages that match it.]`
+  A character here is a Unicode code point, not a byte, so the cut never
+  lands inside one.
+- **With `focus`**: the excerpt holds the passages of the anchor document
+  that best match the question, at most 3 (`maxFocusPassages`), in document
+  order. A passage is one stored chunk ([03](03-data-model.md#chunking)).
+  A document with fewer than 3 matching passages returns only those. A
+  focused excerpt holds only passages even when the body would fit under the
+  cap in full. Adjacent passages are separated by a blank line. Passages that
+  are not adjacent have a `…` line between them (`joinPassages`). The search
+  is the hybrid retrieval the other tools use (`hybridSearch`). It embeds the
+  focus question with the configured embedder. The `doc_id` filter restricts
+  it to the anchor document (`entities.Filters.DocID`).
+- **Focused excerpt over the cap**: it is cut the same way and ends with a
+  short marker that carries no focus hint:
+  `[truncated: 8,000 of 12,007 characters shown.]`
+  The total there is the length of the joined passages. A commit or a comment
+  is stored as one chunk of any length, so a long one reaches this case with
+  a single passage.
+- **`focus` matches no passage**: the excerpt is the one returned without
+  `focus`. The bundle gains the gap
+  `focus "<question>" matched no passage of <title> (<doc id>)`.
+  This case arises only when the search returns nothing, for example for a
+  document with no stored chunk.
+
+`focus` is trimmed first. A whitespace-only one counts as no focus. One longer
+than 1,000 characters (`maxFocusRunes`) after trimming is a bad request,
+`focus must be at most 1,000 characters`, rejected before any lookup.
+Neighbors and chains are the same with and without `focus`. Gaps differ only
+by the no-match gap.
 
 ### `impact_of(ref_or_query, question?)`
 
@@ -274,8 +314,11 @@ Input: `EvidenceBundle` + original question. Behavior:
   (`internal/services/trace.go`, `traceDepth`;
   `internal/services/history.go`, `historyLimit`), and an anchor excerpt at
   `anchorExcerptChars` (`internal/services/retrieve.go`, `anchorExcerpt`), so
-  no MCP client can request unbounded output. `query.walk_depth` and
-  `query.top_k` are operator settings rather than request parameters. Each
+  no MCP client can request unbounded output. `trace`'s own anchor excerpt is
+  bounded in `internal/services/trace.go` instead. `maxTraceExcerptRunes`
+  (8,000) cuts it. `maxFocusPassages` (3) limits a focused one. A `focus`
+  over `maxFocusRunes` (1,000) is rejected rather than cut. `query.walk_depth`
+  and `query.top_k` are operator settings rather than request parameters. Each
   query service constructor applies its default only when one is unset or
   non-positive (`NewQueryService`, `NewWhyService` and `NewImpactService`), and
   `walkOptions.hops` defaults again at the walk.

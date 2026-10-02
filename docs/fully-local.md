@@ -18,9 +18,14 @@ fails, and it says so.
 | `embedder: ollama`, no `llm:` block | Nothing leaves the machine (loopback only) | `http://127.0.0.1:11434/api/embed` | Everything |
 | `embedder: ollama` + `llm.provider: ollama` | Nothing leaves the machine (loopback only) | `/api/embed` and `/api/chat` on `http://127.0.0.1:11434` | Everything, synthesis included |
 
-Two verbs never touch the embedder at all: `lore trace` resolves a ref and walks edges,
-and `lore history` reads `git log` and walks edges. Their retrieval is local under every
-mode; only `--explain` on top of them reaches the configured LLM.
+`lore history` never touches the embedder: it reads `git log` and walks edges.
+`lore trace` without `--focus` does not touch it either: it resolves a ref and walks
+edges. With `--focus`, the question is embedded by the configured embedder like any other
+question. Under `embedder: openai` it goes to `https://api.openai.com/v1/embeddings`. The
+same holds for `focus` on MCP `trace` and gRPC `Trace`. The rest of what `lore history`
+and `lore trace` retrieve is local under every mode. On the CLI, only `--explain` on
+either verb reaches the configured LLM. gRPC `Trace` and `HistoryOf` reach it unless the
+request sets `synthesize` to false.
 
 **Source connectors are inbound-only reads.** Nothing in Lore writes to a hosted service.
 A sync sends the configured token and query parameters, and reads pages of results back:

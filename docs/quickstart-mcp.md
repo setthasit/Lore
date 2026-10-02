@@ -241,7 +241,7 @@ writes is the local index — never a source.
 |---|---|---|
 | `find_decision` | "why B over A?" — breadth across a decision, from the index; works with zero repos | `question` (required); optional `around`, `source`, `repo`, `doc_type`, `since`, `until` |
 | `why` | "why do these lines look like this?" — blame-anchored on a registered local clone | `file`, `line_start` (required); optional `repo`, `line_end`, `question` |
-| `trace` | depth on one document: what it came from, what came out of it, plus its full body | `ref` (required — SHA, PR/issue number, ticket key, URL or DocID); optional `direction` (`out`/`in`/`both`), `depth` |
+| `trace` | depth on one document: what it came from, what came out of it, plus its body up to 8,000 characters | `ref` (required — SHA, PR/issue number, ticket key, URL or DocID); optional `direction` (`out`/`in`/`both`), `depth`, `focus` (a question about the document) |
 | `impact_of` | what followed a decision, chronologically | `ref_or_query` (required — a ref, or free text naming the decision); optional `question` |
 | `history_of` | how one whole file evolved, newest commits first, one page at a time | `path` (required); optional `repo`, `limit`, `before` |
 | `sync_now` | refresh the index now and answer when the round finishes | optional `source` (omit to sync every configured source) |
@@ -254,6 +254,18 @@ Notes worth knowing before the model guesses:
   `since: "last tuesday" is neither a date (YYYY-MM-DD) nor an RFC 3339 timestamp`.
 - `why` and `history_of` need the file's repository registered under `repos:` as a local
   clone. A zero-repo workspace cannot anchor on code at all — see troubleshooting.
+- `trace` and its `focus` input:
+  - **No `focus`.** `trace` returns at most 8,000 characters of the body. A longer body
+    ends with a `[truncated: …]` marker that gives the full length. When the excerpt
+    ended with that marker, call `trace` again with `focus` set to the question. Leave
+    `focus` unset when you need the body itself or only the neighborhood.
+  - **With `focus`.** Pass `focus` on the first call when you need only the passages
+    that answer the question. With `focus`, the excerpt holds up to 3 best-matching
+    passages in document order and not the body, even when the body would fit. A
+    focused excerpt over 8,000 characters is cut too, and its marker carries no focus
+    hint.
+  - **Limits and no match.** A `focus` over 1,000 characters is rejected. A `focus` that
+    matches nothing returns the body as if none was given, plus a gap that says so.
 - `history_of` pages backwards through `before`: pass the **last entry of
   `anchor.code.blamed_shas`** from the previous bundle, never a node id (nodes are
   sorted oldest-first and their ids are document ids, not commit SHAs). An empty
@@ -321,17 +333,17 @@ no gap, so `gaps` is absent rather than sent as `[]` — an empty `chains` would
 dropped the same way.
 
 **Step 2 — depth on the decisive document.** The PR is where the choice landed, so the
-model asks for its neighborhood and full body:
+model asks for its neighborhood and body:
 
 ```json
 { "ref": "github:pr:acme/myproject/pull/12", "direction": "both" }
 ```
 
 The bundle comes back with `anchor.kinds: ["document"]`, `anchor.doc` naming that PR,
-the anchor node carrying `role: "seed"` and its **whole text** instead of an excerpt,
-neighbors reached through `commit_in_pr` and `pr_closes_issue` edges, the `chains` that
-connect them, and a `gaps` entry for every trail that dead-ends — for example
-`PROJ-4521 (jira:ticket:PROJ-4521) stands alone; no linked discussion`.
+the anchor node carrying `role: "seed"` and its **body as the excerpt** (up to 8,000
+characters), neighbors reached through `commit_in_pr` and `pr_closes_issue` edges, the
+`chains` that connect them, and a `gaps` entry for every trail that dead-ends. One
+example is `PROJ-4521 (jira:ticket:PROJ-4521) stands alone; no linked discussion`.
 
 **Step 3 — consequences.** "What did it cost us later" is `impact_of`, anchored on the
 same document:

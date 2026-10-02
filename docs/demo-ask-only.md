@@ -432,7 +432,7 @@ for a local harness, and `lore serve` exposes it over HTTP.
 | `lore status` | `sync_status` | — |
 | question one | `find_decision` | `question`, `around`, plus optional `source` / `repo` / `doc_type` / `since` / `until` |
 | question two | `impact_of` | `ref_or_query`, optional `question` |
-| `lore trace` | `trace` | `ref`, optional `direction`, `depth` |
+| `lore trace` | `trace` | `ref`, optional `direction`, `depth`, `focus` |
 | `lore why` | `why` | `file`, `line_start`, optional `line_end`, `repo`, `question` |
 | `lore history` | `history_of` | `path`, optional `repo`, `limit`, `before` |
 
