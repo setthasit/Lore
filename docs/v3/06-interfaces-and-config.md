@@ -18,7 +18,7 @@ source.
 |---|---|---|
 | `find_decision` | `question`, optional `around` (event text or date), `source`, `repo`, `doc_type`, `since`, `until` | EvidenceBundle seeded by retrieval; works with zero repos |
 | `why` | `file`, `line_start`, optional `repo`, `line_end`, `question` | EvidenceBundle anchored on blame, precondition error if no repos registered. Omitting `line_end` blames `line_start` alone, and omitting `repo` works when one clone is registered |
-| `trace` | `ref` (SHA / PR# / ticket key / URL / DocID), optional `direction`, `depth` | full provenance neighborhood + body, chronological |
+| `trace` | `ref` (SHA / PR# / ticket key / URL / DocID), optional `direction`, `depth`, `focus` (a question) | full provenance neighborhood, chronological, + the anchor's body up to 8,000 characters, or up to 3 passages matching `focus` |
 | `impact_of` | `ref_or_query`, optional `question` | chronological impact timeline after the anchor decision |
 | `history_of` | `path`, optional `repo`, `limit`, `before` | chronological file timeline; precondition error if no repos registered |
 | `sync_now` | optional `source` | acknowledgment; errors if lock held |
@@ -56,7 +56,7 @@ lore status                        # sync state, doc/edge counts, lock state
 lore ask "<question>" [--around="incident X"] [--since --until] [--source --repo --doc-type]   # → find_decision
 lore impact <ref | "query"> [--question="…"]
 lore why <file>:<L1>-<L2> ["question"] [--repo=…]
-lore trace <ref> [--direction=in|out|both]
+lore trace <ref> [--direction=in|out|both] [--focus=<question>]
 lore history <path> [--repo=…] [--limit=N] [--before=<sha>]
 lore mcp                           # MCP stdio server
 lore serve [--http=:8080] [--grpc=:9090] [--mtls]
@@ -94,6 +94,14 @@ service SyncService {
   the web UI renders the provenance graph from the bundle and prose from the
   synthesis.
 - `SyncService.Watch` streams sync progress — needed for a UI progress view.
+
+`TraceRequest` carries `focus`, the same optional question as MCP `trace`'s
+`focus` input and `lore trace --focus`. All three reach the same service
+method (`internal/services/trace.go`, `TraceService.Trace`). The same ref and
+focus therefore return the same anchor excerpt on every surface. The excerpt
+rules are in [05](05-query-engine.md#tool-algorithms), under `trace`. On the
+wire `focus` is field 5, a string
+(`api/proto/lore/v1/lore.proto`, `TraceRequest`).
 
 ### mTLS
 

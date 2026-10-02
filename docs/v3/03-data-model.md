@@ -82,7 +82,7 @@ would be one package behind the `IndexStore` interface.
 
 | Table | Purpose |
 |---|---|
-| `documents` | Normalized documents (incl. `created_at`, `updated_at`); the full body is retained and read back by `DocumentsWithBody` (`internal/repositories/sqlite/documents.go`), which `documentBody` (`internal/services/ref.go`) calls for `trace`'s whole body and `impact_of`'s anchor excerpt |
+| `documents` | Normalized documents (incl. `created_at`, `updated_at`). The body is retained in full. `DocumentsWithBody` (`internal/repositories/sqlite/documents.go`) reads it back for `documentBody` (`internal/services/ref.go`), which serves `trace`'s unfocused anchor excerpt, cut at 8,000 characters, and `impact_of`'s anchor excerpt |
 | `chunks` | Embedding-sized slices of document bodies, FK → documents |
 | `chunks_fts` | FTS5 virtual table over chunk text (BM25) |
 | `chunk_vectors` | sqlite-vec virtual table, rowid-aligned with `chunks`. The chunk's `id` is an explicit rowid alias, and both derived rows are written with it (`internal/repositories/sqlite/documents.go`, `ReplaceChunks`) |
@@ -145,7 +145,7 @@ type IndexStore interface {
 
     // Retrieval — two independently ranked lists. RRF fusion happens in the
     // service layer, so the contract never assumes SQL-side fusion.
-    // Filters: source, repo_ref, doc_type, created_at range.
+    // Filters: doc_id, source, repo_ref, doc_type, created_at range.
     SearchLexical(ctx context.Context, query string, f Filters, k int) ([]ChunkHit, error)
     SearchVector(ctx context.Context, embedding []float32, f Filters, k int) ([]ChunkHit, error)
 
@@ -238,10 +238,12 @@ lives in `documents.title`, which no search reads, so a decision whose title
 names the thing and whose body does not is unreachable lexically.
 
 Every chunk carries `doc_id`, `source`, `repo_ref`, `doc_type`, `author`,
-`created_at`, `updated_at` and `thread_id` (`chunkOf`). Four of those are
-filterable: `entities.Filters` exposes `source`, `repo_ref`, `doc_type` and a
-`created_at` range, and nothing else reaches SQL
-(`internal/repositories/sqlite/search.go`, `filterClause`). The chunk's
+`created_at`, `updated_at` and `thread_id` (`chunkOf`). Five of those are
+filterable: `entities.Filters` exposes `doc_id`, `source`, `repo_ref`,
+`doc_type` and a `created_at` range, and nothing else reaches SQL
+(`internal/repositories/sqlite/search.go`, `filterClause`). Only `trace`'s
+focus search sets `doc_id`, to keep the search inside the anchor document
+(`internal/services/trace.go`, `traceExcerpt`). The chunk's
 `author`, `updated_at` and `thread_id` come back on a `ChunkHit` and no query
 path reads them: a bundle's author and timestamps come from `documents` through
 `DocumentMeta`, and nothing rehydrates a comment thread from `thread_id` today.
@@ -255,8 +257,8 @@ path reads them: a bundle's author and timestamps come from `documents` through
 3. **Reciprocal Rank Fusion** in Go merges both rankings:
    `score(d) = Σ 1/(k + rank_i(d))`, k = 60 (`internal/services/rrf.go`,
    `rrfK`, `fuse`).
-4. Optional metadata filters pushed into SQL: `source`, `repo_ref`,
-   `doc_type`, `created_at` range — the time filter is what event anchoring
+4. Optional metadata filters pushed into SQL: `doc_id`, `source`, `repo_ref`,
+   `doc_type`, `created_at` range. The time filter is what event anchoring
    compiles down to ([05](05-query-engine.md#event-resolution)). The lexical
    query filters in the outer statement and the vector query as a rowid
    candidate set, because a filter outside a KNN would return fewer than `k`
@@ -264,4 +266,6 @@ path reads them: a bundle's author and timestamps come from `documents` through
 
 Retrieval returns *chunks*; the query engine immediately lifts them to their
 parent documents and hands them to the shared walk/rank machinery — see
-[05](05-query-engine.md).
+[05](05-query-engine.md). `trace`'s focus search is the exception. It keeps
+the chunks as the excerpt's passages
+([05](05-query-engine.md#tool-algorithms)).

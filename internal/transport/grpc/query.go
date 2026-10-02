@@ -104,6 +104,7 @@ func (s *queryServer) Trace(ctx context.Context, in *lorev1.TraceRequest) (*lore
 		Ref:       in.GetRef(),
 		Direction: traceDirection(in.GetDirection()),
 		Depth:     int(in.GetDepth()),
+		Focus:     in.GetFocus(),
 	})
 	if err != nil {
 		return nil, rpcError(s.log, "Trace", err)

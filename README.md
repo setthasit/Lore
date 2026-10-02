@@ -244,7 +244,7 @@ optional `synthesize` flag, and leaving it unset means prose alongside the bundl
 | `lore status` | index counts, per-source cursor ages, sync lock state |
 | `lore ask <question>` | synthesized prose; `--around --source --repo --doc-type --since --until --raw` |
 | `lore why <file>:<L1>[-<L2>] ["question"]` | blame-anchored trail; `--repo --explain --raw` |
-| `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both --explain --raw` |
+| `lore trace <ref>` | one document's neighborhood; `--direction in\|out\|both --focus --explain --raw` |
 | `lore impact <ref \| "query">` | consequences timeline; `--question --explain --raw` |
 | `lore history <path>` | file timeline; `--limit --before` pagination; `--repo --explain --raw` |
 | `lore mcp` · `lore serve [--http --grpc --mtls]` | MCP stdio · MCP streamable HTTP + `lore.v1` gRPC + scheduler |
@@ -366,6 +366,10 @@ make gen.mock      # go generate ./...    — gomock doubles under internal/mock
 make gen.proto     # regenerate the lore.v1 stubs from api/proto
 make certs.dev     # local certificate authority + server/client pairs for mTLS
 ```
+
+`make gen.proto` needs `protoc` and `protoc-gen-go-grpc` on PATH. [`mise.toml`](mise.toml)
+pins both for [mise](https://mise.jdx.dev). Run `mise install` once, then
+`mise exec -- make gen.proto`.
 
 Tests need no external service: connectors run against `httptest` fixture servers, the
 store against a temp SQLite file, and the end-to-end suite drives the real MCP transports

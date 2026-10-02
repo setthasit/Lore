@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"context"
+	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -9,13 +13,67 @@ import (
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_services "github.com/setthasit/Lore/internal/mocks/services"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/secrets"
 	"github.com/setthasit/Lore/internal/services"
 	lore "github.com/setthasit/Lore/sdk"
 )
 
-const traceQuestion = "provenance of Storage design"
+const (
+	traceQuestion    = "provenance of Storage design"
+	traceFocus       = "how fast forward uses a closed form"
+	paddedTraceFocus = "  How Fast-Forward uses a closed form \n"
+)
+
+var overLimitTraceFocus = strings.Repeat("f", 1001)
+
+type traceRecorder struct {
+	mu       sync.Mutex
+	requests []services.TraceRequest
+}
+
+func recordTraceRequests(trace *mock_services.MockTraceService, bundle *entities.EvidenceBundle) *traceRecorder {
+	recorder := &traceRecorder{}
+	trace.EXPECT().
+		Trace(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req services.TraceRequest) (*entities.EvidenceBundle, error) {
+			recorder.mu.Lock()
+			defer recorder.mu.Unlock()
+			recorder.requests = append(recorder.requests, req)
+
+			return bundle, nil
+		}).
+		AnyTimes()
+
+	return recorder
+}
+
+func (r *traceRecorder) assertOnlyRequest(t *testing.T, want services.TraceRequest) {
+	t.Helper()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) != 1 || r.requests[0] != want {
+		t.Errorf("trace requests = %#v, want exactly one, %#v", r.requests, want)
+	}
+}
+
+func countSyntheses(t *testing.T, rt *Runtime) *atomic.Int32 {
+	t.Helper()
+
+	calls := &atomic.Int32{}
+	mockSynthesis(t, rt).EXPECT().
+		Synthesize(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string, *entities.EvidenceBundle) (string, error) {
+			calls.Add(1)
+
+			return proseAnswer, nil
+		}).
+		AnyTimes()
+
+	return calls
+}
 
 func TestTracePrintsTheNeighborhoodAsATimeline(t *testing.T) {
 	rt, trace := mockTrace(t)
@@ -95,6 +153,108 @@ func TestTraceSendsTheDirectionToTheServiceVerbatim(t *testing.T) {
 				t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
 			}
 		})
+	}
+}
+
+func TestTraceMapsFocusOntoTheServiceRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want services.TraceRequest
+	}{
+		{
+			name: "focus",
+			args: []string{"trace", "PROJ-4521", "--focus", traceFocus},
+			want: services.TraceRequest{Ref: "PROJ-4521", Focus: traceFocus},
+		},
+		{
+			name: "the service owns trimming the focus",
+			args: []string{"trace", "PROJ-4521", "--focus", paddedTraceFocus},
+			want: services.TraceRequest{Ref: "PROJ-4521", Focus: paddedTraceFocus},
+		},
+		{
+			name: "the service owns the focus length limit",
+			args: []string{"trace", "PROJ-4521", "--focus", overLimitTraceFocus},
+			want: services.TraceRequest{Ref: "PROJ-4521", Focus: overLimitTraceFocus},
+		},
+		{
+			name: "focus with direction",
+			args: []string{"trace", "PROJ-4521", "--direction", "in", "--focus", traceFocus},
+			want: services.TraceRequest{Ref: "PROJ-4521", Direction: "in", Focus: traceFocus},
+		},
+		{
+			name: "no focus",
+			args: []string{"trace", "PROJ-4521"},
+			want: services.TraceRequest{Ref: "PROJ-4521"},
+		},
+		{
+			name: "direction without focus",
+			args: []string{"trace", "PROJ-4521", "--direction", "in"},
+			want: services.TraceRequest{Ref: "PROJ-4521", Direction: "in"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, trace := mockTrace(t)
+			recorder := recordTraceRequests(trace, timelineBundle(traceQuestion))
+			syntheses := countSyntheses(t, rt)
+
+			res := run(t, rt, tt.args...)
+			if res.exitCode != exitOK {
+				t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+			}
+
+			recorder.assertOnlyRequest(t, tt.want)
+			if got := syntheses.Load(); got != 0 {
+				t.Errorf("synthesis ran %d times, want none without --explain", got)
+			}
+			for _, want := range []string{
+				traceQuestion,
+				"2025-03-12 Index on SQLite, not Postgres",
+				"postgres with pgvector was the alternative",
+			} {
+				if !strings.Contains(res.stdout, want) {
+					t.Errorf("output is missing %q\n--- output ---\n%s", want, res.stdout)
+				}
+			}
+		})
+	}
+}
+
+func TestTraceSendsTheFocusAlongsideDirectionAndExplain(t *testing.T) {
+	rt, trace := mockTrace(t)
+	recorder := recordTraceRequests(trace, timelineBundle(traceQuestion))
+	syntheses := countSyntheses(t, rt)
+
+	wantProse(t, run(t, rt, "trace", "PROJ-4521", "--direction", "in", "--focus", traceFocus, "--explain"))
+	recorder.assertOnlyRequest(t, services.TraceRequest{Ref: "PROJ-4521", Direction: "in", Focus: traceFocus})
+	if got := syntheses.Load(); got != 1 {
+		t.Errorf("synthesis ran %d times, want once", got)
+	}
+}
+
+func TestTraceHelpDocumentsFocus(t *testing.T) {
+	flag := newTraceCommand(nil, new(string)).Flags().Lookup("focus")
+	if flag == nil {
+		t.Fatal("trace declares no --focus flag")
+	}
+	if flag.Hidden {
+		t.Error("--focus is hidden from the help")
+	}
+
+	const want = "a question; when set, the anchor excerpt holds only the passages of the document that answer it"
+	if flag.Usage != want {
+		t.Errorf("usage of --focus = %q, want %q", flag.Usage, want)
+	}
+
+	res := run(t, nil, "trace", "--help")
+	if res.exitCode != exitOK {
+		t.Fatalf("exit = %d, stderr = %q", res.exitCode, res.stderr)
+	}
+	focusLine := regexp.MustCompile(`(?m)--focus string\s+` + regexp.QuoteMeta(want) + `$`)
+	if !focusLine.MatchString(res.stdout) {
+		t.Errorf("help does not show --focus as %q\n--- help ---\n%s", want, res.stdout)
 	}
 }
 
