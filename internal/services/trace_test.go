@@ -27,6 +27,7 @@ const (
 	traceExcerptCap    = 8000
 	traceFocus         = "how fast forward uses a closed form"
 	traceFocusTopK     = 3
+	traceFocusLimit    = 1000
 	traceStandaloneGap = "decision: docA (docA) stands alone; no linked discussion"
 )
 
@@ -590,13 +591,84 @@ func TestTraceCapsTheAnchorBody(t *testing.T) {
 func TestTraceIgnoresBlankFocus(t *testing.T) {
 	t.Parallel()
 
-	f := newTraceFixture(t)
-	f.expectStandaloneAnchor(traceMeta("docA", traceDate(2021, time.June, 1)), traceOversizeBody)
+	tests := map[string]string{
+		"a few characters":      " \t\n ",
+		"longer than the limit": strings.Repeat(" \t\n", traceFocusLimit),
+	}
 
-	bundle := f.mustTrace(t, services.TraceRequest{Ref: traceRef, Focus: " \t\n "})
+	for name, focus := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	assertStandaloneExcerpt(t, bundle, traceOversizeExcerpt)
-	assertGaps(t, bundle.Gaps, []string{traceStandaloneGap})
+			f := newTraceFixture(t)
+			f.expectStandaloneAnchor(traceMeta("docA", traceDate(2021, time.June, 1)), traceOversizeBody)
+
+			bundle := f.mustTrace(t, services.TraceRequest{Ref: traceRef, Focus: focus})
+
+			assertStandaloneExcerpt(t, bundle, traceOversizeExcerpt)
+			assertGaps(t, bundle.Gaps, []string{traceStandaloneGap})
+		})
+	}
+}
+
+func TestTraceAcceptsFocusAtTheLimit(t *testing.T) {
+	t.Parallel()
+
+	atLimit := strings.Repeat("a", traceFocusLimit)
+	multibyteAtLimit := strings.Repeat("𝄞", traceFocusLimit)
+
+	tests := map[string]struct {
+		focus    string
+		searched string
+	}{
+		"exactly at the limit":      {focus: atLimit, searched: atLimit},
+		"multibyte at the limit":    {focus: multibyteAtLimit, searched: multibyteAtLimit},
+		"at the limit once trimmed": {focus: " \t" + atLimit + "\n ", searched: atLimit},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			anchor := traceMeta("docA", traceDate(2021, time.June, 1))
+
+			f := newTraceFixture(t)
+			f.expectStandaloneAnchor(anchor, traceBody)
+			f.expectFocusSearch(tc.searched, anchor.ID, []entities.ChunkHit{queryHit(anchor.ID, 0)}, nil)
+
+			bundle := f.mustTrace(t, services.TraceRequest{Ref: traceRef, Focus: tc.focus})
+
+			assertStandaloneExcerpt(t, bundle, "docA excerpt 0")
+		})
+	}
+}
+
+func TestTraceRejectsFocusOverTheLimitBeforeAnyLookup(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"one character over the limit":           strings.Repeat("a", traceFocusLimit+1),
+		"multibyte one character over the limit": strings.Repeat("𝄞", traceFocusLimit+1),
+		"invalid bytes one over the limit":       strings.Repeat("\xff", traceFocusLimit+1),
+		"over the limit once trimmed":            " \t" + strings.Repeat("a", traceFocusLimit+1) + "\n ",
+		"a megabyte":                             strings.Repeat("a", 1<<20),
+	}
+
+	for name, focus := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newTraceFixture(t)
+
+			_, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef, Focus: focus})
+			if !internalerror.IsBadRequest(err) {
+				t.Fatalf("err = %v (%s), want bad request", err, internalerror.KindOf(err))
+			}
+			if want := "focus must be at most 1,000 characters"; err.Error() != want {
+				t.Errorf("err = %q, want exactly %q: the limit named and no caller text", err, want)
+			}
+		})
+	}
 }
 
 func TestTraceFocusExcerptsTheMatchingPassages(t *testing.T) {

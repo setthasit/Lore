@@ -33,6 +33,7 @@ const (
 
 	maxTraceExcerptRunes = 8000
 	maxFocusPassages     = 3
+	maxFocusRunes        = 1000
 	skippedPassageMark   = "…"
 	focusHint            = " Pass focus with a question to get the passages that match it."
 )
@@ -54,6 +55,10 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 		return nil, internalerror.NewBadRequestError("ref must not be empty", nil)
 	}
 	focus := strings.TrimSpace(req.Focus)
+	if utf8.RuneCountInString(focus) > maxFocusRunes {
+		return nil, internalerror.NewBadRequestError(
+			fmt.Sprintf("focus must be at most %s characters", groupThousands(maxFocusRunes)), nil)
+	}
 	direction, err := traceDirection(req.Direction)
 	if err != nil {
 		return nil, err
