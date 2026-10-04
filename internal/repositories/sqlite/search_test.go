@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,6 +114,35 @@ func seedCorpus(t *testing.T, s *Store, entries []corpusEntry) {
 			t.Fatalf("seed chunk of %q: %v", e.id, err)
 		}
 	}
+}
+
+type passage struct {
+	text      string
+	embedding []float32
+}
+
+func seedPage(t *testing.T, s *Store, external string, passages []passage) lore.DocID {
+	t.Helper()
+
+	id := lore.NewDocID("notion", lore.DocTypePage, external)
+	created := day(6, 1)
+	seedDocuments(t, s, []lore.Document{{
+		ID: id, Source: "notion", Type: lore.DocTypePage,
+		CreatedAt: created, UpdatedAt: created,
+	}})
+
+	chunks := make([]entities.Chunk, len(passages))
+	for i, p := range passages {
+		chunks[i] = entities.Chunk{
+			DocID: id, Ordinal: i, Text: p.text, Source: "notion",
+			DocType: lore.DocTypePage, CreatedAt: created, UpdatedAt: created,
+			Embedding: p.embedding,
+		}
+	}
+	if err := s.ReplaceChunks(context.Background(), id, chunks); err != nil {
+		t.Fatalf("ReplaceChunks(%q): %v", id, err)
+	}
+	return id
 }
 
 func hitIDs(hits []entities.ChunkHit) []string {
@@ -391,6 +422,7 @@ var filterCases = []struct {
 		DocType:     lore.DocTypePR,
 		CreatedFrom: day(1, 1),
 		CreatedTo:   day(3, 1),
+		DocID:       lore.NewDocID("github", lore.DocTypePR, "12"),
 	},
 	want: []string{docID("github", lore.DocTypePR, "12")},
 }, {
@@ -439,6 +471,73 @@ func TestSearchVectorFilterAppliesBeforeK(t *testing.T) {
 	}
 }
 
+func TestSearchKeepsOnlyTheFilteredDocument(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	target := seedPage(t, s, "runbook/deploy", []passage{{
+		text:      "a deploy rollback starts from the previous release tag",
+		embedding: []float32{0, 1, 0},
+	}, {
+		text:      "the on-call engineer announces every rollback in the incident channel",
+		embedding: []float32{0, 0, 1},
+	}, {
+		text:      "after a rollback the canary stays paused until the next review",
+		embedding: []float32{0, 1, 1},
+	}})
+	rival := seedPage(t, s, "runbook/database", []passage{{
+		text:      "a schema rollback is a rollback of one migration, and that rollback runs in a transaction",
+		embedding: []float32{1, 0, 0},
+	}, {
+		text:      "a data rollback is a rollback from a snapshot, and that rollback needs a maintenance window",
+		embedding: []float32{0.9, 0.1, 0},
+	}, {
+		text:      "an index rollback is a rollback of one build, and that rollback drops the new index",
+		embedding: []float32{0.8, 0.2, 0},
+	}})
+
+	const k = 2
+	arms := []struct {
+		name   string
+		search func(entities.Filters) ([]entities.ChunkHit, error)
+	}{{
+		name: "lexical",
+		search: func(f entities.Filters) ([]entities.ChunkHit, error) {
+			return s.SearchLexical(ctx, "rollback", f, k)
+		},
+	}, {
+		name: "vector",
+		search: func(f entities.Filters) ([]entities.ChunkHit, error) {
+			return s.SearchVector(ctx, []float32{1, 0, 0}, f, k)
+		},
+	}}
+
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			hits, err := arm.search(entities.Filters{})
+			if err != nil {
+				t.Fatalf("unfiltered search: %v", err)
+			}
+			want := []string{string(rival), string(rival)}
+			if got := hitIDs(hits); !slices.Equal(got, want) {
+				t.Fatalf("unfiltered hits = %v, want %v (the rival page ranks first)", got, want)
+			}
+
+			hits, err = arm.search(entities.Filters{DocID: target})
+			if err != nil {
+				t.Fatalf("filtered search: %v", err)
+			}
+			want = []string{string(target), string(target)}
+			if got := hitIDs(hits); !slices.Equal(got, want) {
+				t.Fatalf("filtered hits = %v, want %v", got, want)
+			}
+			if hits[0].Ordinal == hits[1].Ordinal {
+				t.Errorf("both filtered hits are chunk %d, want two different chunks", hits[0].Ordinal)
+			}
+		})
+	}
+}
+
 func TestSearchRejectsBadArguments(t *testing.T) {
 	s := openTestStore(t)
 	seedSearchCorpus(t, s)
@@ -458,24 +557,62 @@ func TestSearchRejectsBadArguments(t *testing.T) {
 	}
 }
 
+func TestSearchLexicalErrorOmitsCallerText(t *testing.T) {
+	const (
+		callerText    = "callertypedthis"
+		callerSource  = "sourcefromcaller"
+		callerRepoRef = "owner/repofromcaller"
+		query         = "sqlite " + callerText
+	)
+	filters := entities.Filters{Source: callerSource, RepoRef: callerRepoRef}
+
+	t.Run("the statement fails", func(t *testing.T) {
+		s := openTestStore(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := s.SearchLexical(ctx, query, filters, 10)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want one wrapping the cancellation", err)
+		}
+		assertErrorOmits(t, err, callerText, callerSource, callerRepoRef)
+	})
+
+	t.Run("a matching row is unreadable", func(t *testing.T) {
+		s := openTestStore(t)
+		seedSearchCorpus(t, s)
+		ctx := context.Background()
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE chunks SET created_at = 'not a timestamp', source = ?, repo_ref = ?`,
+			callerSource, callerRepoRef)
+		if err != nil {
+			t.Fatalf("corrupt the chunks the filters match: %v", err)
+		}
+
+		_, err = s.SearchLexical(ctx, query, filters, 10)
+		var parseErr *time.ParseError
+		if !errors.As(err, &parseErr) {
+			t.Fatalf("error = %v, want one wrapping the timestamp parse failure", err)
+		}
+		assertErrorOmits(t, err, callerText, callerSource, callerRepoRef)
+	})
+}
+
+func assertErrorOmits(t *testing.T, err error, callerTexts ...string) {
+	t.Helper()
+
+	for _, callerText := range callerTexts {
+		if strings.Contains(err.Error(), callerText) {
+			t.Errorf("error %q carries the caller text %q", err, callerText)
+		}
+	}
+}
+
 func TestSearchVectorSkipsUnembeddedChunks(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	id := lore.NewDocID("notion", lore.DocTypePage, "unembedded")
-	created := day(6, 1)
-	if err := s.UpsertDocuments(ctx, []lore.Document{{
-		ID: id, Source: "notion", Type: lore.DocTypePage,
-		CreatedAt: created, UpdatedAt: created,
-	}}); err != nil {
-		t.Fatalf("UpsertDocuments: %v", err)
-	}
-	if err := s.ReplaceChunks(ctx, id, []entities.Chunk{{
-		DocID: id, Text: "vectorless prose about lore", Source: "notion",
-		DocType: lore.DocTypePage, CreatedAt: created, UpdatedAt: created,
-	}}); err != nil {
-		t.Fatalf("ReplaceChunks: %v", err)
-	}
+	id := seedPage(t, s, "unembedded", []passage{{text: "vectorless prose about lore"}})
 
 	hits, err := s.SearchLexical(ctx, "vectorless", entities.Filters{}, 5)
 	if err != nil {

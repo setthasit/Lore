@@ -280,7 +280,9 @@ lore trace 8f62e8116df4243019a41681ec54c66dda2e8f2e
 `trace` is depth on one document: it resolves the ref and prints everything linked to it —
 in both directions by default, `--direction out` for what it references, `in` for what
 references it. It resolves a full or abbreviated commit SHA, a PR or issue number, a
-ticket key, a document URL, or a document id, and it never touches the embedder.
+ticket key, a document URL, or a document id. Without `--focus` it does not touch the
+embedder. With `--focus "<question>"`, that question is embedded by the configured
+embedder.
 
 ```
 lore impact https://github.com/cli/cli/pull/12627

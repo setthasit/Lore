@@ -63,13 +63,13 @@ func (s *Store) SearchLexical(ctx context.Context, query string, f entities.Filt
 
 	rows, err := s.db.QueryContext(ctx, stmt, bind...)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: lexical search for %q: %w", query, err)
+		return nil, fmt.Errorf("sqlite: lexical search: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	hits, err := scanChunkHits(rows, k)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: lexical search for %q: %w", query, err)
+		return nil, fmt.Errorf("sqlite: lexical search: %w", err)
 	}
 	return hits, nil
 }
@@ -201,6 +201,9 @@ func filterClause(alias string, f entities.Filters) (string, []any) {
 	}
 	if !f.CreatedTo.IsZero() {
 		add("created_at <= ?", formatTime(f.CreatedTo))
+	}
+	if f.DocID != "" {
+		add("doc_id = ?", string(f.DocID))
 	}
 	return b.String(), args
 }

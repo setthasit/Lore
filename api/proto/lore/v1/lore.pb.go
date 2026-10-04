@@ -610,11 +610,13 @@ func (x *WhyResponse) GetSynthesis() string {
 }
 
 type TraceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           string                 `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Direction     Direction              `protobuf:"varint,2,opt,name=direction,proto3,enum=lore.v1.Direction" json:"direction,omitempty"`
-	Depth         int32                  `protobuf:"varint,3,opt,name=depth,proto3" json:"depth,omitempty"`
-	Synthesize    *bool                  `protobuf:"varint,4,opt,name=synthesize,proto3,oneof" json:"synthesize,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Ref        string                 `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Direction  Direction              `protobuf:"varint,2,opt,name=direction,proto3,enum=lore.v1.Direction" json:"direction,omitempty"`
+	Depth      int32                  `protobuf:"varint,3,opt,name=depth,proto3" json:"depth,omitempty"`
+	Synthesize *bool                  `protobuf:"varint,4,opt,name=synthesize,proto3,oneof" json:"synthesize,omitempty"`
+	// An optional question. When set, the anchor excerpt holds the passages of the document that match it.
+	Focus         string `protobuf:"bytes,5,opt,name=focus,proto3" json:"focus,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -675,6 +677,13 @@ func (x *TraceRequest) GetSynthesize() bool {
 		return *x.Synthesize
 	}
 	return false
+}
+
+func (x *TraceRequest) GetFocus() string {
+	if x != nil {
+		return x.Focus
+	}
+	return ""
 }
 
 type TraceResponse struct {
@@ -2167,14 +2176,15 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\v_synthesize\"\\\n" +
 	"\vWhyResponse\x12/\n" +
 	"\x06bundle\x18\x01 \x01(\v2\x17.lore.v1.EvidenceBundleR\x06bundle\x12\x1c\n" +
-	"\tsynthesis\x18\x02 \x01(\tR\tsynthesis\"\x9c\x01\n" +
+	"\tsynthesis\x18\x02 \x01(\tR\tsynthesis\"\xb2\x01\n" +
 	"\fTraceRequest\x12\x10\n" +
 	"\x03ref\x18\x01 \x01(\tR\x03ref\x120\n" +
 	"\tdirection\x18\x02 \x01(\x0e2\x12.lore.v1.DirectionR\tdirection\x12\x14\n" +
 	"\x05depth\x18\x03 \x01(\x05R\x05depth\x12#\n" +
 	"\n" +
 	"synthesize\x18\x04 \x01(\bH\x00R\n" +
-	"synthesize\x88\x01\x01B\r\n" +
+	"synthesize\x88\x01\x01\x12\x14\n" +
+	"\x05focus\x18\x05 \x01(\tR\x05focusB\r\n" +
 	"\v_synthesize\"^\n" +
 	"\rTraceResponse\x12/\n" +
 	"\x06bundle\x18\x01 \x01(\v2\x17.lore.v1.EvidenceBundleR\x06bundle\x12\x1c\n" +

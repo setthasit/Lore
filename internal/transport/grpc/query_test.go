@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,14 +33,18 @@ import (
 )
 
 const (
-	rpcQuestion   = "why postgres over mysql"
-	rpcProse      = "Postgres won because the team needed row-level locking [1]."
-	rpcCause      = "dial 10.1.2.3:5432: connection refused"
-	traceTestRef  = "abc1234"
-	traceRestated = "provenance of Widen the lease TTL"
-	rpcTimeout    = 10 * time.Second
-	rpcBuffer     = 1024 * 1024
+	rpcQuestion      = "why postgres over mysql"
+	rpcProse         = "Postgres won because the team needed row-level locking [1]."
+	rpcCause         = "dial 10.1.2.3:5432: connection refused"
+	traceTestRef     = "abc1234"
+	traceRestated    = "provenance of Widen the lease TTL"
+	traceFocus       = "how fast forward uses a closed form"
+	paddedTraceFocus = "  How Fast-Forward uses a closed form \n"
+	rpcTimeout       = 10 * time.Second
+	rpcBuffer        = 1024 * 1024
 )
+
+var overLimitTraceFocus = strings.Repeat("f", 1001)
 
 var rpcCreatedAt = time.Date(2025, 3, 12, 9, 30, 0, 0, time.UTC)
 
@@ -130,6 +136,20 @@ func (f rpcFixture) expectSynthesis(question string) {
 	f.synthesis.EXPECT().Synthesize(gomock.Any(), question, gomock.Any()).Return(rpcProse, nil)
 }
 
+func (f rpcFixture) countSyntheses() *atomic.Int32 {
+	calls := &atomic.Int32{}
+	f.synthesis.EXPECT().
+		Synthesize(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string, *entities.EvidenceBundle) (string, error) {
+			calls.Add(1)
+
+			return rpcProse, nil
+		}).
+		AnyTimes()
+
+	return calls
+}
+
 func (f rpcFixture) findDecision(t *testing.T, in *lorev1.FindDecisionRequest) (*lorev1.FindDecisionResponse, error) {
 	t.Helper()
 
@@ -142,10 +162,47 @@ func (f rpcFixture) findDecision(t *testing.T, in *lorev1.FindDecisionRequest) (
 func (f rpcFixture) traceRef(t *testing.T, direction lorev1.Direction) (*lorev1.TraceResponse, error) {
 	t.Helper()
 
+	return f.callTrace(t, &lorev1.TraceRequest{Ref: traceTestRef, Direction: direction, Depth: 2})
+}
+
+func (f rpcFixture) callTrace(t *testing.T, in *lorev1.TraceRequest) (*lorev1.TraceResponse, error) {
+	t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	return f.queries.Trace(ctx, &lorev1.TraceRequest{Ref: traceTestRef, Direction: direction, Depth: 2})
+	return f.queries.Trace(ctx, in)
+}
+
+type traceRecorder struct {
+	mu       sync.Mutex
+	requests []services.TraceRequest
+}
+
+func recordTraceRequests(trace *mock_services.MockTraceService, bundle *entities.EvidenceBundle) *traceRecorder {
+	recorder := &traceRecorder{}
+	trace.EXPECT().
+		Trace(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req services.TraceRequest) (*entities.EvidenceBundle, error) {
+			recorder.mu.Lock()
+			defer recorder.mu.Unlock()
+			recorder.requests = append(recorder.requests, req)
+
+			return bundle, nil
+		}).
+		AnyTimes()
+
+	return recorder
+}
+
+func (r *traceRecorder) assertOnlyRequest(t *testing.T, want services.TraceRequest) {
+	t.Helper()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) != 1 || r.requests[0] != want {
+		t.Errorf("trace requests = %#v, want exactly one, %#v", r.requests, want)
+	}
 }
 
 func rpcStatus(t *testing.T, err error) *status.Status {
@@ -465,6 +522,112 @@ func TestTraceSendsTheDirectionTheServiceUnderstands(t *testing.T) {
 			if _, err := f.traceRef(t, tt.direction); err != nil {
 				t.Fatalf("Trace() = %v, want a bundle", err)
 			}
+		})
+	}
+}
+
+func TestTraceMapsFocusOntoTheServiceRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *lorev1.TraceRequest
+		want services.TraceRequest
+	}{
+		{
+			name: "focus",
+			in:   &lorev1.TraceRequest{Ref: traceTestRef, Focus: traceFocus},
+			want: services.TraceRequest{Ref: traceTestRef, Focus: traceFocus},
+		},
+		{
+			name: "the service owns trimming the focus",
+			in:   &lorev1.TraceRequest{Ref: traceTestRef, Focus: paddedTraceFocus},
+			want: services.TraceRequest{Ref: traceTestRef, Focus: paddedTraceFocus},
+		},
+		{
+			name: "the service owns the focus length limit",
+			in:   &lorev1.TraceRequest{Ref: traceTestRef, Focus: overLimitTraceFocus},
+			want: services.TraceRequest{Ref: traceTestRef, Focus: overLimitTraceFocus},
+		},
+		{
+			name: "focus with direction and depth",
+			in: &lorev1.TraceRequest{
+				Ref:       traceTestRef,
+				Direction: lorev1.Direction_DIRECTION_IN,
+				Depth:     3,
+				Focus:     traceFocus,
+			},
+			want: services.TraceRequest{Ref: traceTestRef, Direction: "in", Depth: 3, Focus: traceFocus},
+		},
+		{
+			name: "no focus",
+			in:   &lorev1.TraceRequest{Ref: traceTestRef},
+			want: services.TraceRequest{Ref: traceTestRef},
+		},
+		{
+			name: "direction and depth without focus",
+			in:   &lorev1.TraceRequest{Ref: traceTestRef, Direction: lorev1.Direction_DIRECTION_IN, Depth: 3},
+			want: services.TraceRequest{Ref: traceTestRef, Direction: "in", Depth: 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRPCFixture(t)
+			recorder := recordTraceRequests(f.trace, rpcBundle())
+			syntheses := f.countSyntheses()
+
+			res, err := f.callTrace(t, tt.in)
+			if err != nil {
+				t.Fatalf("Trace() = %v, want a bundle", err)
+			}
+
+			recorder.assertOnlyRequest(t, tt.want)
+			if res.GetSynthesis() != rpcProse {
+				t.Errorf("synthesis = %q, want %q", res.GetSynthesis(), rpcProse)
+			}
+			if got := syntheses.Load(); got != 1 {
+				t.Errorf("synthesis ran %d times, want once", got)
+			}
+			assertSameProto(t, res.GetBundle(), rpcBundleProto())
+		})
+	}
+}
+
+func TestTraceSendsTheFocusAlongsideEveryOtherField(t *testing.T) {
+	tests := []struct {
+		name       string
+		synthesize bool
+		want       string
+		calls      int32
+	}{
+		{name: "synthesized", synthesize: true, want: rpcProse, calls: 1},
+		{name: "bundle alone", synthesize: false, want: "", calls: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRPCFixture(t)
+			recorder := recordTraceRequests(f.trace, rpcBundle())
+			syntheses := f.countSyntheses()
+
+			res, err := f.callTrace(t, &lorev1.TraceRequest{
+				Ref:        traceTestRef,
+				Direction:  lorev1.Direction_DIRECTION_IN,
+				Depth:      3,
+				Focus:      traceFocus,
+				Synthesize: proto.Bool(tt.synthesize),
+			})
+			if err != nil {
+				t.Fatalf("Trace() = %v, want a bundle", err)
+			}
+
+			recorder.assertOnlyRequest(t, services.TraceRequest{Ref: traceTestRef, Direction: "in", Depth: 3, Focus: traceFocus})
+			if res.GetSynthesis() != tt.want {
+				t.Errorf("synthesis = %q, want %q", res.GetSynthesis(), tt.want)
+			}
+			if got := syntheses.Load(); got != tt.calls {
+				t.Errorf("synthesis ran %d times, want %d", got, tt.calls)
+			}
+			assertSameProto(t, res.GetBundle(), rpcBundleProto())
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 type traceFlags struct {
 	direction string
+	focus     string
 	out       evidenceOutput
 }
 
@@ -29,6 +30,7 @@ func newTraceCommand(resolve Resolver, configPath *string) *cobra.Command {
 				bundle, err := rt.Trace.Trace(cmd.Context(), services.TraceRequest{
 					Ref:       args[0],
 					Direction: flags.direction,
+					Focus:     flags.focus,
 				})
 				if err != nil {
 					return err
@@ -42,6 +44,8 @@ func newTraceCommand(resolve Resolver, configPath *string) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&flags.direction, "direction", "",
 		"which links to follow: out (the documents this one references), in (the documents that reference this one), both (default)")
+	f.StringVar(&flags.focus, "focus", "",
+		"a question; when set, the anchor excerpt holds only the passages of the document that answer it")
 	flags.out.flags(cmd)
 	return cmd
 }
