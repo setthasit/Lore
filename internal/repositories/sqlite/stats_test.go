@@ -2,12 +2,71 @@ package sqlite
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/sdk"
 )
+
+func TestHasEdges(t *testing.T) {
+	ctx := context.Background()
+	src := lore.NewDocID("github", lore.DocTypePR, "acme/lore/pull/42")
+	dst := lore.NewDocID("github", lore.DocTypeIssue, "acme/lore/issues/7")
+	docs := []lore.Document{
+		{ID: src, Source: "github", Type: lore.DocTypePR},
+		{ID: dst, Source: "github", Type: lore.DocTypeIssue},
+	}
+	edges := []entities.Edge{{Src: src, Dst: dst, Kind: entities.EdgeKindPRClosesIssue, Confidence: 1}}
+
+	tests := []struct {
+		name  string
+		docs  []lore.Document
+		edges []entities.Edge
+		want  bool
+	}{
+		{name: "empty store", want: false},
+		{name: "documents without edges", docs: docs, want: false},
+		{name: "one edge", docs: docs, edges: edges, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTestStore(t)
+			if err := s.UpsertDocuments(ctx, tc.docs); err != nil {
+				t.Fatalf("UpsertDocuments: %v", err)
+			}
+			if err := s.UpsertEdges(ctx, tc.edges); err != nil {
+				t.Fatalf("UpsertEdges: %v", err)
+			}
+			got, err := s.HasEdges(ctx)
+			if err != nil {
+				t.Fatalf("HasEdges: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HasEdges = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasEdgesCanceledContext(t *testing.T) {
+	s := openTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := s.HasEdges(ctx)
+	if got {
+		t.Error("HasEdges = true, want false on error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("HasEdges error = %v, want context.Canceled", err)
+	}
+	if !strings.HasPrefix(err.Error(), "sqlite: has edges: ") {
+		t.Errorf("HasEdges error = %q, want sqlite: has edges prefix", err)
+	}
+}
 
 func TestStatsEmptyStoreIsZeros(t *testing.T) {
 	s := openTestStore(t)

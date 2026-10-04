@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	hasEdgesSQL = `SELECT EXISTS(SELECT 1 FROM edges)`
+
 	countIndexRowsSQL = `SELECT
 	(SELECT count(*) FROM documents),
 	(SELECT count(*) FROM chunks),
@@ -20,6 +22,14 @@ const (
 
 	selectLeaseSQL = `SELECT holder, acquired_at, heartbeat_at FROM sync_lock WHERE id = ?`
 )
+
+func (s *Store) HasEdges(ctx context.Context) (bool, error) {
+	var hasEdges bool
+	if err := s.db.QueryRowContext(ctx, hasEdgesSQL).Scan(&hasEdges); err != nil {
+		return false, fmt.Errorf("sqlite: has edges: %w", err)
+	}
+	return hasEdges, nil
+}
 
 func (s *Store) Stats(ctx context.Context) (entities.IndexStats, error) {
 	var stats entities.IndexStats

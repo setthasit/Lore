@@ -89,5 +89,8 @@ type IndexStore interface {
 	// An empty index reports zeros and no rows, not an error.
 	Stats(ctx context.Context) (entities.IndexStats, error)
 
+	// Whether any link between documents exists. An empty index reports false.
+	HasEdges(ctx context.Context) (bool, error)
+
 	Close() error
 }
