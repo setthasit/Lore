@@ -53,7 +53,10 @@ Shared machinery:
   `why.go`, `trace.go`, `impact.go` and `history.go`). A chain ends at its last
   cited node, so it never names a document the bundle omits (`citedChain`).
 - **Gaps**: explicit honesty for every query tool. A seed no chain reached
-  (`standaloneSeedGaps`, same five callers), a blamed commit no source ingested
+  produces a standalone gap (`standaloneSeedGaps`, same five callers). When
+  the index holds no links at all, standalone gaps collapse to one index-level
+  line. No standalone gaps means no index-level line. Other gap kinds are
+  unchanged: a blamed commit no source ingested
   (`internal/services/coderepo.go`, `unsyncedCommitGap`), an unresolved event
   (`internal/services/event.go`, `resolveEvent`), an empty impact window
   (`internal/services/impact.go`, `impactGaps`) and a `trace` focus that
@@ -61,13 +64,18 @@ Shared machinery:
 
 ## EvidenceBundle — the one result shape
 
+The per-result gap shown below is the linked-index case (at least one link
+anywhere in the index). When the index holds no links at all, nonempty
+per-result gaps are replaced by one index-level line:
+`the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos`
+
 ```go
 type EvidenceBundle struct {
     Question string          // normalized restatement of the query
     Anchor   Anchor          // how the question was grounded (union, below)
     Nodes    []EvidenceNode  // ordered by relevance (impact_of: chronological)
     Chains   [][]DocID       // provenance paths, e.g. [ticket, page, pr, commit]
-    Gaps     []string        // "<title> (<doc id>) stands alone; no linked discussion"
+    Gaps     []string        // linked index: "<title> (<doc id>) stands alone; no linked discussion"
 }
 
 type Anchor struct {
@@ -143,10 +151,15 @@ The primary assistant entry point. Zero code required.
 3. **Graph walk** from each seed, `query.walk_depth` hops, both directions: a matching
    ticket pulls in its design doc, the PR that implemented it, the review
    thread that debated it — and anything that later referenced *it*.
-4. **Rank** (question relevance × proximity × confidence × time prior);
-   assemble `Chains`; record `Gaps` for seeds with no edges (the seed's title
-   and DocID, then "stands alone; no linked discussion") and for unresolved
-   events.
+4. **Rank** (question relevance × proximity × confidence × time prior).
+   Assemble `Chains`. With at least one link anywhere in the index, record
+   per-result `Gaps` for standalone seeds (the seed's title and DocID, then
+   "stands alone; no linked discussion"). When the index holds no links at
+   all, replace those lines with one index-level line:
+   `the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos`
+
+   No standalone gaps means no index-level line. Unresolved event gaps are
+   unchanged.
 
 Example: `find_decision("why did we choose option B instead of A?", around="incident X")`
 → window from INC-201 → seeds: decision page + ticket debating A vs B →

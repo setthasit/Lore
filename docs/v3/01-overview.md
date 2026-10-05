@@ -43,10 +43,16 @@ history (`history_of`). Same walk, same bundle shape. The ranking differs by
 tool, and [05](05-query-engine.md) says how.
 
 Honesty is a feature: when the trail ends, Lore says so in the bundle's gaps
-rather than fabricating. A standalone seed is reported as title then DocID, so
-the strings it emits read "Move session auth to JWT (jira:ticket:PROJ-4521)
-stands alone; no linked discussion", "no follow-up evidence after 2025-03-12"
-and "trail ends at commit 4f2b91c0d3ae, not synced from a source".
+rather than fabricating. When the index holds at least one link, a standalone
+seed is reported as title then DocID:
+`Move session auth to JWT (jira:ticket:PROJ-4521) stands alone; no linked discussion`.
+When the index holds no links at all, those per-result lines are replaced by
+one index-level line:
+`the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos`
+
+No standalone gaps means no index-level line. Other gap kinds are unchanged,
+including unresolved events, "no follow-up evidence after 2025-03-12" and
+"trail ends at commit 4f2b91c0d3ae, not synced from a source".
 
 ## Two personas, one engine
 
