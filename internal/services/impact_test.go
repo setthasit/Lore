@@ -266,6 +266,7 @@ func TestImpactOfInterpretsFreeTextAsTheAnchor(t *testing.T) {
 	f.expectSearch(
 		impactEmbedText(impactDefaultQuestion(impactAnchorTitle), impactAnchorBody),
 		impactAfterAnchor())
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: "  " + query + "  "})
 	if err != nil {
@@ -291,6 +292,7 @@ func TestImpactOfDefaultsTheQuestionToTheAnchorTitle(t *testing.T) {
 	f.expectAnchorByRef()
 	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(want, impactAnchorBody), impactAfterAnchor())
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
 	if err != nil {
@@ -310,6 +312,7 @@ func TestImpactOfHonoursAnExplicitQuestion(t *testing.T) {
 	f.expectAnchorByRef()
 	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(asked, impactAnchorBody), impactAfterAnchor())
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{
 		Ref:      impactRef,
@@ -358,6 +361,7 @@ func TestImpactOfReportsAnEmptyWindowAsAGap(t *testing.T) {
 	f.expectNeighbors([]lore.DocID{impactAnchorID})
 	f.expectSearch(impactEmbedText(question, impactAnchorBody), impactAfterAnchor(), impactHit(impactSameSecID))
 	f.expectMetas([]lore.DocID{impactSameSecID}, impactSameSecMeta)
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
 	if err != nil {
@@ -368,6 +372,26 @@ func TestImpactOfReportsAnEmptyWindowAsAGap(t *testing.T) {
 	assertGaps(t, bundle.Gaps, []string{
 		"no follow-up evidence after 2025-03-12",
 		impactAnchorTitle + " (" + string(impactAnchorID) + ") stands alone; no linked discussion",
+	})
+}
+
+func TestImpactOfReportsOneIndexLevelGapWhenNothingIsLinked(t *testing.T) {
+	t.Parallel()
+
+	f := newImpactFixture(t)
+	f.expectAnchorByRef()
+	f.expectNeighbors([]lore.DocID{impactAnchorID})
+	f.expectSearch(impactEmbedText(impactDefaultQuestion(impactAnchorTitle), impactAnchorBody), impactAfterAnchor())
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(false, nil)
+
+	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
+	if err != nil {
+		t.Fatalf("ImpactOf: %v", err)
+	}
+	assertImpactNodes(t, bundle.Nodes, []lore.DocID{impactAnchorID})
+	assertGaps(t, bundle.Gaps, []string{
+		"no follow-up evidence after 2025-03-12",
+		indexUnlinkedGap,
 	})
 }
 
@@ -492,6 +516,7 @@ func TestImpactOfTruncatesTheAnchorExcerptOnARuneBoundary(t *testing.T) {
 	f.expectSearch(
 		impactEmbedText(impactDefaultQuestion(impactAnchorTitle), wantExcerpt),
 		impactAfterAnchor())
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.ImpactOf(context.Background(), services.ImpactRequest{Ref: impactRef})
 	if err != nil {
@@ -553,6 +578,15 @@ func TestImpactOfClassifiesStoreFailures(t *testing.T) {
 					Return(nil, errImpactStore)
 			},
 			names: "lexical",
+		},
+		"index links": {
+			expect: func(f impactFixture) {
+				f.expectAnchorByRef()
+				f.expectNeighbors([]lore.DocID{impactAnchorID})
+				f.expectSearch(retrieval, impactAfterAnchor())
+				f.store.EXPECT().HasEdges(gomock.Any()).Return(false, errImpactStore)
+			},
+			names: "index holds links",
 		},
 	}
 

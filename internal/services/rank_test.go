@@ -1,17 +1,88 @@
 package services
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
+	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
 	"github.com/setthasit/Lore/sdk"
 )
 
 const rankDay = 24 * time.Hour
+
+func TestCollapseUnlinked(t *testing.T) {
+	t.Parallel()
+
+	storeError := errors.New("index is unavailable")
+	standalone := []string{
+		"strong (strong) stands alone; no linked discussion",
+		"weak (weak) stands alone; no linked discussion",
+	}
+	tests := []struct {
+		name       string
+		standalone []string
+		hasEdges   bool
+		storeError error
+		want       []string
+	}{
+		{name: "nil input"},
+		{name: "empty input", standalone: []string{}, want: []string{}},
+		{
+			name:       "no links",
+			standalone: standalone,
+			want: []string{
+				"the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos",
+			},
+		},
+		{
+			name:       "linked index keeps order",
+			standalone: standalone,
+			hasEdges:   true,
+			want: []string{
+				"strong (strong) stands alone; no linked discussion",
+				"weak (weak) stands alone; no linked discussion",
+			},
+		},
+		{name: "store failure", standalone: standalone, hasEdges: true, storeError: storeError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			store := mock_repositories.NewMockIndexStore(gomock.NewController(t))
+			if len(tt.standalone) != 0 {
+				store.EXPECT().HasEdges(ctx).Return(tt.hasEdges, tt.storeError)
+			}
+			got, err := collapseUnlinked(ctx, store, tt.standalone)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("gaps = %q, want %q", got, tt.want)
+			}
+			if tt.storeError == nil {
+				if err != nil {
+					t.Fatalf("collapseUnlinked: %v", err)
+				}
+				return
+			}
+			if internalerror.KindOf(err) != internalerror.KindInternal || !errors.Is(err, storeError) {
+				t.Fatalf("error = %v (%s), want internal wrapping the store failure", err, internalerror.KindOf(err))
+			}
+			if internalerror.MessageOf(err) != "checking whether the index holds links failed" {
+				t.Errorf("error = %q, want the link check failure", err)
+			}
+		})
+	}
+}
 
 func rankMeta(id string, createdAt time.Time) entities.DocumentMeta {
 	return walkMeta(lore.DocID(id), createdAt)

@@ -90,13 +90,17 @@ func (w *whyService) Why(ctx context.Context, req WhyRequest) (*entities.Evidenc
 
 	nodes := whyNodes(blamed, walked, matches)
 	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
+	standalone, err := collapseUnlinked(ctx, w.store, standaloneSeedGaps(nodes, chains))
+	if err != nil {
+		return nil, err
+	}
 
 	return &entities.EvidenceBundle{
 		Question: question,
 		Anchor:   span.evidenceAnchor(blamedSHAs(blamed)),
 		Nodes:    nodes,
 		Chains:   chains,
-		Gaps:     append(unsynced, standaloneSeedGaps(nodes, chains)...),
+		Gaps:     append(unsynced, standalone...),
 	}, nil
 }
 

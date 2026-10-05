@@ -85,6 +85,10 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 
 	nodes := traceNodes(anchor, excerpt, walked)
 	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
+	standalone, err := collapseUnlinked(ctx, t.store, standaloneSeedGaps(nodes, chains))
+	if err != nil {
+		return nil, err
+	}
 
 	return &entities.EvidenceBundle{
 		Question: "provenance of " + anchor.Title,
@@ -99,7 +103,7 @@ func (t *traceService) Trace(ctx context.Context, req TraceRequest) (*entities.E
 		},
 		Nodes:  nodes,
 		Chains: chains,
-		Gaps:   append(standaloneSeedGaps(nodes, chains), focusGaps...),
+		Gaps:   append(standalone, focusGaps...),
 	}, nil
 }
 

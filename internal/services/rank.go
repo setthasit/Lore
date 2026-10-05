@@ -2,11 +2,13 @@ package services
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/sdk"
 )
 
@@ -379,6 +381,25 @@ func chainScore(chain []lore.DocID, scores map[lore.DocID]float32) float32 {
 	}
 
 	return best
+}
+
+const unlinkedIndexGap = "the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos"
+
+func collapseUnlinked(ctx context.Context, store interface {
+	HasEdges(context.Context) (bool, error)
+}, standalone []string) ([]string, error) {
+	if len(standalone) == 0 {
+		return standalone, nil
+	}
+	hasEdges, err := store.HasEdges(ctx)
+	if err != nil {
+		return nil, internalerror.NewInternalError("checking whether the index holds links failed", err)
+	}
+	if !hasEdges {
+		return []string{unlinkedIndexGap}, nil
+	}
+
+	return standalone, nil
 }
 
 func standaloneSeedGaps(nodes []entities.EvidenceNode, chains [][]lore.DocID) []string {

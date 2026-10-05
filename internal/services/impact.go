@@ -68,13 +68,17 @@ func (s *impactService) ImpactOf(ctx context.Context, req ImpactRequest) (*entit
 
 	nodes := impactNodes(anchor.meta, excerpt, walked, matches)
 	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
+	standalone, err := collapseUnlinked(ctx, s.store, standaloneSeedGaps(nodes, chains))
+	if err != nil {
+		return nil, err
+	}
 
 	return &entities.EvidenceBundle{
 		Question: question,
 		Anchor:   anchor.evidenceAnchor(),
 		Nodes:    nodes,
 		Chains:   chains,
-		Gaps:     impactGaps(nodes, chains, at),
+		Gaps:     impactGaps(nodes, standalone, at),
 	}, nil
 }
 
@@ -204,8 +208,7 @@ func followUpRole(lore.DocType) string {
 	return entities.RoleFollowUp
 }
 
-func impactGaps(nodes []entities.EvidenceNode, chains [][]lore.DocID, at time.Time) []string {
-	standalone := standaloneSeedGaps(nodes, chains)
+func impactGaps(nodes []entities.EvidenceNode, standalone []string, at time.Time) []string {
 	if len(nodes) > 1 {
 		return standalone
 	}
