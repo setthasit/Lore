@@ -96,6 +96,32 @@ func xrefInstanceTicket(instance, key, body string, refs ...lore.RawRef) lore.Do
 	}
 }
 
+func xrefNotionPages() (lore.Document, lore.Document) {
+	ref := lore.RawRef{
+		Kind:  lore.RefKindURL,
+		Value: "https://www.notion.so/3e7a409f814e80a98644fc0217b75f69",
+	}
+	source := lore.Document{
+		ID:     lore.NewDocID("notion", lore.DocTypePage, "11111111-2222-3333-4444-555555555555"),
+		Source: "notion",
+		Type:   lore.DocTypePage,
+		Title:  "White paper review",
+		Body:   "Read the white paper at " + ref.Value,
+		URL:    "https://app.notion.com/p/White-Paper-Review-11111111222233334444555555555555",
+		Refs:   []lore.RawRef{ref},
+	}
+	target := lore.Document{
+		ID:     lore.NewDocID("notion", lore.DocTypePage, "3e7a409f-814e-80a9-8644-fc0217b75f69"),
+		Source: "notion",
+		Type:   lore.DocTypePage,
+		Title:  "Still Got It White Paper",
+		Body:   "White paper findings.",
+		URL:    "https://app.notion.com/p/Still-Got-It-White-Paper-3e7a409f814e80a98644fc0217b75f69",
+	}
+
+	return source, target
+}
+
 func xrefEdges(t *testing.T, s *sqlite.Store, ids ...lore.DocID) []entities.Edge {
 	t.Helper()
 
@@ -186,6 +212,54 @@ func TestLinkResolverLeavesAnUnmatchedTicketKeyPending(t *testing.T) {
 	xrefAssertEdges(t, "corpus edges", xrefEdges(t, store, xrefCommitID, xrefTicketID), nil)
 	xrefAssertPending(t, "pending refs", xrefPending(t, store),
 		[]entities.PendingRef{{SourceDoc: xrefCommitID, Ref: ref}})
+}
+
+func TestLinkResolverLinksANotionPageWrittenInAnotherURLForm(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+	source, target := xrefNotionPages()
+	xrefIngest(t, store, source, target)
+
+	if err := NewLinkResolver(store, nil).Link(ctx, []lore.Document{source, target}); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+
+	xrefAssertEdges(t, "corpus edges", xrefEdges(t, store, source.ID, target.ID), []entities.Edge{{
+		Src:        source.ID,
+		Dst:        target.ID,
+		Kind:       entities.EdgeKindReferencesDoc,
+		Confidence: 1.0,
+	}})
+	xrefAssertPending(t, "pending refs", xrefPending(t, store), nil)
+}
+
+func TestLinkResolverResolvesANotionLinkOnceItsPageArrives(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+	resolver := NewLinkResolver(store, nil)
+	source, target := xrefNotionPages()
+	xrefIngest(t, store, source)
+
+	if err := resolver.Link(ctx, []lore.Document{source}); err != nil {
+		t.Fatalf("Link before target ingestion: %v", err)
+	}
+
+	xrefAssertEdges(t, "edges before target ingestion", xrefEdges(t, store, source.ID, target.ID), nil)
+	xrefAssertPending(t, "pending refs before target ingestion", xrefPending(t, store),
+		[]entities.PendingRef{{SourceDoc: source.ID, Ref: source.Refs[0]}})
+
+	xrefIngest(t, store, target)
+	if err := resolver.LinkPending(ctx); err != nil {
+		t.Fatalf("LinkPending after target ingestion: %v", err)
+	}
+
+	xrefAssertEdges(t, "edges after target ingestion", xrefEdges(t, store, source.ID, target.ID), []entities.Edge{{
+		Src:        source.ID,
+		Dst:        target.ID,
+		Kind:       entities.EdgeKindReferencesDoc,
+		Confidence: 1.0,
+	}})
+	xrefAssertPending(t, "pending refs after target ingestion", xrefPending(t, store), nil)
 }
 
 func TestLinkResolverResolvesADeferredRefOnALaterSyncRound(t *testing.T) {
