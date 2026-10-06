@@ -3,40 +3,75 @@ package services_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
-	"go.uber.org/mock/gomock"
-
 	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
-	mock_repositories "github.com/setthasit/Lore/internal/mocks/repositories"
+	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const statusIdentity = "openai/text-embedding-3-small/1536"
 
-var errStatusStore = errors.New("index is unreadable")
+var statusCheckpoint = time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
 
-func newStatusFixture(t *testing.T) (*mock_repositories.MockIndexStore, services.StatusService) {
+func newStatusFixture(t *testing.T, declared entities.DeclaredWorkspace) (*sqlite.Store, services.StatusService) {
 	t.Helper()
 
-	store := mock_repositories.NewMockIndexStore(gomock.NewController(t))
-	return store, services.NewStatusService(store, statusIdentity)
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "workspace.db"), 3, sqlite.WithClock(func() time.Time { return statusCheckpoint }))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	return store, services.NewStatusService(store, statusIdentity, declared)
 }
 
 func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
-	store, svc := newStatusFixture(t)
+	store, svc := newStatusFixture(t, entities.DeclaredWorkspace{Sources: []string{"github"}})
+	ctx := context.Background()
+	first := lore.NewDocID("github", lore.DocTypePR, "one")
+	second := lore.NewDocID("github", lore.DocTypeIssue, "two")
+	if err := store.UpsertDocuments(ctx, []lore.Document{
+		{ID: first, Source: "github", Type: lore.DocTypePR},
+		{ID: second, Source: "github", Type: lore.DocTypeIssue},
+	}); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+	if err := store.ReplaceChunks(ctx, first, []entities.Chunk{
+		{DocID: first, Ordinal: 0, Text: "first", Source: "github", DocType: lore.DocTypePR, Embedding: []float32{1, 0, 0}},
+		{DocID: first, Ordinal: 1, Text: "second", Source: "github", DocType: lore.DocTypePR, Embedding: []float32{0, 1, 0}},
+		{DocID: first, Ordinal: 2, Text: "third", Source: "github", DocType: lore.DocTypePR, Embedding: []float32{0, 0, 1}},
+	}); err != nil {
+		t.Fatalf("ReplaceChunks: %v", err)
+	}
+	if err := store.UpsertEdges(ctx, []entities.Edge{{Src: first, Dst: second, Kind: entities.EdgeKindPRClosesIssue, Confidence: 1}}); err != nil {
+		t.Fatalf("UpsertEdges: %v", err)
+	}
+	if err := store.SetCursor(ctx, "github", nil); err != nil {
+		t.Fatalf("SetCursor: %v", err)
+	}
+	if ok, err := store.TryAcquireLease(ctx, "host-1/4242"); err != nil || !ok {
+		t.Fatalf("TryAcquireLease = %v, %v, want true, nil", ok, err)
+	}
 
-	at := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
+	at := statusCheckpoint
 	want := entities.IndexStats{
-		Documents: 1284,
-		Chunks:    9613,
-		Edges:     431,
+		Documents: 2,
+		Chunks:    3,
+		Edges:     1,
+		Sources:   []entities.SourceState{{ID: "github", Configured: true, Documents: 2, LastCheckpoint: at}},
 		Cursors:   []entities.CursorAge{{Connector: "github", UpdatedAt: at}},
 		Lease:     &entities.LeaseState{Holder: "host-1/4242", AcquiredAt: at, HeartbeatAt: at},
 	}
-	store.EXPECT().Stats(gomock.Any()).Return(want, nil)
 
 	got, err := svc.Status(context.Background())
 	if err != nil {
@@ -46,7 +81,10 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 		t.Errorf("counts = %d, %d, %d; want %d, %d, %d",
 			got.Documents, got.Chunks, got.Edges, want.Documents, want.Chunks, want.Edges)
 	}
-	if len(got.Cursors) != 1 || got.Cursors[0] != want.Cursors[0] {
+	if !slices.Equal(got.Sources, want.Sources) {
+		t.Errorf("sources = %+v, want %+v", got.Sources, want.Sources)
+	}
+	if !slices.Equal(got.Cursors, want.Cursors) {
 		t.Errorf("cursors = %+v, want %+v", got.Cursors, want.Cursors)
 	}
 	if got.Lease == nil || *got.Lease != *want.Lease {
@@ -54,28 +92,108 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 	}
 }
 
-func TestStatusClassifiesAStoreFailure(t *testing.T) {
-	store, svc := newStatusFixture(t)
-	store.EXPECT().Stats(gomock.Any()).Return(entities.IndexStats{}, errStatusStore)
+func TestStatusListsAConfiguredSourceThatNeverSynced(t *testing.T) {
+	_, svc := newStatusFixture(t, entities.DeclaredWorkspace{Sources: []string{"notion", "jira", "github"}})
 
 	got, err := svc.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := []entities.SourceState{
+		{ID: "github", Configured: true},
+		{ID: "jira", Configured: true},
+		{ID: "notion", Configured: true},
+	}
+	if !slices.Equal(got.Sources, want) {
+		t.Errorf("sources = %+v, want %+v", got.Sources, want)
+	}
+	if got.Documents != 0 || got.Chunks != 0 || got.Edges != 0 || len(got.Cursors) != 0 || got.Lease != nil {
+		t.Errorf("stats = %+v, want zero counts, no cursors and no lease", got)
+	}
+}
+
+func TestStatusKeepsAnIndexedSourceNoLongerConfigured(t *testing.T) {
+	store, svc := newStatusFixture(t, entities.DeclaredWorkspace{Sources: []string{"jira"}})
+	ctx := context.Background()
+	if err := store.UpsertDocuments(ctx, []lore.Document{
+		{ID: lore.NewDocID("github", lore.DocTypePR, "one"), Source: "github", Type: lore.DocTypePR},
+		{ID: lore.NewDocID("notion", lore.DocTypePage, "one"), Source: "notion", Type: lore.DocTypePage},
+	}); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+	for _, id := range []string{"github", "gitlab"} {
+		if err := store.SetCursor(ctx, id, nil); err != nil {
+			t.Fatalf("SetCursor(%s): %v", id, err)
+		}
+	}
+
+	got, err := svc.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := []entities.SourceState{
+		{ID: "github", Documents: 1, LastCheckpoint: statusCheckpoint},
+		{ID: "gitlab", LastCheckpoint: statusCheckpoint},
+		{ID: "jira", Configured: true},
+		{ID: "notion", Documents: 1},
+	}
+	if !slices.Equal(got.Sources, want) {
+		t.Errorf("sources = %+v, want %+v", got.Sources, want)
+	}
+	if got.Documents != 2 || len(got.Cursors) != 2 {
+		t.Errorf("stats = %+v, want two documents and two legacy cursors", got)
+	}
+}
+
+func TestStatusCarriesClonesAsDeclared(t *testing.T) {
+	_, svc := newStatusFixture(t, entities.DeclaredWorkspace{Clones: []entities.DeclaredClone{
+		{Name: "github:acme/myproject", Synced: true},
+		{Name: "github:acme/archive", Synced: false},
+		{Name: "repos[2] (no remote)", Synced: false},
+	}})
+
+	got, err := svc.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := []entities.CloneState{
+		{Name: "github:acme/myproject", Synced: true},
+		{Name: "github:acme/archive", Synced: false},
+		{Name: "repos[2] (no remote)", Synced: false},
+	}
+	if !slices.Equal(got.Clones, want) {
+		t.Errorf("clones = %+v, want %+v", got.Clones, want)
+	}
+}
+
+func TestStatusClassifiesAStoreFailure(t *testing.T) {
+	_, svc := newStatusFixture(t, entities.DeclaredWorkspace{
+		Sources: []string{"jira"},
+		Clones:  []entities.DeclaredClone{{Name: "github:acme/myproject", Synced: true}},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := svc.Status(ctx)
 	if err == nil {
 		t.Fatal("Status: want an error")
 	}
 	if kind := internalerror.KindOf(err); kind != internalerror.KindInternal {
 		t.Errorf("kind = %s, want %s", kind, internalerror.KindInternal)
 	}
-	if !errors.Is(err, errStatusStore) {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error %v does not wrap the store's failure", err)
 	}
-	if got.Documents != 0 || got.Chunks != 0 || got.Cursors != nil || got.Lease != nil {
+	if !reflect.DeepEqual(got, entities.IndexStats{}) {
 		t.Errorf("stats = %+v, want the zero report on failure", got)
 	}
 }
 
 func TestEmbedderIdentityReportsBothSides(t *testing.T) {
-	store, svc := newStatusFixture(t)
-	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return(statusIdentity, nil)
+	store, svc := newStatusFixture(t, entities.DeclaredWorkspace{})
+	if err := store.SetMeta(context.Background(), "embedder_identity", statusIdentity); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
 
 	got, err := svc.EmbedderIdentity(context.Background())
 	if err != nil {
@@ -87,8 +205,7 @@ func TestEmbedderIdentityReportsBothSides(t *testing.T) {
 }
 
 func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.T) {
-	store, svc := newStatusFixture(t)
-	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", nil)
+	_, svc := newStatusFixture(t, entities.DeclaredWorkspace{})
 
 	got, err := svc.EmbedderIdentity(context.Background())
 	if err != nil {
@@ -100,17 +217,18 @@ func TestEmbedderIdentityLeavesTheIndexedSideEmptyBeforeTheFirstSync(t *testing.
 }
 
 func TestEmbedderIdentityClassifiesAStoreFailure(t *testing.T) {
-	store, svc := newStatusFixture(t)
-	store.EXPECT().Meta(gomock.Any(), "embedder_identity").Return("", errStatusStore)
+	_, svc := newStatusFixture(t, entities.DeclaredWorkspace{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	got, err := svc.EmbedderIdentity(context.Background())
+	got, err := svc.EmbedderIdentity(ctx)
 	if err == nil {
 		t.Fatal("EmbedderIdentity: want an error")
 	}
 	if kind := internalerror.KindOf(err); kind != internalerror.KindInternal {
 		t.Errorf("kind = %s, want %s", kind, internalerror.KindInternal)
 	}
-	if !errors.Is(err, errStatusStore) {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error %v does not wrap the store's failure", err)
 	}
 	if got != (entities.EmbedderIdentity{}) {
