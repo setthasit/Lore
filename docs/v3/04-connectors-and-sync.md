@@ -320,7 +320,7 @@ Second pass converting `RawRef`s into typed `edges`:
 | RawRef | Resolution | Edge kind | Confidence |
 |---|---|---|---|
 | Explicit API relation | direct | `commit_in_pr`, `pr_closes_issue` | 1.0 |
-| URL to a known document | exact URL match | `references_doc` | 1.0 |
+| URL to a known document | Notion HTTP(S) URLs on `notion.so`, `www.notion.so`, `app.notion.com`, or `*.notion.site` match pages by id in the last non-empty path segment, with bare or dashed ids and optional title slugs or workspace paths. Any query or fragment is ignored for that match. Every other URL requires an exact URL match. | `references_doc` | 1.0 |
 | Commit SHA in text | prefix match against ingested commits | `mentions_commit` | 0.9 |
 | Ticket key `PROJ-123` | key match against ingested tickets/issues | `references_doc` | 0.9 |
 | "supersedes" / "replaced by" phrase + resolved ref in ADR-style text | pattern + ref resolution | `supersedes` | 0.8 |

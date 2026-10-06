@@ -549,6 +549,10 @@ arrives as its own document (`plugins/sources/notion/client.go:236-240`).
 Trashed pages are skipped (`connector.go:112`,
 `plugins/sources/notion/client.go:109-110`).
 
+Links between ingested pages resolve by page id across HTTP(S) URLs on
+`notion.so`, `www.notion.so`, `app.notion.com`, and `*.notion.site`, including
+bare or dashed ids, title slugs, workspace paths, and any query or fragment.
+
 Notion documents carry **no** `RepoRef` and **no** `Author`
 (`plugins/sources/notion/connector.go:173-183`) — the connector never
 asks Notion who anybody is.
