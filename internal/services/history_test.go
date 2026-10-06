@@ -195,6 +195,7 @@ func TestHistoryOfTimelinesEveryCommitWithItsLinkedLayer(t *testing.T) {
 	f.expectOneHop(seeds,
 		[]entities.Edge{histPRTouchesMid, histIssueTouchesOld},
 		histPRMeta, histIssueMeta)
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.HistoryOf(context.Background(), histRequest())
 	if err != nil {
@@ -258,6 +259,30 @@ func TestHistoryOfReportsAnUnsyncedCommitAsAGapAndKeepsTheRest(t *testing.T) {
 	}
 	assertGaps(t, bundle.Gaps, []string{whyUnsyncedGap(histShaNew), whyUnsyncedGap(histShaMid)})
 	assertHistAnchor(t, bundle.Anchor, []string{histShaNew, histShaMid, histShaOld})
+}
+
+func TestHistoryOfReportsOneIndexLevelGapWhenNothingIsLinked(t *testing.T) {
+	t.Parallel()
+
+	f := newHistFixture(t)
+	f.expectLog(histLog...)
+	f.expectResolve(histShaNew)
+	f.expectResolve(histShaMid, histMidMeta)
+	f.expectResolve(histShaOld, histOldMeta)
+	seeds := []lore.DocID{histMidID, histOldID}
+	f.expectMetas(seeds, histMidMeta, histOldMeta)
+	f.expectNeighbors(seeds)
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(false, nil)
+
+	bundle, err := f.svc.HistoryOf(context.Background(), histRequest())
+	if err != nil {
+		t.Fatalf("HistoryOf: %v", err)
+	}
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{histOldID, histMidID})
+	assertGaps(t, bundle.Gaps, []string{
+		"trail ends at commit cccccccccccc, not synced from a source",
+		indexUnlinkedGap,
+	})
 }
 
 func TestHistoryOfBoundsTheWindowServerSide(t *testing.T) {
@@ -611,6 +636,18 @@ func TestHistoryOfSurfacesGitAndStoreFailures(t *testing.T) {
 			},
 			cause:    errHistStore,
 			contains: []string{"provenance graph"},
+		},
+		{
+			name: "unreadable index links",
+			arrange: func(f histFixture) {
+				f.expectLog(histLog[2])
+				f.expectResolve(histShaOld, histOldMeta)
+				f.expectMetas([]lore.DocID{histOldID}, histOldMeta)
+				f.expectNeighbors([]lore.DocID{histOldID})
+				f.store.EXPECT().HasEdges(gomock.Any()).Return(false, errHistStore)
+			},
+			cause:    errHistStore,
+			contains: []string{"index holds links"},
 		},
 	}
 

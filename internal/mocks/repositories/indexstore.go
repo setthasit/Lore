@@ -57,18 +57,18 @@ func (mr *MockIndexStoreMockRecorder) Close() *gomock.Call {
 }
 
 // Cursor mocks base method.
-func (m *MockIndexStore) Cursor(ctx context.Context, connector string) (lore.Cursor, error) {
+func (m *MockIndexStore) Cursor(ctx context.Context, instance string) (lore.Cursor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Cursor", ctx, connector)
+	ret := m.ctrl.Call(m, "Cursor", ctx, instance)
 	ret0, _ := ret[0].(lore.Cursor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Cursor indicates an expected call of Cursor.
-func (mr *MockIndexStoreMockRecorder) Cursor(ctx, connector any) *gomock.Call {
+func (mr *MockIndexStoreMockRecorder) Cursor(ctx, instance any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cursor", reflect.TypeOf((*MockIndexStore)(nil).Cursor), ctx, connector)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cursor", reflect.TypeOf((*MockIndexStore)(nil).Cursor), ctx, instance)
 }
 
 // DeletePendingRefs mocks base method.
@@ -113,6 +113,21 @@ func (m *MockIndexStore) DocumentsWithBody(ctx context.Context, ids []lore.DocID
 func (mr *MockIndexStoreMockRecorder) DocumentsWithBody(ctx, ids any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DocumentsWithBody", reflect.TypeOf((*MockIndexStore)(nil).DocumentsWithBody), ctx, ids)
+}
+
+// HasEdges mocks base method.
+func (m *MockIndexStore) HasEdges(ctx context.Context) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HasEdges", ctx)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HasEdges indicates an expected call of HasEdges.
+func (mr *MockIndexStoreMockRecorder) HasEdges(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasEdges", reflect.TypeOf((*MockIndexStore)(nil).HasEdges), ctx)
 }
 
 // HeartbeatLease mocks base method.
@@ -263,17 +278,17 @@ func (mr *MockIndexStoreMockRecorder) SearchVector(ctx, embedding, f, k any) *go
 }
 
 // SetCursor mocks base method.
-func (m *MockIndexStore) SetCursor(ctx context.Context, connector string, c lore.Cursor) error {
+func (m *MockIndexStore) SetCursor(ctx context.Context, instance string, c lore.Cursor) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetCursor", ctx, connector, c)
+	ret := m.ctrl.Call(m, "SetCursor", ctx, instance, c)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetCursor indicates an expected call of SetCursor.
-func (mr *MockIndexStoreMockRecorder) SetCursor(ctx, connector, c any) *gomock.Call {
+func (mr *MockIndexStoreMockRecorder) SetCursor(ctx, instance, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetCursor", reflect.TypeOf((*MockIndexStore)(nil).SetCursor), ctx, connector, c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetCursor", reflect.TypeOf((*MockIndexStore)(nil).SetCursor), ctx, instance, c)
 }
 
 // SetMeta mocks base method.

@@ -94,6 +94,7 @@ func (f traceFixture) expectAnchorWithBody(anchor entities.DocumentMeta, body st
 func (f traceFixture) expectStandaloneAnchor(anchor entities.DocumentMeta, body string) {
 	f.expectAnchorWithBody(anchor, body)
 	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 }
 
 func (f traceFixture) expectFocusSearch(focus string, anchor lore.DocID, lexical, semantic []entities.ChunkHit) {
@@ -307,6 +308,7 @@ func TestTraceWalksTheRequestedDirection(t *testing.T) {
 			f := newTraceFixture(t)
 			f.expectAnchor(anchor)
 			f.expectNeighbors(tc.want, []lore.DocID{anchor.ID})
+			f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 			_, err := f.svc.Trace(context.Background(),
 				services.TraceRequest{Ref: traceRef, Direction: tc.direction})
@@ -493,6 +495,7 @@ func TestTraceDropsNeighbourWithoutURL(t *testing.T) {
 	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID}, traceEdge(anchor.ID, uncitable.ID))
 	f.expectMetas([]lore.DocID{uncitable.ID}, uncitable)
 	f.expectNeighbors(entities.DirBoth, []lore.DocID{uncitable.ID})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if err != nil {
@@ -512,6 +515,7 @@ func TestTraceReportsAStandaloneAnchor(t *testing.T) {
 	f := newTraceFixture(t)
 	f.expectAnchor(anchor)
 	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.Trace(context.Background(), services.TraceRequest{Ref: traceRef})
 	if err != nil {
@@ -522,6 +526,24 @@ func TestTraceReportsAStandaloneAnchor(t *testing.T) {
 	if len(bundle.Chains) != 0 {
 		t.Errorf("Chains = %v, want none: the anchor has no neighbourhood", bundle.Chains)
 	}
+}
+
+func TestTraceReportsOneIndexLevelGapWhenNothingIsLinked(t *testing.T) {
+	t.Parallel()
+
+	anchor := traceMeta("docA", traceDate(2021, time.June, 1))
+	f := newTraceFixture(t)
+	f.expectAnchorWithBody(anchor, traceOversizeBody)
+	f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID})
+	f.expectFocusSearch(traceFocus, anchor.ID, nil, nil)
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(false, nil)
+
+	bundle := f.mustTrace(t, services.TraceRequest{Ref: traceRef, Focus: traceFocus})
+	assertStandaloneExcerpt(t, bundle, traceOversizeExcerpt)
+	assertGaps(t, bundle.Gaps, []string{
+		indexUnlinkedGap,
+		`focus "how fast forward uses a closed form" matched no passage of decision: docA (docA)`,
+	})
 }
 
 func TestTraceCapsTheAnchorBody(t *testing.T) {
@@ -931,6 +953,14 @@ func TestTraceClassifiesStoreFailures(t *testing.T) {
 					Return(nil, errTraceStore)
 			},
 			named: "graph",
+		},
+		"index links": {
+			expect: func(f traceFixture) {
+				f.expectAnchor(anchor)
+				f.expectNeighbors(entities.DirBoth, []lore.DocID{anchor.ID})
+				f.store.EXPECT().HasEdges(gomock.Any()).Return(false, errTraceStore)
+			},
+			named: "index holds links",
 		},
 	}
 

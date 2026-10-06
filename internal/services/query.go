@@ -88,13 +88,17 @@ func (q *queryService) FindDecision(ctx context.Context, req FindDecisionRequest
 	}
 
 	found := rank(rankRequest{Seeds: seeds, Walk: walked, Window: event.Window, Now: q.now()})
+	standalone, err := collapseUnlinked(ctx, q.store, found.Gaps)
+	if err != nil {
+		return nil, err
+	}
 
 	return &entities.EvidenceBundle{
 		Question: question,
 		Anchor:   anchorOf(question, event.Window),
 		Nodes:    found.Nodes,
 		Chains:   found.Chains,
-		Gaps:     gapsOf(event.Gap, found.Gaps),
+		Gaps:     gapsOf(event.Gap, standalone),
 	}, nil
 }
 

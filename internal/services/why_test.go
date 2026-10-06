@@ -488,6 +488,7 @@ func TestWhyReportsAStandaloneBlamedCommitAsAGap(t *testing.T) {
 	f.expectMetas([]lore.DocID{whyCommitAID}, whyCommitAMeta)
 	f.expectNeighbors([]lore.DocID{whyCommitAID})
 	f.expectSearch(whyEmbedText(whyAsked, whyCode(whyFirstA), whyCommitAMeta.Title))
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.Why(context.Background(), whyRequest())
 	if err != nil {
@@ -497,6 +498,56 @@ func TestWhyReportsAStandaloneBlamedCommitAsAGap(t *testing.T) {
 	assertWhyNodes(t, bundle.Nodes, []lore.DocID{whyCommitAID})
 	want := whyCommitAMeta.Title + " (" + string(whyCommitAID) + ") stands alone; no linked discussion"
 	assertGaps(t, bundle.Gaps, []string{want})
+}
+
+func TestWhyReportsOneIndexLevelGapWhenNothingIsLinked(t *testing.T) {
+	t.Parallel()
+
+	f := newWhyFixture(t)
+	f.expectBlame(whyLineStart, whyLineEnd, whyFirstA, whyOnlyB, whyOnlyC)
+	f.expectResolve(whyShaA, whyCommitAMeta)
+	f.expectResolve(whyShaB, whyCommitBMeta)
+	f.expectResolve(whyShaC)
+	seeds := []lore.DocID{whyCommitAID, whyCommitBID}
+	f.expectMetas(seeds, whyCommitAMeta, whyCommitBMeta)
+	f.expectNeighbors(seeds)
+	f.expectSearch(whyEmbedText(whyAsked,
+		whyCode(whyFirstA)+"\n"+whyCode(whyOnlyB)+"\n"+whyCode(whyOnlyC),
+		whyCommitAMeta.Title+"\n"+whyCommitBMeta.Title))
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(false, nil)
+
+	bundle, err := f.svc.Why(context.Background(), whyRequest())
+	if err != nil {
+		t.Fatalf("Why: %v", err)
+	}
+	assertWhyNodes(t, bundle.Nodes, []lore.DocID{whyCommitBID, whyCommitAID})
+	assertGaps(t, bundle.Gaps, []string{
+		"trail ends at commit 333333333333, not synced from a source",
+		indexUnlinkedGap,
+	})
+}
+
+func TestWhyClassifiesIndexLinkCheckFailure(t *testing.T) {
+	t.Parallel()
+
+	f := newWhyFixture(t)
+	f.expectBlame(whyLineStart, whyLineEnd, whyFirstA)
+	f.expectResolve(whyShaA, whyCommitAMeta)
+	f.expectMetas([]lore.DocID{whyCommitAID}, whyCommitAMeta)
+	f.expectNeighbors([]lore.DocID{whyCommitAID})
+	f.expectSearch(whyEmbedText(whyAsked, whyCode(whyFirstA), whyCommitAMeta.Title))
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(false, errWhyStore)
+
+	bundle, err := f.svc.Why(context.Background(), whyRequest())
+	if bundle != nil {
+		t.Errorf("bundle = %+v, want none alongside a failure", bundle)
+	}
+	if internalerror.KindOf(err) != internalerror.KindInternal || !errors.Is(err, errWhyStore) {
+		t.Fatalf("error = %v (%s), want internal wrapping the store failure", err, internalerror.KindOf(err))
+	}
+	if internalerror.MessageOf(err) != "checking whether the index holds links failed" {
+		t.Errorf("error = %q, want the link check failure", err)
+	}
 }
 
 func TestWhyRefusesAFileAbsentAtHEADWithoutBlaming(t *testing.T) {

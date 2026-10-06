@@ -77,13 +77,17 @@ func (h *historyService) HistoryOf(ctx context.Context, req HistoryRequest) (*en
 
 	nodes := historyNodes(commits, walked)
 	chains := assembleChains(walked.Paths, walked.SeedLinks, nodes)
+	standalone, err := collapseUnlinked(ctx, h.store, standaloneSeedGaps(nodes, chains))
+	if err != nil {
+		return nil, err
+	}
 
 	return &entities.EvidenceBundle{
 		Question: history.question(),
 		Anchor:   history.evidenceAnchor(windowSHAs(window)),
 		Nodes:    nodes,
 		Chains:   chains,
-		Gaps:     append(unsynced, standaloneSeedGaps(nodes, chains)...),
+		Gaps:     append(unsynced, standalone...),
 	}, nil
 }
 

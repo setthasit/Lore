@@ -33,6 +33,8 @@ const (
 
 const queryScoreEpsilon = 1e-6
 
+const indexUnlinkedGap = "the index holds no links between documents, so no result has linked discussion. Add a source whose documents reference each other, or register a code clone under repos"
+
 // Fixtures predate the recency horizon, so the time prior clamps to the same factor for every document.
 const queryRecencyPrior = 0.8
 
@@ -168,6 +170,7 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 	lifted := []lore.DocID{"docA", "docB", "docC"}
 	f.expectSeedLoad(lifted, queryMeta("docC"), queryMeta("docA"), queryMeta("docB"))
 	f.expectNeighbors(lifted)
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{
 		Question: "  " + question + "\n",
@@ -231,6 +234,50 @@ func TestFindDecisionFusesAndLiftsToDocuments(t *testing.T) {
 		if bundle.Nodes[i-1].Score < bundle.Nodes[i].Score {
 			t.Errorf("nodes are not descending: %v then %v", bundle.Nodes[i-1].Score, bundle.Nodes[i].Score)
 		}
+	}
+}
+
+func TestFindDecisionReportsOneIndexLevelGapWhenNothingIsLinked(t *testing.T) {
+	t.Parallel()
+
+	for _, around := range []string{"", "incident X"} {
+		t.Run("around="+around, func(t *testing.T) {
+			t.Parallel()
+
+			const question = "why did we choose option B?"
+			f := newQueryFixture(t)
+			want := []string{indexUnlinkedGap}
+			if around != "" {
+				f.expectRetrieval(around, gomock.Eq(entities.Filters{}), nil, nil)
+				want = []string{
+					`could not resolve event "incident X" to a time — nothing in the index matched the event text`,
+					indexUnlinkedGap,
+				}
+			}
+			ids := []lore.DocID{"docA", "docB", "docC", "docD", "docE"}
+			var hits []entities.ChunkHit
+			var metas []entities.DocumentMeta
+			for _, id := range ids {
+				hits = append(hits, queryHit(id, 0))
+				metas = append(metas, queryMeta(id))
+			}
+			f.expectRetrieval(question, gomock.Any(), hits, nil)
+			f.expectSeedLoad(ids, metas...)
+			f.expectNeighbors(ids)
+			f.store.EXPECT().HasEdges(gomock.Any()).Return(false, nil)
+
+			bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{
+				Question: question,
+				Around:   around,
+			})
+			if err != nil {
+				t.Fatalf("FindDecision: %v", err)
+			}
+			if len(bundle.Nodes) != 5 || len(bundle.Chains) != 0 {
+				t.Errorf("bundle = %+v, want five unlinked seeds", bundle)
+			}
+			assertGaps(t, bundle.Gaps, want)
+		})
 	}
 }
 
@@ -298,6 +345,7 @@ func TestFindDecisionDropsNodesWithoutURL(t *testing.T) {
 	f.expectLoad([]lore.DocID{"docA", "docB", "docC"}, queryMeta("docA"), urlless)
 	f.expectLoad([]lore.DocID{"docA"}, queryMeta("docA"))
 	f.expectNeighbors([]lore.DocID{"docA"})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
@@ -444,6 +492,7 @@ func TestFindDecisionProceedsUnwindowedWhenEventUnresolved(t *testing.T) {
 	f.expectRetrieval(question, gomock.Eq(entities.Filters{}), []entities.ChunkHit{queryHit("docA", 0)}, nil)
 	f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
 	f.expectNeighbors([]lore.DocID{"docA"})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{
 		Question: question,
@@ -619,6 +668,7 @@ func TestFindDecisionReportsSeedsTheWalkNeverLeaves(t *testing.T) {
 	f.expectNeighbors([]lore.DocID{"docA", "docB"}, edge)
 	f.expectLoad([]lore.DocID{"docPR"}, queryMeta("docPR"))
 	f.expectNeighbors([]lore.DocID{"docPR"})
+	f.store.EXPECT().HasEdges(gomock.Any()).Return(true, nil)
 
 	bundle, err := f.svc.FindDecision(context.Background(), services.FindDecisionRequest{Question: question})
 	if err != nil {
@@ -721,6 +771,15 @@ func TestFindDecisionClassifiesStoreFailures(t *testing.T) {
 				Return(nil, nil)
 			f.store.EXPECT().DocumentsByID(gomock.Any(), []lore.DocID{"docA"}).
 				Return(nil, errQueryStore)
+		},
+		"index links": func(f queryFixture) {
+			f.store.EXPECT().SearchLexical(gomock.Any(), question, gomock.Any(), queryTopK).
+				Return([]entities.ChunkHit{queryHit("docA", 0)}, nil)
+			f.store.EXPECT().SearchVector(gomock.Any(), queryVector, gomock.Any(), queryTopK).
+				Return(nil, nil)
+			f.expectSeedLoad([]lore.DocID{"docA"}, queryMeta("docA"))
+			f.expectNeighbors([]lore.DocID{"docA"})
+			f.store.EXPECT().HasEdges(gomock.Any()).Return(false, errQueryStore)
 		},
 	}
 
