@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -169,6 +170,19 @@ func (c *Connector) document(ctx context.Context, p *page) (lore.Document, error
 	found.AddURLs(text)
 	found.AddCommitSHAs(text)
 	found.AddFilePaths(text)
+	for _, name := range slices.Sorted(maps.Keys(p.Properties)) {
+		prop := p.Properties[name]
+		if prop.Type != "relation" {
+			continue
+		}
+		ids, err := c.client.relationIDs(ctx, p.ID, prop)
+		if err != nil {
+			return lore.Document{}, fmt.Errorf("page %s: %w", p.ID, err)
+		}
+		for _, id := range ids {
+			found.AddScoped(lore.RefKindURL, "https://www.notion.so/"+normalizeID(id), c.instance)
+		}
+	}
 
 	return lore.Document{
 		ID:        c.docID(p.ID),

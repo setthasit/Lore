@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"iter"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -122,6 +124,38 @@ func xrefNotionPages() (lore.Document, lore.Document) {
 	return source, target
 }
 
+func xrefNotionRelationPages() (lore.Document, lore.Document) {
+	source, target := xrefNotionPages()
+	source.Title = "Demo Log row"
+	source.Body = "Demo completed."
+	source.Refs[0].Instance = source.Source
+	return source, target
+}
+
+type xrefSource struct {
+	instance string
+	docs     []lore.Document
+}
+
+func (s xrefSource) Name() string { return s.instance }
+
+func (s xrefSource) Changes(context.Context, lore.Cursor) iter.Seq2[lore.Batch, error] {
+	return func(yield func(lore.Batch, error) bool) {
+		yield(lore.Batch{Docs: s.docs, Cursor: lore.Cursor{"fixture": "complete"}}, nil)
+	}
+}
+
+func xrefSync(t *testing.T, store *sqlite.Store, docs ...lore.Document) {
+	t.Helper()
+	source := xrefSource{instance: docs[0].Source, docs: docs}
+	syncer := NewSyncOrchestrator(store, []lore.Connector{source}, NewChunker(),
+		leaseEmbedder{}, NewLinkResolver(store, nil), NewVectorSpace("fixture", "local", xrefDims))
+	result, err := syncer.Sync(context.Background(), SyncOptions{})
+	if err != nil || len(result.Failures) != 0 {
+		t.Fatalf("Sync: result=%+v, error=%v", result, err)
+	}
+}
+
 func xrefEdges(t *testing.T, s *sqlite.Store, ids ...lore.DocID) []entities.Edge {
 	t.Helper()
 
@@ -231,6 +265,84 @@ func TestLinkResolverLinksANotionPageWrittenInAnotherURLForm(t *testing.T) {
 		Confidence: 1.0,
 	}})
 	xrefAssertPending(t, "pending refs", xrefPending(t, store), nil)
+}
+
+func TestLinkResolverLinksANotionRowToItsRelatedPage(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+	row, target := xrefNotionRelationPages()
+	xrefSync(t, store, row, target)
+
+	xrefAssertEdges(t, "relation edges after sync", xrefEdges(t, store, row.ID), []entities.Edge{{
+		Src: row.ID, Dst: target.ID, Kind: entities.EdgeKindReferencesDoc, Confidence: 1,
+	}})
+	xrefAssertPending(t, "pending relation refs", xrefPending(t, store), nil)
+
+	stats, err := NewStatusService(store, "").Status(ctx)
+	if err != nil || stats.Edges != 1 {
+		t.Fatalf("Status: edges=%d, error=%v", stats.Edges, err)
+	}
+	trace, err := NewTraceService(store, nil).Trace(ctx, TraceRequest{Ref: row.URL, Direction: "out"})
+	if err != nil {
+		t.Fatalf("Trace row: %v", err)
+	}
+	if len(trace.Nodes) != 2 || !slices.ContainsFunc(trace.Nodes, func(node entities.EvidenceNode) bool {
+		return node.Doc.ID == target.ID
+	}) {
+		t.Fatalf("Trace must include the related page: %v", trace.Nodes)
+	}
+}
+
+func TestLinkResolverLinksAllThirtyRelationTargets(t *testing.T) {
+	store := xrefStore(t)
+	row, _ := xrefNotionRelationPages()
+	row.Refs = nil
+	docs := []lore.Document{row}
+	var want []entities.Edge
+	for i := 1; i <= 30; i++ {
+		target := lore.Document{
+			ID: lore.NewDocID("notion", lore.DocTypePage,
+				fmt.Sprintf("90000000-0000-4000-8000-%012d", i)),
+			Source: "notion", Type: lore.DocTypePage, Title: fmt.Sprintf("Session %d", i),
+			Body: "Session notes.",
+			URL:  fmt.Sprintf("https://app.notion.com/p/Session-%d-90000000000040008000%012d", i, i),
+		}
+		row.Refs = append(row.Refs, lore.RawRef{Kind: lore.RefKindURL, Instance: "notion",
+			Value: fmt.Sprintf("https://www.notion.so/90000000000040008000%012d", i)})
+		docs = append(docs, target)
+		want = append(want, entities.Edge{Src: row.ID, Dst: target.ID,
+			Kind: entities.EdgeKindReferencesDoc, Confidence: 1})
+	}
+	docs[0] = row
+	xrefSync(t, store, docs...)
+	xrefAssertEdges(t, "all relation edges after sync", xrefEdges(t, store, row.ID), want)
+	xrefAssertPending(t, "pending relation refs", xrefPending(t, store), nil)
+}
+
+func TestLinkResolverKeepsARelationToAnUnindexedPagePending(t *testing.T) {
+	ctx := context.Background()
+	store := xrefStore(t)
+	row, target := xrefNotionRelationPages()
+	foreign := target
+	foreign.Source = "notion-other"
+	foreign.ID = lore.NewDocID(foreign.Source, lore.DocTypePage, "3e7a409f-814e-80a9-8644-fc0217b75f69")
+	xrefIngest(t, store, foreign)
+	xrefSync(t, store, row)
+
+	wantPending := []entities.PendingRef{{SourceDoc: row.ID, Ref: row.Refs[0]}}
+	xrefAssertEdges(t, "out-of-scope relation edges after sync", xrefEdges(t, store, row.ID), nil)
+	xrefAssertPending(t, "pending relation refs", xrefPending(t, store), wantPending)
+	if err := NewLinkResolver(store, nil).LinkPending(ctx); err != nil {
+		t.Fatalf("LinkPending without own target: %v", err)
+	}
+	xrefAssertEdges(t, "out-of-scope relation edges after retry", xrefEdges(t, store, row.ID), nil)
+	xrefAssertPending(t, "pending relation refs after retry", xrefPending(t, store), wantPending)
+
+	xrefSync(t, store, target)
+	xrefAssertEdges(t, "relation edges after own target sync", xrefEdges(t, store, row.ID), []entities.Edge{{
+		Src: row.ID, Dst: target.ID, Kind: entities.EdgeKindReferencesDoc, Confidence: 1,
+	}})
+	xrefAssertPending(t, "pending relation refs after own target sync", xrefPending(t, store), nil)
 }
 
 func TestLinkResolverResolvesANotionLinkOnceItsPageArrives(t *testing.T) {

@@ -3,6 +3,7 @@ package notion
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +141,23 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeFixture(w, "block_"+short(id)+".json")
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/pages/"):
+		if row, prop, ok := strings.Cut(strings.TrimPrefix(r.URL.EscapedPath(), "/v1/pages/"), "/properties/"); ok {
+			if r.URL.Query().Get("page_size") != "100" {
+				s.t.Errorf("property page_size = %q, want 100", r.URL.Query().Get("page_size"))
+			}
+			name := "property_" + short(row) + "_" + prop
+			switch cursor := r.URL.Query().Get("start_cursor"); cursor {
+			case "":
+			case "cursor +/=&page_size=1":
+				name += "_2"
+			default:
+				s.t.Errorf("unexpected property cursor %q", cursor)
+				http.Error(w, "unexpected cursor", http.StatusBadRequest)
+				return
+			}
+			s.writeFixture(w, name+".json")
+			return
+		}
 		s.writeFixture(w, "page_"+short(strings.TrimPrefix(r.URL.Path, "/v1/pages/"))+".json")
 	default:
 		s.t.Errorf("unexpected request %s", route)
@@ -205,6 +223,25 @@ func (s *stub) writeFixture(w http.ResponseWriter, name string) {
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(body); err != nil {
 		s.t.Errorf("write fixture %s: %v", name, err)
+	}
+}
+
+func (s *stub) searchRowFixture(name string) {
+	s.t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		s.t.Fatalf("read row fixture: %v", err)
+	}
+	s.hook = func(method, path string, w http.ResponseWriter) bool {
+		if method+" "+path != "POST /v1/search" {
+			return false
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"results": []json.RawMessage{body}, "has_more": false,
+		}); err != nil {
+			s.t.Errorf("write row search: %v", err)
+		}
+		return true
 	}
 }
 
@@ -657,14 +694,151 @@ func TestReferenceExtraction(t *testing.T) {
 		t.Fatalf("Changes: %v", got.err)
 	}
 
-	want := []lore.RawRef{
+	if refs := docsByID(got.batches)[decisionID].Refs; !slices.Equal(refs, wantDecisionTextRefs()) {
+		t.Errorf("refs of %s\n got %v\nwant %v", decisionID, refs, wantDecisionTextRefs())
+	}
+}
+
+func wantDecisionTextRefs() []lore.RawRef {
+	return []lore.RawRef{
 		{Kind: lore.RefKindTicketKey, Value: "PROJ-123"},
 		{Kind: lore.RefKindTicketKey, Value: "PROJ-456"},
 		{Kind: lore.RefKindURL, Value: "https://acme.atlassian.net/browse/PROJ-123"},
 		{Kind: lore.RefKindFilePath, Value: "internal/auth/session.go"},
 	}
+}
+
+func TestRelationPropertyBecomesAScopedRef(t *testing.T) {
+	s := newStub(t)
+	s.searchRowFixture("page_relation.json")
+	for _, instance := range []string{"notion-acme", "notion-other"} {
+		t.Run(instance, func(t *testing.T) {
+			want := append(wantDecisionTextRefs(),
+				lore.RawRef{Kind: lore.RefKindURL, Value: "https://www.notion.so/11111111111141118111111111111111", Instance: instance},
+				lore.RawRef{Kind: lore.RefKindURL, Value: "https://www.notion.so/44444444444444448444444444444444", Instance: instance},
+				lore.RawRef{Kind: lore.RefKindURL, Value: "https://www.notion.so/66666666666646668666666666666666", Instance: instance},
+			)
+			for range 20 {
+				got := drain(t, s.instanceConnector(instance, []string{decisionPageID}), nil)
+				if got.err != nil {
+					t.Fatalf("Changes: %v", got.err)
+				}
+				docs := allDocs(got.batches)
+				if len(docs) != 1 {
+					t.Fatalf("got %d documents, want the row only", len(docs))
+				}
+				d := docs[0]
+				if !slices.Equal(d.Refs, want) {
+					t.Fatalf("refs\n got %v\nwant %v", d.Refs, want)
+				}
+				if d.Title != "Auth Rework Decision" || d.Body != decisionBody {
+					t.Fatalf("relation changed title/body: %q / %q", d.Title, d.Body)
+				}
+			}
+		})
+	}
+	for _, prop := range []string{"alpha", "sess:", "zeta", "empty", "notes"} {
+		if n := s.callCount("GET /v1/pages/" + decisionPageID + "/properties/" + prop); n != 0 {
+			t.Errorf("inline/non-relation property %s fetched %d times", prop, n)
+		}
+	}
+}
+
+func TestLongRelationIsPagedToTheEnd(t *testing.T) {
+	s := newStub(t)
+	s.searchRowFixture("page_long_relation.json")
+	got := drain(t, s.connector([]string{decisionPageID}), nil)
+	if got.err != nil {
+		t.Fatalf("Changes: %v", got.err)
+	}
+	want := wantDecisionTextRefs()
+	for i := 1; i <= 30; i++ {
+		want = append(want, lore.RawRef{Kind: lore.RefKindURL,
+			Value: fmt.Sprintf("https://www.notion.so/90000000000040008000%012d", i), Instance: defaultInstance})
+	}
 	if refs := docsByID(got.batches)[decisionID].Refs; !slices.Equal(refs, want) {
-		t.Errorf("refs of %s\n got %v\nwant %v", decisionID, refs, want)
+		t.Fatalf("refs\n got %v\nwant %v", refs, want)
+	}
+	if n := s.callCount("GET /v1/pages/" + decisionPageID + "/properties/sess:"); n != 2 {
+		t.Errorf("property requests = %d, want exactly two result pages", n)
+	}
+}
+
+func TestRelationFetchErrorFailsThePage(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		calls  int
+		want   string
+	}{
+		{name: "access denied", status: http.StatusForbidden, body: `{"message":"denied"}`, calls: 1, want: "403"},
+		{name: "not found", status: http.StatusNotFound, body: `{"message":"missing"}`, calls: 1, want: "404"},
+		{name: "retry exhausted", status: http.StatusServiceUnavailable, body: `{"message":"unavailable"}`, calls: 3, want: "3 attempts"},
+		{name: "invalid JSON", status: http.StatusOK, body: `{`, calls: 1, want: "decode"},
+		{name: "invalid relation shape", status: http.StatusOK, body: `{"results":[{"relation":[]}]}`, calls: 1, want: "decode"},
+		{name: "missing cursor", status: http.StatusOK, body: `{"results":[],"has_more":true}`, calls: 1, want: "cursor"},
+		{name: "repeated cursor", status: http.StatusOK, body: `{"results":[],"has_more":true,"next_cursor":"cursor +/=&page_size=1"}`, calls: 1, want: "cursor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newStub(t)
+			s.searchRowFixture("page_long_relation.json")
+			searchHook := s.hook
+			route := "GET /v1/pages/" + decisionPageID + "/properties/sess:"
+			s.hook = func(method, path string, w http.ResponseWriter) bool {
+				if method+" "+path != route || s.callCount(route) == 1 {
+					return searchHook(method, path, w)
+				}
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+				return true
+			}
+			got := drain(t, s.connector([]string{decisionPageID}), nil)
+			if got.err == nil {
+				t.Fatal("Changes succeeded despite a failed relation result page")
+			}
+			for _, want := range []string{"page " + decisionPageID, tt.want} {
+				if !strings.Contains(got.err.Error(), want) {
+					t.Errorf("error %q must mention %q", got.err, want)
+				}
+			}
+			if len(got.batches) != 0 {
+				t.Errorf("failed row yielded %d batches", len(got.batches))
+			}
+			if n := s.callCount(route); n != 1+tt.calls {
+				t.Errorf("property requests = %d, want %d", n, 1+tt.calls)
+			}
+		})
+	}
+}
+
+func TestRelationFetchRetriesThrottling(t *testing.T) {
+	s := newStub(t)
+	s.searchRowFixture("page_long_relation.json")
+	searchHook := s.hook
+	route := "GET /v1/pages/" + decisionPageID + "/properties/sess:"
+	s.hook = func(method, path string, w http.ResponseWriter) bool {
+		if method+" "+path != route || s.callCount(route) != 2 {
+			return searchHook(method, path, w)
+		}
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"slow down"}`))
+		return true
+	}
+	got := drain(t, s.connector([]string{decisionPageID}), nil)
+	if got.err != nil {
+		t.Fatalf("Changes after throttling: %v", got.err)
+	}
+	if refs := docsByID(got.batches)[decisionID].Refs; len(refs) != 34 || refs[33].Value != "https://www.notion.so/90000000000040008000000000000030" {
+		t.Fatalf("retried relation lost its last result: %v", refs)
+	}
+	if n := s.callCount(route); n != 3 {
+		t.Errorf("property requests = %d, want two result pages and one retry", n)
+	}
+	if delays := s.sleeps(); !slices.Equal(delays, []time.Duration{time.Second}) {
+		t.Errorf("retry delays = %v, want [1s]", delays)
 	}
 }
 
