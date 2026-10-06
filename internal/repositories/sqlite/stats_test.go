@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,9 @@ func TestStatsEmptyStoreIsZeros(t *testing.T) {
 	if got.Cursors != nil {
 		t.Errorf("Cursors = %v, want none", got.Cursors)
 	}
+	if got.Sources != nil {
+		t.Errorf("Sources = %+v, want none", got.Sources)
+	}
 	if got.Lease != nil {
 		t.Errorf("Lease = %+v, want nil", got.Lease)
 	}
@@ -156,17 +160,20 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 		t.Errorf("Edges = %d, want %d", got.Edges, len(edges))
 	}
 
-	if len(got.Cursors) != 2 {
-		t.Fatalf("Cursors = %+v, want 2 entries", got.Cursors)
+	wantSources := []entities.SourceState{
+		{ID: "github", Documents: 3, LastCheckpoint: stamp},
+		{ID: "jira", Documents: 1},
+		{ID: "notion", Documents: 1, LastCheckpoint: stamp},
 	}
-	if got.Cursors[0].Connector != "github" || got.Cursors[1].Connector != "notion" {
-		t.Errorf("Cursors order = %q, %q; want github, notion",
-			got.Cursors[0].Connector, got.Cursors[1].Connector)
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("Sources = %+v, want %+v", got.Sources, wantSources)
 	}
-	for _, age := range got.Cursors {
-		if !age.UpdatedAt.Equal(stamp) {
-			t.Errorf("%s UpdatedAt = %s, want %s", age.Connector, age.UpdatedAt, stamp)
-		}
+	wantCursors := []entities.CursorAge{
+		{Connector: "github", UpdatedAt: stamp},
+		{Connector: "notion", UpdatedAt: stamp},
+	}
+	if !slices.Equal(got.Cursors, wantCursors) {
+		t.Errorf("Cursors = %+v, want %+v", got.Cursors, wantCursors)
 	}
 
 	if got.Lease == nil {
@@ -189,8 +196,11 @@ func TestStatsReportsCountsCursorsAndLease(t *testing.T) {
 	if got.Lease != nil {
 		t.Errorf("Lease = %+v, want nil after release", got.Lease)
 	}
-	if len(got.Cursors) != 2 {
-		t.Errorf("Cursors = %+v, want 2 entries after release", got.Cursors)
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("Sources after release = %+v, want %+v", got.Sources, wantSources)
+	}
+	if !slices.Equal(got.Cursors, wantCursors) {
+		t.Errorf("Cursors after release = %+v, want %+v", got.Cursors, wantCursors)
 	}
 }
 
@@ -214,10 +224,107 @@ func TestStatsCursorAgeAdvancesWithEveryCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
+	wantSources := []entities.SourceState{{ID: "github", LastCheckpoint: second}}
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("Sources = %+v, want %+v", got.Sources, wantSources)
+	}
 	if len(got.Cursors) != 1 {
 		t.Fatalf("Cursors = %+v, want 1 entry", got.Cursors)
 	}
 	if !got.Cursors[0].UpdatedAt.Equal(second) {
 		t.Errorf("UpdatedAt = %s, want the later checkpoint %s", got.Cursors[0].UpdatedAt, second)
+	}
+}
+
+func TestStatsCountsDocumentsPerSource(t *testing.T) {
+	stamp := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
+	s := openTestStore(t, WithClock(func() time.Time { return stamp }))
+	ctx := context.Background()
+
+	docs := []lore.Document{
+		{ID: lore.NewDocID("notion", lore.DocTypePage, "one"), Source: "notion", Type: lore.DocTypePage},
+		{ID: lore.NewDocID("github", lore.DocTypePR, "one"), Source: "github", Type: lore.DocTypePR},
+		{ID: lore.NewDocID("github", lore.DocTypePR, "two"), Source: "github", Type: lore.DocTypePR},
+		{ID: lore.NewDocID("github", lore.DocTypePR, "three"), Source: "github", Type: lore.DocTypePR},
+	}
+	if err := s.UpsertDocuments(ctx, docs); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+	if err := s.SetCursor(ctx, "notion", lore.Cursor{"page": "one"}); err != nil {
+		t.Fatalf("SetCursor: %v", err)
+	}
+
+	got, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	wantSources := []entities.SourceState{
+		{ID: "github", Documents: 3},
+		{ID: "notion", Documents: 1, LastCheckpoint: stamp},
+	}
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("Sources = %+v, want %+v", got.Sources, wantSources)
+	}
+	wantCursors := []entities.CursorAge{{Connector: "notion", UpdatedAt: stamp}}
+	if !slices.Equal(got.Cursors, wantCursors) {
+		t.Errorf("Cursors = %+v, want %+v", got.Cursors, wantCursors)
+	}
+	if got.Documents != 4 || got.Chunks != 0 || got.Edges != 0 || got.Lease != nil {
+		t.Errorf("Stats = %+v, want 4 documents, 0 chunks, 0 edges, no lease", got)
+	}
+}
+
+func TestStatsDocumentsWithoutCheckpoint(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	doc := lore.Document{ID: lore.NewDocID("jira", lore.DocTypeTicket, "PROJ-1"), Source: "jira", Type: lore.DocTypeTicket}
+	if err := s.UpsertDocuments(ctx, []lore.Document{doc}); err != nil {
+		t.Fatalf("UpsertDocuments: %v", err)
+	}
+
+	got, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	want := []entities.SourceState{{ID: "jira", Documents: 1}}
+	if !slices.Equal(got.Sources, want) {
+		t.Errorf("Sources = %+v, want %+v", got.Sources, want)
+	}
+	if got.Cursors != nil {
+		t.Errorf("Cursors = %+v, want none", got.Cursors)
+	}
+}
+
+func TestStatsCursorOnlySources(t *testing.T) {
+	stamp := time.Date(2025, time.March, 12, 9, 30, 0, 0, time.UTC)
+	clock := stamp
+	s := openTestStore(t, WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	if err := s.SetCursor(ctx, "notion", nil); err != nil {
+		t.Fatalf("SetCursor(notion): %v", err)
+	}
+	later := stamp.Add(time.Hour)
+	clock = later
+	if err := s.SetCursor(ctx, "github", lore.Cursor{"since": "one"}); err != nil {
+		t.Fatalf("SetCursor(github): %v", err)
+	}
+
+	got, err := s.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	wantSources := []entities.SourceState{
+		{ID: "github", LastCheckpoint: later},
+		{ID: "notion", LastCheckpoint: stamp},
+	}
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("Sources = %+v, want %+v", got.Sources, wantSources)
+	}
+	wantCursors := []entities.CursorAge{
+		{Connector: "github", UpdatedAt: later},
+		{Connector: "notion", UpdatedAt: stamp},
+	}
+	if !slices.Equal(got.Cursors, wantCursors) {
+		t.Errorf("Cursors = %+v, want %+v", got.Cursors, wantCursors)
 	}
 }
