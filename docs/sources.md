@@ -549,6 +549,14 @@ arrives as its own document (`plugins/sources/notion/client.go:236-240`).
 Trashed pages are skipped (`connector.go:112`,
 `plugins/sources/notion/client.go:109-110`).
 
+Links between ingested pages resolve by page id across HTTP(S) URLs on
+`notion.so`, `www.notion.so`, `app.notion.com`, and `*.notion.site`, including
+bare or dashed ids, title slugs, workspace paths, and any query or fragment.
+
+A database row's relation properties link the row to each related page that is
+also indexed in the same source instance. A relation longer than 25 entries
+requires extra API calls. Each call retrieves up to 100 entries.
+
 Notion documents carry **no** `RepoRef` and **no** `Author`
 (`plugins/sources/notion/connector.go:173-183`) — the connector never
 asks Notion who anybody is.
@@ -559,6 +567,8 @@ Databases and data sources as objects (a database *parent* just ends the
 ancestor walk — `client.go:87-96`), page comments, users, files and
 attachments, and any page not shared with the integration: `/v1/search`
 returns only what the integration can see.
+
+Other property values are still not indexed as body text.
 
 ### Minimum credential
 

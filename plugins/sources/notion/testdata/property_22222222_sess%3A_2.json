@@ -1,0 +1,14 @@
+{
+  "object": "list",
+  "type": "property_item",
+  "results": [
+    {"object": "property_item", "id": "sess%3A", "type": "relation", "relation": {"id": "90000000-0000-4000-8000-000000000026"}},
+    {"object": "property_item", "id": "sess%3A", "type": "relation", "relation": {"id": "90000000-0000-4000-8000-000000000027"}},
+    {"object": "property_item", "id": "sess%3A", "type": "relation", "relation": {"id": "90000000-0000-4000-8000-000000000028"}},
+    {"object": "property_item", "id": "sess%3A", "type": "relation", "relation": {"id": "90000000-0000-4000-8000-000000000029"}},
+    {"object": "property_item", "id": "sess%3A", "type": "relation", "relation": {"id": "90000000-0000-4000-8000-000000000030"}}
+  ],
+  "has_more": false,
+  "next_cursor": null,
+  "property_item": {"id": "sess%3A", "type": "relation", "relation": {}, "next_url": null}
+}

@@ -69,8 +69,13 @@ type richText struct {
 }
 
 type property struct {
-	Type  string     `json:"type"`
-	Title []richText `json:"title"`
+	ID       string     `json:"id"`
+	Type     string     `json:"type"`
+	Title    []richText `json:"title"`
+	Relation []struct {
+		ID string `json:"id"`
+	} `json:"relation"`
+	HasMore bool `json:"has_more"`
 }
 
 const (
@@ -272,6 +277,45 @@ func (c *client) pageByID(ctx context.Context, id string) (*page, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+
+func (c *client) relationIDs(ctx context.Context, pageID string, prop property) ([]string, error) {
+	var ids []string
+	if !prop.HasMore {
+		for _, relation := range prop.Relation {
+			ids = append(ids, relation.ID)
+		}
+		return ids, nil
+	}
+	cursor := ""
+	for {
+		path := "/v1/pages/" + pageID + "/properties/" + prop.ID + "?page_size=" + strconv.Itoa(pageSize)
+		if cursor != "" {
+			path += "&start_cursor=" + url.QueryEscape(cursor)
+		}
+		var list struct {
+			listPage
+			Results []struct {
+				Relation struct {
+					ID string `json:"id"`
+				} `json:"relation"`
+			} `json:"results"`
+		}
+		if err := c.request(ctx, http.MethodGet, path, nil, &list); err != nil {
+			return nil, err
+		}
+		for _, result := range list.Results {
+			ids = append(ids, result.Relation.ID)
+		}
+		if list.HasMore && (list.NextCursor == "" || list.NextCursor == cursor) {
+			return nil, fmt.Errorf("relation property %s: missing or repeated pagination cursor", prop.ID)
+		}
+		next, ok := list.next()
+		if !ok {
+			return ids, nil
+		}
+		cursor = next
+	}
 }
 
 func (c *client) pageParent(ctx context.Context, id string) (parentRef, error) {
