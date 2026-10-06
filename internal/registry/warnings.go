@@ -6,6 +6,26 @@ import (
 
 type Warnings []string
 
+type CloneCover struct {
+	Name   string
+	Synced bool
+}
+
+func CloneCoverage(clones []LocalClone, sources []lore.Connector) []CloneCover {
+	coverage := make([]CloneCover, 0, len(clones))
+	for _, clone := range clones {
+		name := clone.Remote
+		if name == "" {
+			name = clone.Field + " (no remote)"
+		}
+		coverage = append(coverage, CloneCover{
+			Name:   name,
+			Synced: clone.Remote != "" && ingested(sources, clone.Remote),
+		})
+	}
+	return coverage
+}
+
 func UnmatchedRemotes(clones []LocalClone, sources []lore.Connector) Warnings {
 	var warnings Warnings
 	for _, clone := range clones {
