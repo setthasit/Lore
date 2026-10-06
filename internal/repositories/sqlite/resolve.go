@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -63,10 +64,14 @@ func refClauses(ref string) ([]string, []any) {
 		args = append(args, values...)
 	}
 
-	isURL := strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
+	scheme, _, hasScheme := strings.Cut(ref, "://")
+	isURL := hasScheme && (strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https"))
 	switch {
 	case isURL:
 		add(`url = ?`, ref)
+		if key, ok := notionPageKey(ref); ok {
+			add(`type = ? AND external_key = ?`, string(lore.DocTypePage), key)
+		}
 	case strings.Count(ref, ":") >= docIDSeparators:
 		add(`doc_id = ?`, ref)
 	}
@@ -88,6 +93,46 @@ func refClauses(ref string) ([]string, []any) {
 		add(clause, values...)
 	}
 	return clauses, args
+}
+
+func notionPageKey(ref string) (string, bool) {
+	u, err := url.Parse(ref)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "notion.so", "www.notion.so", "app.notion.com":
+	default:
+		if !strings.HasSuffix(host, ".notion.site") || host == ".notion.site" {
+			return "", false
+		}
+	}
+
+	path := strings.TrimRight(u.Path, "/")
+	segment := path[strings.LastIndexByte(path, '/')+1:]
+	id := segment[strings.LastIndexByte(segment, '-')+1:]
+	const hexIDLen = 32
+	if len(id) != hexIDLen {
+		const uuidLen = 36
+		uuidStart := len(segment) - uuidLen
+		if uuidStart < 0 {
+			return "", false
+		}
+		if uuidStart > 0 && segment[uuidStart-1] != '-' {
+			return "", false
+		}
+		uuid := segment[uuidStart:]
+		if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
+			return "", false
+		}
+		id = strings.ReplaceAll(uuid, "-", "")
+	}
+	if len(id) != hexIDLen || !isHexString(id) {
+		return "", false
+	}
+	id = strings.ToLower(id)
+	return id[:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:], true
 }
 
 func numberRefClause(slug, number string) (string, []any) {
