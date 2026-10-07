@@ -26,12 +26,13 @@ const (
 // Blocks until ctx is done, answering over streamable HTTP the tool calls Serve
 // answers over stdio.
 func ServeHTTP(ctx context.Context, listener net.Listener, svc transport.Services, tlsConfig *tls.Config, sink *secrets.Sink, log *slog.Logger) error {
-	tools := newServer(svc, log)
-
 	mux := http.NewServeMux()
 	// Stateless rejects every server-to-client request: no tool here makes one.
 	mux.Handle(EndpointPath, sdk.NewStreamableHTTPHandler(
-		func(*http.Request) *sdk.Server { return tools },
+		func(r *http.Request) *sdk.Server {
+			instructions := connectInstructions(r.Context(), svc.Status, log)
+			return newServer(svc, log, instructions)
+		},
 		&sdk.StreamableHTTPOptions{Stateless: true, Logger: log},
 	))
 

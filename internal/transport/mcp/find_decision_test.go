@@ -38,9 +38,12 @@ func newToolFixture(t *testing.T) toolFixture {
 
 	ctx := context.Background()
 	f := newMockedTools(t)
+	f.status.EXPECT().Status(ctx).Return(entities.IndexStats{}, nil)
+	log := slog.New(slog.NewTextHandler(f.logs, nil))
+	instructions := connectInstructions(ctx, f.status, log)
 
 	serverTransport, clientTransport := sdk.NewInMemoryTransports()
-	serverSession, err := newServer(f.services(), slog.New(slog.NewTextHandler(f.logs, nil))).Connect(ctx, serverTransport, nil)
+	serverSession, err := newServer(f.services(), log, instructions).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
