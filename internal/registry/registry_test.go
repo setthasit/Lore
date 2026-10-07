@@ -457,3 +457,64 @@ func TestUnmatchedRemotesAsksTheConnectorsRatherThanNamingAForge(t *testing.T) {
 		t.Errorf("warning %q does not name the unmatched clone", warnings[0])
 	}
 }
+
+func TestCloneCoverageNamesByRemoteAndNeverByPath(t *testing.T) {
+	sources := []lore.Connector{
+		stubConnector{name: "notion"},
+		matchingConnector{stubConnector: stubConnector{name: "github"}, remote: "github:acme/myproject"},
+		matchingConnector{stubConnector: stubConnector{name: "empty"}, remote: ""},
+		matchingConnector{stubConnector: stubConnector{name: "forge"}, remote: "forge:acme/app"},
+	}
+	clones := []LocalClone{
+		{Path: "/w/myproject", Remote: "github:acme/myproject", Field: "repos[0]"},
+		{Path: "/w/scratch", Field: "repos[1]"},
+		{Path: "/w/infra", Remote: "github:acme/infra", Field: "repos[2]"},
+		{Path: "/w/app", Remote: "forge:acme/app", Field: "repos[3]"},
+	}
+	want := []CloneCover{
+		{Name: "github:acme/myproject", Synced: true},
+		{Name: "repos[1] (no remote)", Synced: false},
+		{Name: "github:acme/infra", Synced: false},
+		{Name: "forge:acme/app", Synced: true},
+	}
+
+	coverage := CloneCoverage(clones, sources)
+	if len(coverage) != len(want) {
+		t.Fatalf("coverage = %+v, want %d clones", coverage, len(want))
+	}
+	for i, cover := range coverage {
+		if cover != want[i] {
+			t.Errorf("coverage[%d] = %+v, want %+v", i, cover, want[i])
+		}
+		for _, clone := range clones {
+			if strings.Contains(cover.Name, clone.Path) {
+				t.Errorf("coverage name %q contains clone path %q", cover.Name, clone.Path)
+			}
+		}
+	}
+}
+
+func TestCloneCoverageEmptyClones(t *testing.T) {
+	for _, clones := range [][]LocalClone{nil, {}} {
+		if coverage := CloneCoverage(clones, nil); len(coverage) != 0 {
+			t.Errorf("CloneCoverage(%v, nil) = %+v, want no clones", clones, coverage)
+		}
+	}
+}
+
+func TestCloneCoverageWithoutRemoteMatcher(t *testing.T) {
+	clones := []LocalClone{{Path: "/w/myproject", Remote: "github:acme/myproject", Field: "repos[0]"}}
+	for _, sources := range [][]lore.Connector{
+		nil,
+		{stubConnector{name: "github:acme/myproject"}},
+	} {
+		coverage := CloneCoverage(clones, sources)
+		if len(coverage) != 1 {
+			t.Fatalf("coverage = %+v, want one clone", coverage)
+		}
+		want := CloneCover{Name: "github:acme/myproject", Synced: false}
+		if coverage[0] != want {
+			t.Errorf("coverage[0] = %+v, want %+v", coverage[0], want)
+		}
+	}
+}

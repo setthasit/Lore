@@ -7,17 +7,33 @@ type IndexStats struct {
 	Chunks    int64
 	Edges     int64
 
-	// One entry per connector that has ever checkpointed, ordered by connector name.
-	Cursors []CursorAge
+	Sources []SourceState
+	Clones  []CloneState
 
 	// Nil means no holder; a lease lapsed past its TTL is still reported.
 	Lease *LeaseState
 }
 
-// UpdatedAt is when the position was recorded, not a time the connector chose.
-type CursorAge struct {
-	Connector string
-	UpdatedAt time.Time
+type SourceState struct {
+	ID             string
+	Configured     bool
+	Documents      int64
+	LastCheckpoint time.Time // Zero means never checkpointed.
+}
+
+type CloneState struct {
+	Name   string
+	Synced bool
+}
+
+type DeclaredWorkspace struct {
+	Sources []string
+	Clones  []DeclaredClone
+}
+
+type DeclaredClone struct {
+	Name   string
+	Synced bool
 }
 
 type LeaseState struct {

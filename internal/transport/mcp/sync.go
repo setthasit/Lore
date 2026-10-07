@@ -29,7 +29,7 @@ const syncStatusDescription = `Report the state of the index: how much is stored
 
 Use this before trusting a thin or empty evidence bundle from find_decision, why, trace, impact_of or history_of — a source that last checkpointed days ago cannot hold what happened yesterday — and use sync_now to refresh it.
 
-Every age here is whole seconds counted at the moment of this call, never a wall-clock timestamp, so staleness is readable without knowing the current time. sources lists one entry per source that has ever checkpointed, each with last_checkpoint_seconds_ago; a source missing from that list has never been synced. sync_lock.held says whether a round is running, and when it is, holder, held_for_seconds and last_heartbeat_seconds_ago describe it: a heartbeat many minutes old means that holder most likely died, and the next round will take the lock over.`
+Every age here is whole seconds counted at the moment of this call, never a wall-clock timestamp, so staleness is readable without knowing the current time. sources lists every configured source and any indexed source no longer configured, with configured and documents on each entry. A source that has checkpointed has last_checkpoint_seconds_ago. Otherwise never_synced is true and the age is absent. clones lists each registered code clone by remote, or by its repos entry when no remote is declared, and synced says whether a configured source syncs it. No local paths are reported. sync_lock.held says whether a round is running, and when it is, holder, held_for_seconds and last_heartbeat_seconds_ago describe it: a heartbeat many minutes old means that holder most likely died, and the next round will take the lock over.`
 
 const allSources = "all configured sources"
 
@@ -60,12 +60,21 @@ type indexStatus struct {
 	Chunks    int64          `json:"chunks"`
 	Edges     int64          `json:"edges"`
 	Sources   []sourceStatus `json:"sources"`
+	Clones    []cloneStatus  `json:"clones"`
 	SyncLock  syncLock       `json:"sync_lock"`
 }
 
 type sourceStatus struct {
 	Source                   string `json:"source"`
-	LastCheckpointSecondsAgo int64  `json:"last_checkpoint_seconds_ago"`
+	Configured               bool   `json:"configured"`
+	Documents                int64  `json:"documents"`
+	LastCheckpointSecondsAgo *int64 `json:"last_checkpoint_seconds_ago,omitempty"`
+	NeverSynced              bool   `json:"never_synced,omitempty"`
+}
+
+type cloneStatus struct {
+	Name   string `json:"name"`
+	Synced bool   `json:"synced"`
 }
 
 // The ages are pointers: a lock taken this very second still reports both, rather than omitting a zero.
@@ -143,12 +152,22 @@ func newSyncAcknowledgment(log *slog.Logger, source string, result services.Sync
 }
 
 func newIndexStatus(stats entities.IndexStats, now time.Time) indexStatus {
-	sources := make([]sourceStatus, len(stats.Cursors))
-	for i, cursor := range stats.Cursors {
+	sources := make([]sourceStatus, len(stats.Sources))
+	for i, source := range stats.Sources {
 		sources[i] = sourceStatus{
-			Source:                   cursor.Connector,
-			LastCheckpointSecondsAgo: secondsAgo(now, cursor.UpdatedAt),
+			Source:      source.ID,
+			Configured:  source.Configured,
+			Documents:   source.Documents,
+			NeverSynced: source.LastCheckpoint.IsZero(),
 		}
+		if !source.LastCheckpoint.IsZero() {
+			age := secondsAgo(now, source.LastCheckpoint)
+			sources[i].LastCheckpointSecondsAgo = &age
+		}
+	}
+	clones := make([]cloneStatus, len(stats.Clones))
+	for i, clone := range stats.Clones {
+		clones[i] = cloneStatus{Name: clone.Name, Synced: clone.Synced}
 	}
 
 	return indexStatus{
@@ -156,6 +175,7 @@ func newIndexStatus(stats entities.IndexStats, now time.Time) indexStatus {
 		Chunks:    stats.Chunks,
 		Edges:     stats.Edges,
 		Sources:   sources,
+		Clones:    clones,
 		SyncLock:  newSyncLock(stats.Lease, now),
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/setthasit/Lore/internal/config"
+	"github.com/setthasit/Lore/internal/entities"
 	"github.com/setthasit/Lore/internal/errors/internalerror"
 	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
@@ -51,6 +52,7 @@ var PluginModule = fx.Module("plugins", fx.Provide(
 	newVectorSpace,
 	newCompleter,
 	newClones,
+	newDeclaredWorkspace,
 	newCodeRepos,
 	newStartupWarnings,
 ))
@@ -235,6 +237,17 @@ func newCodeRepos(reg *registry.Registry, declared clones) ([]services.CodeRepo,
 
 func newStartupWarnings(sources []lore.Connector, ext externals, declared clones) registry.Warnings {
 	return append(ext.warnings, registry.UnmatchedRemotes(declared, sources)...)
+}
+
+func newDeclaredWorkspace(cfg *config.Config, sources []lore.Connector, declared clones) entities.DeclaredWorkspace {
+	workspace := entities.DeclaredWorkspace{}
+	for _, source := range cfg.Sources {
+		workspace.Sources = append(workspace.Sources, source.Ident())
+	}
+	for _, clone := range registry.CloneCoverage(declared, sources) {
+		workspace.Clones = append(workspace.Clones, entities.DeclaredClone{Name: clone.Name, Synced: clone.Synced})
+	}
+	return workspace
 }
 
 func sourceInstances(cfg *config.Config) ([]registry.Instance, error) {

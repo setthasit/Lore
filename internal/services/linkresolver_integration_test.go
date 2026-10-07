@@ -278,7 +278,7 @@ func TestLinkResolverLinksANotionRowToItsRelatedPage(t *testing.T) {
 	}})
 	xrefAssertPending(t, "pending relation refs", xrefPending(t, store), nil)
 
-	stats, err := NewStatusService(store, "").Status(ctx)
+	stats, err := NewStatusService(store, "", entities.DeclaredWorkspace{Sources: []string{"notion"}}).Status(ctx)
 	if err != nil || stats.Edges != 1 {
 		t.Fatalf("Status: edges=%d, error=%v", stats.Edges, err)
 	}

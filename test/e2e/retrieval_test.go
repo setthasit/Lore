@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"net/http"
@@ -10,15 +11,21 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"unicode"
 
+	"go.uber.org/fx"
+
+	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/registry"
 	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/repositories/sqlite"
 	"github.com/setthasit/Lore/internal/services"
+	"github.com/setthasit/Lore/plugins/code/git"
 	"github.com/setthasit/Lore/plugins/sources/github"
 	"github.com/setthasit/Lore/sdk"
 )
@@ -247,6 +254,10 @@ func newIndexedWorkspace(
 	})
 
 	emb := fakeEmbedder{}
+	declared := entities.DeclaredWorkspace{}
+	for _, connector := range connectors {
+		declared.Sources = append(declared.Sources, connector.Name())
+	}
 
 	return &workspace{
 		api:     api,
@@ -255,7 +266,7 @@ func newIndexedWorkspace(
 		query:   services.NewQueryService(store, emb, services.QueryConfig{TopK: topK}),
 		trace:   services.NewTraceService(store, emb),
 		impact:  services.NewImpactService(store, emb, services.QueryConfig{TopK: topK}),
-		status:  services.NewStatusService(store, fakeSpace),
+		status:  services.NewStatusService(store, fakeSpace, declared),
 		why:     services.NewWhyService(store, emb, services.QueryConfig{TopK: topK}, repos),
 		history: services.NewHistoryService(store, repos),
 	}
@@ -292,6 +303,99 @@ func (w *workspace) ask(ctx context.Context, t *testing.T) *entities.EvidenceBun
 	return bundle
 }
 
+func TestStatusListsImplicitAndExplicitSourceIDsBeforeSync(t *testing.T) {
+	config := strings.Replace(instanceConfig, "  - id: jira-acme\n    use: jira", "  - use: jira", 1)
+	w := startInstanceWorkspace(t, config, noFailingInstance)
+
+	stats, err := w.status.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := []entities.SourceState{
+		{ID: "jira", Configured: true},
+		{ID: "jira-legacy", Configured: true},
+	}
+	if !slices.Equal(stats.Sources, want) {
+		t.Errorf("sources = %+v, want %+v", stats.Sources, want)
+	}
+	if stats.Documents != 0 || stats.Chunks != 0 || stats.Edges != 0 || len(checkpointedSources(stats)) != 0 || stats.Lease != nil {
+		t.Errorf("stats = %+v, want zero counts, no checkpoints and no lease", stats)
+	}
+}
+
+func TestStatusReportsDeclaredCloneCoverageWithoutLocalPaths(t *testing.T) {
+	clonePath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(clonePath, ".git"), 0o700); err != nil {
+		t.Fatalf("create disposable clone: %v", err)
+	}
+	reg := registry.New(lore.Host{}, nil)
+	if err := reg.Register(github.Plugin(), git.Plugin(), stubEmbedderPlugin{}); err != nil {
+		t.Fatalf("register fixture plugins: %v", err)
+	}
+	config := `workspace: lore-e2e-status
+index_path: %[1]s
+sources:
+  - id: github-z
+    use: github
+    with:
+      repos: [acme/myproject]
+      token: ` + fixtureToken + `
+  - use: github
+    with:
+      repos: [acme/other]
+      token: ` + fixtureToken + `
+embedder:
+  provider: e2e-stub
+  model: bag-of-words
+`
+	config += fmt.Sprintf(`repos:
+  - path: %q
+    remote: github:acme/myproject
+  - path: %q
+    remote: github:acme/archive
+  - path: %q
+`, clonePath, clonePath, clonePath)
+	var (
+		declared entities.DeclaredWorkspace
+		status   services.StatusService
+	)
+	graph := fx.New(fx.NopLogger, di.Workspace(writeInstanceConfig(t, config, ""), reg), fx.Populate(&declared, &status))
+	if err := graph.Err(); err != nil {
+		t.Fatalf("build workspace graph: %v", err)
+	}
+	if err := graph.Start(context.Background()); err != nil {
+		t.Fatalf("start workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := graph.Stop(context.Background()); err != nil {
+			t.Errorf("stop workspace: %v", err)
+		}
+	})
+	if want := []string{"github-z", "github"}; !slices.Equal(declared.Sources, want) {
+		t.Errorf("declared sources = %v, want config order %v", declared.Sources, want)
+	}
+	wantDeclared := []entities.DeclaredClone{
+		{Name: "github:acme/myproject", Synced: true},
+		{Name: "github:acme/archive", Synced: false},
+		{Name: "repos[2] (no remote)", Synced: false},
+	}
+	if !slices.Equal(declared.Clones, wantDeclared) {
+		t.Errorf("declared clones = %+v, want %+v", declared.Clones, wantDeclared)
+	}
+	stats, err := status.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	wantClones := []entities.CloneState{
+		{Name: "github:acme/myproject", Synced: true},
+		{Name: "github:acme/archive", Synced: false},
+		{Name: "repos[2] (no remote)", Synced: false},
+	}
+	if !slices.Equal(stats.Clones, wantClones) {
+		t.Errorf("clones = %+v, want %+v", stats.Clones, wantClones)
+	}
+}
+
 func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	ctx := context.Background()
 	w := newWorkspace(t, "")
@@ -311,8 +415,12 @@ func TestSyncedFixtureRepositoryAnswersItsDecisionQuestion(t *testing.T) {
 	if stats.Chunks < stats.Documents {
 		t.Errorf("indexed chunks = %d, want at least one per document (%d)", stats.Chunks, stats.Documents)
 	}
-	if len(stats.Cursors) != 1 || stats.Cursors[0].Connector != githubSource {
-		t.Errorf("checkpointed connectors = %+v, want one entry for github", stats.Cursors)
+	if len(stats.Sources) != 1 {
+		t.Fatalf("sources = %+v, want one entry for github", stats.Sources)
+	}
+	source := stats.Sources[0]
+	if source.ID != githubSource || !source.Configured || source.Documents != fixtureDocuments || source.LastCheckpoint.IsZero() {
+		t.Errorf("source = %+v, want configured github with %d documents and a checkpoint", source, fixtureDocuments)
 	}
 
 	bundle := w.ask(ctx, t)

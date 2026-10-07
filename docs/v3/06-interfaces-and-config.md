@@ -22,7 +22,35 @@ source.
 | `impact_of` | `ref_or_query`, optional `question` | chronological impact timeline after the anchor decision |
 | `history_of` | `path`, optional `repo`, `limit`, `before` | chronological file timeline; precondition error if no repos registered |
 | `sync_now` | optional `source` | acknowledgment; errors if lock held |
-| `sync_status` | — | last run per connector, cursor ages, doc/edge counts, lock state |
+| `sync_status` | — | `documents`, `chunks`, `edges`, `sources`, `clones`, `sync_lock` |
+
+`sync_status` returns an `indexStatus` with these fields:
+
+- `documents`, `chunks`, `edges`: total index counts.
+- `sources`: every configured source, including one that has never checkpointed,
+  plus indexed sources no longer configured. Each entry has `source` (the
+  instance id or a safe label), `configured` and `documents`. A checkpointed
+  source has `last_checkpoint_seconds_ago` and omits `never_synced`. Otherwise
+  `never_synced` is `true` and `last_checkpoint_seconds_ago` is absent.
+- `clones`: every registered code clone. Each entry has `name` (its remote id,
+  such as `github:acme/myproject`, or `repos[n] (no remote)` when no remote is
+  declared) and `synced`. `synced` states whether a configured source syncs that
+  remote, not whether it has checkpointed. A clone without a remote has
+  `synced: false`.
+- `sync_lock`: `held` is always present. When held, `holder`, `held_for_seconds`
+  and `last_heartbeat_seconds_ago` are present too. Otherwise they are omitted.
+
+All MCP ages are whole seconds counted at call time, not wall-clock timestamps.
+Zero ages are present, and empty `sources` or `clones` are `[]`, not omitted.
+MCP `sync_status`, gRPC `Status` and `lore status` list the same sources and
+clones with the same states through `StatusService` (`internal/services/status.go`).
+
+Status response content contains no filesystem paths. Path-like source ids,
+including indexed sources no longer configured, use `sources[n] (local id)`.
+Path-like clone remotes use `repos[n] (local remote)`. Valid forge references
+such as `g:team/repo` retain their names in `clones`. These are display labels
+only, not replacement ids for matching or persisted identity. Existing startup
+warnings on stderr are outside this response-content rule.
 
 Tool descriptions (in the MCP schema) spell out the division of labor so host
 models route well: *breadth* → `find_decision`/`why`; *depth on one node* → `trace`;

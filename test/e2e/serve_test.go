@@ -3,11 +3,14 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,13 +19,27 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.uber.org/fx"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
+	lorev1 "github.com/setthasit/Lore/api/proto/lore/v1"
 	"github.com/setthasit/Lore/app"
+	"github.com/setthasit/Lore/internal/di"
 	"github.com/setthasit/Lore/internal/entities"
+	"github.com/setthasit/Lore/internal/registry"
+	"github.com/setthasit/Lore/internal/repositories"
 	"github.com/setthasit/Lore/internal/secrets"
+	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
+	grpctransport "github.com/setthasit/Lore/internal/transport/grpc"
 	"github.com/setthasit/Lore/internal/transport/mcp"
 	"github.com/setthasit/Lore/plugins"
+	"github.com/setthasit/Lore/plugins/code/git"
+	"github.com/setthasit/Lore/plugins/sources/github"
+	"github.com/setthasit/Lore/plugins/sources/jira"
+	"github.com/setthasit/Lore/sdk"
 )
 
 const (
@@ -49,10 +66,11 @@ const embedderKeyEnv = "LORE_E2E_OPENAI_KEY"
 
 type servedWorkspace struct {
 	*workspace
-	session *sdk.ClientSession
-	stop    context.CancelFunc
-	served  <-chan error
-	joined  sync.Once
+	session    *sdk.ClientSession
+	httpClient *http.Client
+	stop       context.CancelFunc
+	served     <-chan error
+	joined     sync.Once
 }
 
 func (w *workspace) services() transport.Services {
@@ -81,12 +99,16 @@ func serveWorkspace(t *testing.T, w *workspace) *servedWorkspace {
 		served <- mcp.ServeHTTP(ctx, listener, w.services(), nil, &secrets.Sink{}, slog.New(slog.DiscardHandler))
 	}()
 
-	s := &servedWorkspace{workspace: w, stop: stop, served: served}
+	s := &servedWorkspace{
+		workspace: w, stop: stop, served: served,
+		httpClient: &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()},
+	}
 	t.Cleanup(func() { s.shutDown(t) })
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "lore-e2e", Version: "v0.0.1"}, nil)
 	session, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{
-		Endpoint: "http://" + listener.Addr().String() + mcp.EndpointPath,
+		Endpoint:   "http://" + listener.Addr().String() + mcp.EndpointPath,
+		HTTPClient: s.httpClient,
 	}, nil)
 	if err != nil {
 		t.Fatalf("connect to the served workspace over streamable http: %v", err)
@@ -106,6 +128,7 @@ func (s *servedWorkspace) shutDown(t *testing.T) {
 				t.Errorf("close the MCP client: %v", err)
 			}
 		}
+		s.httpClient.CloseIdleConnections()
 		s.stop()
 
 		select {
@@ -303,8 +326,8 @@ func TestServedSyncNowRefusesWhileAnotherProcessHoldsTheLease(t *testing.T) {
 		t.Errorf("the refused round left %d documents, %d chunks and %d edges, want the %d, %d and %d it started with",
 			refused.Documents, refused.Chunks, refused.Edges, indexed.Documents, indexed.Chunks, indexed.Edges)
 	}
-	if !slices.Equal(refused.Cursors, indexed.Cursors) {
-		t.Errorf("the refused round checkpointed %+v, want %+v untouched", refused.Cursors, indexed.Cursors)
+	if !slices.Equal(refused.Sources, indexed.Sources) {
+		t.Errorf("the refused round changed sources %+v, want %+v untouched", refused.Sources, indexed.Sources)
 	}
 	for op, calls := range fixtureCalls(w.api) {
 		if calls != callsBefore[op] {
@@ -329,6 +352,163 @@ func TestServedSyncNowRefusesWhileAnotherProcessHoldsTheLease(t *testing.T) {
 	}
 	if synced := w.stats(ctx, t); synced.Documents != fixtureDocuments {
 		t.Errorf("the round over the free lease left %d documents, want %d", synced.Documents, fixtureDocuments)
+	}
+}
+
+func serveStatusRPC(t *testing.T, svc transport.Services) lorev1.SyncServiceClient {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() {
+		served <- grpctransport.Serve(ctx, grpctransport.Config{Listener: listener, Services: svc, Sink: &secrets.Sink{}, Log: slog.New(slog.DiscardHandler)})
+	}()
+	t.Cleanup(func() {
+		stop()
+		select {
+		case err := <-served:
+			if err != nil {
+				t.Errorf("serve gRPC: %v", err)
+			}
+		case <-time.After(serveShutdownTimeout):
+			t.Error("gRPC shutdown timed out")
+		}
+	})
+	conn, err := grpclib.NewClient(listener.Addr().String(), grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("gRPC client: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return lorev1.NewSyncServiceClient(conn)
+}
+
+func TestConfiguredPathNamesAreSafeAcrossStatusResponses(t *testing.T) {
+	t.Setenv("LORE_STATUS_LOCAL_TEST", "/Users/operator/private")
+	for index, tc := range []struct {
+		name      string
+		label     string
+		cloneName string
+	}{
+		{"/Users/operator/private", "sources[0] (local id)", "repos[0] (local remote)"},
+		{"${env:LORE_STATUS_LOCAL_TEST}", "sources[0] (local id)", "repos[0] (local remote)"},
+		{"~/private", "sources[2] (local id)", "repos[0] (local remote)"},
+		{"./private", "sources[0] (local id)", "repos[0] (local remote)"},
+		{"../private", "sources[0] (local id)", "repos[0] (local remote)"},
+		{"relative/private", "sources[2] (local id)", "repos[0] (local remote)"},
+		{`C:\private\clone`, "sources[0] (local id)", "repos[0] (local remote)"},
+		{"C:/private/clone", "sources[0] (local id)", "repos[0] (local remote)"},
+		{`\\server\share\clone`, "sources[0] (local id)", "repos[0] (local remote)"},
+		{"file:///private/clone", "sources[0] (local id)", "repos[0] (local remote)"},
+		{"legacy:private/clone", "sources[2] (local id)", "legacy:private/clone"},
+		{"g:team/repo", "sources[1] (local id)", "g:team/repo"},
+	} {
+		t.Run(fmt.Sprintf("path-%d", index), func(t *testing.T) {
+			clonePath := t.TempDir()
+			if err := os.Mkdir(filepath.Join(clonePath, ".git"), 0o700); err != nil {
+				t.Fatalf("create disposable clone: %v", err)
+			}
+			fixturePlugins := []lore.Plugin{github.Plugin(), jira.Plugin(), git.Plugin(), stubEmbedderPlugin{}}
+			reg := registry.New(lore.Host{}, nil)
+			if err := reg.Register(fixturePlugins...); err != nil {
+				t.Fatalf("register fixtures: %v", err)
+			}
+			body := "workspace: status-path-fixture\nindex_path: %[1]s\n" +
+				"sources:\n  - id: forge\n    use: github\n    with: {repos: [acme/myproject], token: fake-status-token}\n" +
+				"  - use: jira\n    with: {base_url: 'http://127.0.0.1:9', email: 'fake@example.test', token: fake-jira-token}\n" +
+				"embedder: {provider: e2e-stub, model: bag-of-words}\n" +
+				fmt.Sprintf("repos:\n  - path: %q\n    remote: %q\n  - path: %q\n    remote: github:acme/myproject\n  - path: %q\n", clonePath, tc.name, clonePath, clonePath)
+			configPath := writeInstanceConfig(t, body, "")
+			var status services.StatusService
+			var store repositories.IndexStore
+			graph := fx.New(fx.NopLogger, di.Workspace(configPath, reg), fx.Populate(&status, &store))
+			if err := graph.Start(context.Background()); err != nil {
+				t.Fatalf("start fixture: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := graph.Stop(context.Background()); err != nil {
+					t.Errorf("stop fixture: %v", err)
+				}
+			})
+			originalID := tc.name
+			if originalID == "${env:LORE_STATUS_LOCAL_TEST}" {
+				originalID = "/Users/operator/private"
+			}
+			if err := store.UpsertDocuments(context.Background(), []lore.Document{{ID: "fixture:page:one", Source: originalID, Type: lore.DocTypePage}}); err != nil {
+				t.Fatalf("seed indexed path id: %v", err)
+			}
+			raw, err := store.Stats(context.Background())
+			if err != nil || len(raw.Sources) != 1 {
+				t.Fatalf("read original identity: %+v, %v", raw, err)
+			}
+			if raw.Sources[0].ID != originalID {
+				t.Fatalf("stored identity = %q, want %q", raw.Sources[0].ID, originalID)
+			}
+			w := &workspace{status: status}
+			served := serveWorkspace(t, w)
+			result := served.call(t, "sync_status", map[string]any{})
+			wantSources := []map[string]any{
+				{"source": tc.label, "configured": false, "documents": float64(1), "never_synced": true},
+				{"source": "forge", "configured": true, "documents": float64(0), "never_synced": true},
+				{"source": "jira", "configured": true, "documents": float64(0), "never_synced": true},
+			}
+			switch tc.label {
+			case "sources[2] (local id)":
+				wantSources = append(wantSources[1:], wantSources[0])
+			case "sources[1] (local id)":
+				wantSources = []map[string]any{wantSources[1], wantSources[0], wantSources[2]}
+			}
+			wantClones := []map[string]any{
+				{"name": tc.cloneName, "synced": false},
+				{"name": "github:acme/myproject", "synced": true},
+				{"name": "repos[2] (no remote)", "synced": false},
+			}
+			mcpStatus := decodeToolResult[struct {
+				Sources []map[string]any `json:"sources"`
+				Clones  []map[string]any `json:"clones"`
+			}](t, "sync_status", result)
+			if !reflect.DeepEqual(mcpStatus.Sources, wantSources) || !reflect.DeepEqual(mcpStatus.Clones, wantClones) {
+				t.Errorf("MCP status = %+v, want sources %+v and clones %+v", mcpStatus, wantSources, wantClones)
+			}
+			client := serveStatusRPC(t, w.services())
+			ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+			defer cancel()
+			rpcStatus, err := client.Status(ctx, &lorev1.StatusRequest{})
+			if err != nil {
+				t.Fatalf("Status RPC: %v", err)
+			}
+			wantRPC := &lorev1.StatusResponse{
+				Documents: 1,
+				Sources:   []*lorev1.SourceState{{Id: tc.label, Documents: 1}, {Id: "forge", Configured: true}, {Id: "jira", Configured: true}},
+				Clones: []*lorev1.CloneState{
+					{Name: tc.cloneName}, {Name: "github:acme/myproject", Synced: true}, {Name: "repos[2] (no remote)"},
+				},
+			}
+			switch tc.label {
+			case "sources[2] (local id)":
+				wantRPC.Sources = append(wantRPC.Sources[1:], wantRPC.Sources[0])
+			case "sources[1] (local id)":
+				wantRPC.Sources = []*lorev1.SourceState{wantRPC.Sources[1], wantRPC.Sources[0], wantRPC.Sources[2]}
+			}
+			if !proto.Equal(rpcStatus, wantRPC) {
+				t.Errorf("gRPC status = %s, want %s", rpcStatus, wantRPC)
+			}
+			cliStatus := runLoreWith(t, fixturePlugins, "--config", configPath, "status")
+			if cliStatus.exitCode != 0 {
+				t.Fatalf("status exit = %d, stderr = %s", cliStatus.exitCode, cliStatus.stderr)
+			}
+			for _, want := range []string{tc.label + " 1 docs, never synced (not configured)", "forge      0 docs, never synced", "jira       0 docs, never synced", tc.cloneName + " not synced by any source", "github:acme/myproject synced", "repos[2] (no remote) not synced by any source"} {
+				if !strings.Contains(cliStatus.stdout, want) {
+					t.Errorf("CLI status is missing %q: %s", want, cliStatus.stdout)
+				}
+			}
+			sourceOutput, _, _ := strings.Cut(cliStatus.stdout, "\nclones:\n")
+			if strings.Contains(sourceOutput, tc.name) || strings.Contains(cliStatus.stdout, "/Users/operator/private") || strings.Contains(cliStatus.stdout, clonePath) {
+				t.Errorf("CLI status contains a local path: %s", cliStatus.stdout)
+			}
+		})
 	}
 }
 
