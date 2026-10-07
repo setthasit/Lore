@@ -245,7 +245,7 @@ writes is the local index — never a source.
 | `impact_of` | what followed a decision, chronologically | `ref_or_query` (required — a ref, or free text naming the decision); optional `question` |
 | `history_of` | how one whole file evolved, newest commits first, one page at a time | `path` (required); optional `repo`, `limit`, `before` |
 | `sync_now` | refresh the index now and answer when the round finishes | optional `source` (omit to sync every configured source) |
-| `sync_status` | how much is stored, how stale each source is, whether a round is writing | none |
+| `sync_status` | index counts, every configured source's sync state, every registered clone's source coverage, whether a round is writing | none |
 
 Notes worth knowing before the model guesses:
 
@@ -270,9 +270,26 @@ Notes worth knowing before the model guesses:
   `anchor.code.blamed_shas`** from the previous bundle, never a node id (nodes are
   sorted oldest-first and their ids are document ids, not commit SHAs). An empty
   `blamed_shas` means the history is exhausted.
-- `sync_status` reports ages in whole seconds counted at call time, never wall-clock
-  timestamps, so a model can judge staleness without knowing the current time. A source
-  missing from `sources` has never been synced.
+- `sync_status` returns `documents`, `chunks`, `edges`, `sources`, `clones` and
+  `sync_lock`:
+  - `sources` lists every configured source and indexed sources no longer configured.
+    Each entry has `source`, `configured` and `documents`. After a checkpoint it has
+    `last_checkpoint_seconds_ago` and omits `never_synced`. Before any checkpoint,
+    `never_synced` is `true` and the age field is absent. A configured `jira` that has
+    never synced is listed, not missing.
+  - `clones` lists every registered code clone with `name` and `synced`. `name` is the
+    remote id, such as `github:acme/myproject`, or `repos[n] (no remote)` if none is
+    declared. `synced` says whether a configured source syncs that remote, not whether
+    it has checkpointed. Without a remote, `synced` is `false`.
+  - Ages are whole seconds counted at call time, never wall-clock timestamps. Zero
+    ages are present. Empty `sources` or `clones` are `[]`, not omitted.
+  - Status response content has no filesystem paths. Path-like source ids, including
+    indexed sources no longer configured, use `sources[n] (local id)`. Path-like clone
+    remotes use `repos[n] (local remote)`. Valid forge references such as `g:team/repo`
+    retain their clone names. Labels change neither matching nor persisted identity.
+    Existing startup warnings on stderr are exempt from this response-content rule.
+  - MCP `sync_status`, gRPC `Status` and `lore status` list the same sources and clones
+    with the same states.
 - An empty bundle is a real answer, not a failure: the index holds no evidence for that
   question.
 
@@ -378,7 +395,7 @@ of the tool surface returning evidence instead of prose.
 | `sync_now` refuses after an upgrade | ``chunk format mismatch: this index was split by an older text format (unrecorded, current "2") — its passages must be rebuilt to carry heading context, so run `lore sync --reembed` to wipe the chunk layer and rebuild it`` | This build writes chunks that begin with their section headings. The index holds chunks split by an older format. `sync_now` has no re-embed option. Run `lore sync --reembed` once from the terminal. It re-embeds every chunk, so it costs one full embedding pass. Queries keep answering from the old chunks until then |
 | Embedder block rejected at startup | `openai: embedder.dimensions must not be set for this provider: the vector width follows from embedder.model`, or ``ollama: embedder.dimensions must be set to the vector width of nomic-embed-text: an Ollama model does not imply one; `ollama show nomic-embed-text` reports it`` | The rule is inverted per provider plugin: forbidden for `openai`, required for `ollama`. An unknown OpenAI model reports `openai: embedder.model … has no known vector width; supported models: …`, and a role bound to a provider that does not serve it reports `embedder binds provider "anthropic", which does not serve embed; it serves complete` |
 | HTTP transport won't start | `no address to serve on: set server.http_addr in lore.yaml or pass --http 127.0.0.1:8080`, or the loopback/TLS refusal quoted above | Bind a literal loopback IP, or configure `server.mtls.cert` and `server.mtls.key` and use the `https` URL |
-| Tools connect but every bundle is empty | No error — an empty bundle is a valid answer | Call `sync_status`: a source that last checkpointed days ago cannot hold what happened yesterday, and a source absent from `sources` has never synced. Then `sync_now`. If it is still empty, widen the filters or rephrase — `source`, `repo`, `doc_type`, `since` and `until` are all hard filters |
+| Tools connect but every bundle is empty | No error — an empty bundle is a valid answer | Call `sync_status`: a source that last checkpointed days ago cannot hold what happened yesterday, and `never_synced: true` means it has never checkpointed. Use `configured` to check whether the source is still configured. Then `sync_now`. If it is still empty, widen the filters or rephrase — `source`, `repo`, `doc_type`, `since` and `until` are all hard filters |
 | Session dies mid-stream on stdio | Garbled JSON-RPC in the client log | Anything on stdout corrupts the protocol. Lore keeps its own diagnostics on stderr; make sure no wrapper script of yours echoes to stdout |
 
 ## See also
