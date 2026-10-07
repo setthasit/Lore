@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,10 +66,11 @@ const embedderKeyEnv = "LORE_E2E_OPENAI_KEY"
 
 type servedWorkspace struct {
 	*workspace
-	session *sdk.ClientSession
-	stop    context.CancelFunc
-	served  <-chan error
-	joined  sync.Once
+	session    *sdk.ClientSession
+	httpClient *http.Client
+	stop       context.CancelFunc
+	served     <-chan error
+	joined     sync.Once
 }
 
 func (w *workspace) services() transport.Services {
@@ -97,12 +99,16 @@ func serveWorkspace(t *testing.T, w *workspace) *servedWorkspace {
 		served <- mcp.ServeHTTP(ctx, listener, w.services(), nil, &secrets.Sink{}, slog.New(slog.DiscardHandler))
 	}()
 
-	s := &servedWorkspace{workspace: w, stop: stop, served: served}
+	s := &servedWorkspace{
+		workspace: w, stop: stop, served: served,
+		httpClient: &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()},
+	}
 	t.Cleanup(func() { s.shutDown(t) })
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "lore-e2e", Version: "v0.0.1"}, nil)
 	session, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{
-		Endpoint: "http://" + listener.Addr().String() + mcp.EndpointPath,
+		Endpoint:   "http://" + listener.Addr().String() + mcp.EndpointPath,
+		HTTPClient: s.httpClient,
 	}, nil)
 	if err != nil {
 		t.Fatalf("connect to the served workspace over streamable http: %v", err)
@@ -122,6 +128,7 @@ func (s *servedWorkspace) shutDown(t *testing.T) {
 				t.Errorf("close the MCP client: %v", err)
 			}
 		}
+		s.httpClient.CloseIdleConnections()
 		s.stop()
 
 		select {
