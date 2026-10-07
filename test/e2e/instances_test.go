@@ -381,10 +381,12 @@ func mirroredComment(instance string) lore.DocID {
 	return lore.NewDocID(instance, lore.DocTypeTicketComment, acmeTicket+"#"+acmeCommentID)
 }
 
-func cursorKeys(stats entities.IndexStats) []string {
-	keys := make([]string, len(stats.Cursors))
-	for i, cursor := range stats.Cursors {
-		keys[i] = cursor.Connector
+func checkpointedSources(stats entities.IndexStats) []string {
+	var keys []string
+	for _, source := range stats.Sources {
+		if !source.LastCheckpoint.IsZero() {
+			keys = append(keys, source.ID)
+		}
 	}
 
 	return keys
@@ -414,8 +416,8 @@ func TestTwoJiraInstancesSyncUnderTheirOwnIdentities(t *testing.T) {
 		lore.NewDocID("jira", lore.DocTypeTicket, legacyTicket),
 	)
 
-	if keys := cursorKeys(stats); !slices.Equal(keys, []string{acmeInstance, legacyInstance}) {
-		t.Fatalf("checkpointed cursor keys = %v, want one per instance", keys)
+	if keys := checkpointedSources(stats); !slices.Equal(keys, []string{acmeInstance, legacyInstance}) {
+		t.Fatalf("checkpointed sources = %v, want one per instance", keys)
 	}
 
 	acme, legacy := w.cursor(ctx, t, acmeInstance), w.cursor(ctx, t, legacyInstance)
@@ -444,8 +446,8 @@ func TestSyncingOneJiraInstanceLeavesTheOtherUntouched(t *testing.T) {
 	w.assertOwns(ctx, t, legacyInstance)
 	w.assertNotIndexed(ctx, t, siteOf(t, acmeInstance).docIDs()...)
 
-	if keys := cursorKeys(stats); !slices.Equal(keys, []string{legacyInstance}) {
-		t.Errorf("checkpointed cursor keys = %v, want %s alone", keys, legacyInstance)
+	if keys := checkpointedSources(stats); !slices.Equal(keys, []string{legacyInstance}) {
+		t.Errorf("checkpointed sources = %v, want %s alone", keys, legacyInstance)
 	}
 
 	acme := siteOf(t, acmeInstance)
@@ -487,8 +489,8 @@ func TestAFailingJiraInstanceDoesNotStopTheHealthyOne(t *testing.T) {
 	w.assertOwns(ctx, t, legacyInstance)
 	w.assertNotIndexed(ctx, t, siteOf(t, acmeInstance).docIDs()...)
 
-	if keys := cursorKeys(stats); !slices.Equal(keys, []string{legacyInstance}) {
-		t.Errorf("checkpointed cursor keys = %v, want %s alone: the broken instance advanced nothing",
+	if keys := checkpointedSources(stats); !slices.Equal(keys, []string{legacyInstance}) {
+		t.Errorf("checkpointed sources = %v, want %s alone: the broken instance advanced nothing",
 			keys, legacyInstance)
 	}
 	if cursor := w.cursor(ctx, t, acmeInstance); len(cursor) != 0 {

@@ -12,7 +12,7 @@ import (
 func newStatusCommand(resolve Resolver, configPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Report index counts, per-source cursor ages and the sync lock",
+		Short: "Report index counts, source and clone states and the sync lock",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withRuntime(cmd, resolve, *configPath, func(rt *Runtime) error {
@@ -33,13 +33,36 @@ func renderStatus(w io.Writer, stats entities.IndexStats, now time.Time) {
 	printfln(w, "edges:     %d", stats.Edges)
 
 	printfln(w, "")
-	if len(stats.Cursors) == 0 {
-		printfln(w, "sources: none have checkpointed yet — run `lore sync`")
+	if len(stats.Sources) == 0 {
+		printfln(w, "sources: none configured or indexed")
 	} else {
 		printfln(w, "sources:")
-		for _, c := range stats.Cursors {
-			printfln(w, "  %-10s last checkpoint %s (%s)",
-				inertLine(c.Connector), humanizeAge(now.Sub(c.UpdatedAt)), c.UpdatedAt.UTC().Format(time.RFC3339))
+		for _, source := range stats.Sources {
+			suffix := ""
+			if !source.Configured {
+				suffix = " (not configured)"
+			}
+			if source.LastCheckpoint.IsZero() {
+				printfln(w, "  %-10s %d docs, never synced%s", inertLine(source.ID), source.Documents, suffix)
+				continue
+			}
+			printfln(w, "  %-10s %d docs, last checkpoint %s (%s)%s",
+				inertLine(source.ID), source.Documents, humanizeAge(now.Sub(source.LastCheckpoint)),
+				source.LastCheckpoint.UTC().Format(time.RFC3339), suffix)
+		}
+	}
+
+	printfln(w, "")
+	if len(stats.Clones) == 0 {
+		printfln(w, "clones: none registered")
+	} else {
+		printfln(w, "clones:")
+		for _, clone := range stats.Clones {
+			state := "not synced by any source"
+			if clone.Synced {
+				state = "synced"
+			}
+			printfln(w, "  %s %s", inertLine(clone.Name), state)
 		}
 	}
 

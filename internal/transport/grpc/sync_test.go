@@ -222,9 +222,9 @@ func TestStatusMapsTheIndexStats(t *testing.T) {
 		Documents: 412,
 		Chunks:    3120,
 		Edges:     877,
-		Cursors: []entities.CursorAge{
-			{Connector: "github", UpdatedAt: github},
-			{Connector: "notion", UpdatedAt: notion},
+		Sources: []entities.SourceState{
+			{ID: "github", Configured: true, Documents: 368, LastCheckpoint: github},
+			{ID: "notion", Configured: true, Documents: 44, LastCheckpoint: notion},
 		},
 		Lease: &entities.LeaseState{Holder: leaseHolder, AcquiredAt: acquired, HeartbeatAt: rpcCreatedAt},
 	}, nil)
@@ -233,9 +233,9 @@ func TestStatusMapsTheIndexStats(t *testing.T) {
 		Documents: 412,
 		Chunks:    3120,
 		Edges:     877,
-		Cursors: []*lorev1.CursorAge{
-			{Source: "github", UpdatedAt: timestamppb.New(github)},
-			{Source: "notion", UpdatedAt: timestamppb.New(notion)},
+		Sources: []*lorev1.SourceState{
+			{Id: "github", Configured: true, Documents: 368, LastCheckpoint: timestamppb.New(github)},
+			{Id: "notion", Configured: true, Documents: 44, LastCheckpoint: timestamppb.New(notion)},
 		},
 		Lease: &lorev1.LeaseState{
 			Holder:      leaseHolder,
@@ -243,6 +243,82 @@ func TestStatusMapsTheIndexStats(t *testing.T) {
 			HeartbeatAt: timestamppb.New(rpcCreatedAt),
 		},
 	})
+}
+
+func configuredStatusFixture(now time.Time) entities.IndexStats {
+	return entities.IndexStats{
+		Documents: 44,
+		Chunks:    81,
+		Edges:     9,
+		Sources: []entities.SourceState{
+			{ID: "notion", Configured: true, Documents: 44, LastCheckpoint: now.Add(-1540 * time.Second)},
+			{ID: "jira", Configured: true},
+		},
+		Clones: []entities.CloneState{
+			{Name: "github:acme/myproject", Synced: true},
+			{Name: "repos[1] (no remote)"},
+		},
+	}
+}
+
+func TestStatusListsConfiguredSourcesAndClonesWithoutLocalPaths(t *testing.T) {
+	f := newRPCFixture(t)
+	f.status.EXPECT().Status(gomock.Any()).Return(configuredStatusFixture(rpcCreatedAt), nil)
+	res := f.indexStatus(t)
+	assertSameProto(t, res, &lorev1.StatusResponse{
+		Documents: 44,
+		Chunks:    81,
+		Edges:     9,
+		Sources: []*lorev1.SourceState{
+			{Id: "notion", Configured: true, Documents: 44, LastCheckpoint: timestamppb.New(rpcCreatedAt.Add(-1540 * time.Second))},
+			{Id: "jira", Configured: true},
+		},
+		Clones: []*lorev1.CloneState{
+			{Name: "github:acme/myproject", Synced: true},
+			{Name: "repos[1] (no remote)"},
+		},
+	})
+	if strings.Contains(res.String(), `"/`) {
+		t.Errorf("status contains a filesystem path: %s", res)
+	}
+}
+
+func TestStatusPreservesUnconfiguredSourcesAndHostileNames(t *testing.T) {
+	const hostile = "\x1b[2J\n\t\r\x00\u202e"
+	f := newRPCFixture(t)
+	stats := configuredStatusFixture(rpcCreatedAt)
+	stats.Sources[0].Configured = false
+	stats.Sources[0].ID += hostile
+	stats.Sources[1].Configured = false
+	stats.Clones[0].Name += hostile
+	f.status.EXPECT().Status(gomock.Any()).Return(stats, nil)
+	res := f.indexStatus(t)
+	assertSameProto(t, res, &lorev1.StatusResponse{
+		Documents: 44,
+		Chunks:    81,
+		Edges:     9,
+		Sources: []*lorev1.SourceState{
+			{Id: "notion" + hostile, Documents: 44, LastCheckpoint: timestamppb.New(rpcCreatedAt.Add(-1540 * time.Second))},
+			{Id: "jira"},
+		},
+		Clones: []*lorev1.CloneState{
+			{Name: "github:acme/myproject" + hostile, Synced: true},
+			{Name: "repos[1] (no remote)"},
+		},
+	})
+}
+
+func TestStatusSchemaReservesTheRemovedField(t *testing.T) {
+	descriptor := (&lorev1.StatusResponse{}).ProtoReflect().Descriptor()
+	if !descriptor.ReservedRanges().Has(4) || !descriptor.ReservedNames().Has("cursors") {
+		t.Error("StatusResponse must reserve field 4 and the name cursors")
+	}
+	if field := descriptor.Fields().ByName("sources"); field == nil || field.Number() != 6 {
+		t.Errorf("sources field = %v, want field 6", field)
+	}
+	if field := descriptor.Fields().ByName("clones"); field == nil || field.Number() != 7 {
+		t.Errorf("clones field = %v, want field 7", field)
+	}
 }
 
 func TestStatusReportsAFreeLeaseAndANeverSyncedIndex(t *testing.T) {

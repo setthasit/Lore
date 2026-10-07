@@ -69,7 +69,6 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 		Chunks:    3,
 		Edges:     1,
 		Sources:   []entities.SourceState{{ID: "github", Configured: true, Documents: 2, LastCheckpoint: at}},
-		Cursors:   []entities.CursorAge{{Connector: "github", UpdatedAt: at}},
 		Lease:     &entities.LeaseState{Holder: "host-1/4242", AcquiredAt: at, HeartbeatAt: at},
 	}
 
@@ -83,9 +82,6 @@ func TestStatusReportsWhatTheIndexHolds(t *testing.T) {
 	}
 	if !slices.Equal(got.Sources, want.Sources) {
 		t.Errorf("sources = %+v, want %+v", got.Sources, want.Sources)
-	}
-	if !slices.Equal(got.Cursors, want.Cursors) {
-		t.Errorf("cursors = %+v, want %+v", got.Cursors, want.Cursors)
 	}
 	if got.Lease == nil || *got.Lease != *want.Lease {
 		t.Errorf("lease = %+v, want %+v", got.Lease, want.Lease)
@@ -107,8 +103,8 @@ func TestStatusListsAConfiguredSourceThatNeverSynced(t *testing.T) {
 	if !slices.Equal(got.Sources, want) {
 		t.Errorf("sources = %+v, want %+v", got.Sources, want)
 	}
-	if got.Documents != 0 || got.Chunks != 0 || got.Edges != 0 || len(got.Cursors) != 0 || got.Lease != nil {
-		t.Errorf("stats = %+v, want zero counts, no cursors and no lease", got)
+	if got.Documents != 0 || got.Chunks != 0 || got.Edges != 0 || got.Lease != nil {
+		t.Errorf("stats = %+v, want zero counts and no lease", got)
 	}
 }
 
@@ -140,8 +136,14 @@ func TestStatusKeepsAnIndexedSourceNoLongerConfigured(t *testing.T) {
 	if !slices.Equal(got.Sources, want) {
 		t.Errorf("sources = %+v, want %+v", got.Sources, want)
 	}
-	if got.Documents != 2 || len(got.Cursors) != 2 {
-		t.Errorf("stats = %+v, want two documents and two legacy cursors", got)
+	checkpointed := 0
+	for _, source := range got.Sources {
+		if !source.LastCheckpoint.IsZero() {
+			checkpointed++
+		}
+	}
+	if got.Documents != 2 || checkpointed != 2 {
+		t.Errorf("stats = %+v, want two documents and two checkpointed sources", got)
 	}
 }
 
@@ -163,6 +165,143 @@ func TestStatusCarriesClonesAsDeclared(t *testing.T) {
 	}
 	if !slices.Equal(got.Clones, want) {
 		t.Errorf("clones = %+v, want %+v", got.Clones, want)
+	}
+}
+
+func TestStatusLabelsLocalNamesWithoutChangingIdentity(t *testing.T) {
+	for _, name := range []string{
+		"/Users/operator/private", "/tmp/clone", "~/private", "~operator/private", ".", "..",
+		"./private", "../private", "relative/private", `C:\private\clone`, "C:/private/clone",
+		`c:private\clone`, "C:private", `\\server\share\clone`, `\private\clone`,
+		"file:///Users/operator/private", "FILE://server/share/clone", "file:relative/clone",
+	} {
+		t.Run(name, func(t *testing.T) {
+			declared := entities.DeclaredWorkspace{
+				Sources: []string{name},
+				Clones:  []entities.DeclaredClone{{Name: name, Synced: true}},
+			}
+			store, svc := newStatusFixture(t, declared)
+			ctx := context.Background()
+			if err := store.UpsertDocuments(ctx, []lore.Document{{ID: "fixture:page:one", Source: name, Type: lore.DocTypePage}}); err != nil {
+				t.Fatalf("UpsertDocuments: %v", err)
+			}
+			if err := store.SetCursor(ctx, name, nil); err != nil {
+				t.Fatalf("SetCursor: %v", err)
+			}
+			want := entities.IndexStats{
+				Documents: 1,
+				Sources:   []entities.SourceState{{ID: "sources[0] (local id)", Configured: true, Documents: 1, LastCheckpoint: statusCheckpoint}},
+				Clones:    []entities.CloneState{{Name: "repos[0] (local remote)", Synced: true}},
+			}
+			for range 2 {
+				got, err := svc.Status(ctx)
+				if err != nil {
+					t.Fatalf("Status: %v", err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("status = %+v, want %+v", got, want)
+				}
+			}
+			raw, err := store.Stats(ctx)
+			if err != nil {
+				t.Fatalf("Stats: %v", err)
+			}
+			if !slices.Equal(raw.Sources, []entities.SourceState{{ID: name, Documents: 1, LastCheckpoint: statusCheckpoint}}) {
+				t.Errorf("stored source changed: %+v", raw.Sources)
+			}
+			if declared.Sources[0] != name || declared.Clones[0].Name != name || !declared.Clones[0].Synced {
+				t.Errorf("declared inputs changed: %+v", declared)
+			}
+		})
+	}
+}
+
+func TestStatusKeepsOrdinaryCloneNamesAndMatchedCustomForgeGrammar(t *testing.T) {
+	for _, name := range []string{"jira", "jira-acme", "github:acme/myproject", "custom.example:group/subgroup/project", "git+custom:namespace/name", "git@host:group/project", "g:team/repo", "C:private/clone"} {
+		t.Run(name, func(t *testing.T) {
+			_, svc := newStatusFixture(t, entities.DeclaredWorkspace{Sources: []string{"jira-acme"}, Clones: []entities.DeclaredClone{{Name: name, Synced: true}}})
+			got, err := svc.Status(context.Background())
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if !slices.Equal(got.Sources, []entities.SourceState{{ID: "jira-acme", Configured: true}}) || !slices.Equal(got.Clones, []entities.CloneState{{Name: name, Synced: true}}) {
+				t.Errorf("ordinary name changed: %+v", got)
+			}
+		})
+	}
+}
+
+func TestStatusLabelsIndexedColonPathIDsWithoutForgeExemption(t *testing.T) {
+	for _, id := range []string{"legacy:private/clone", "g:team/repo", "custom.example:group/subgroup/project"} {
+		t.Run(id, func(t *testing.T) {
+			store, svc := newStatusFixture(t, entities.DeclaredWorkspace{})
+			ctx := context.Background()
+			if err := store.UpsertDocuments(ctx, []lore.Document{{ID: "fixture:page:one", Source: id, Type: lore.DocTypePage}}); err != nil {
+				t.Fatalf("UpsertDocuments: %v", err)
+			}
+			if err := store.SetCursor(ctx, id, nil); err != nil {
+				t.Fatalf("SetCursor: %v", err)
+			}
+			got, err := svc.Status(ctx)
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			want := []entities.SourceState{{ID: "sources[0] (local id)", Documents: 1, LastCheckpoint: statusCheckpoint}}
+			if got.Documents != 1 || !slices.Equal(got.Sources, want) {
+				t.Errorf("status = %+v, want the orphan labelled without losing its count or checkpoint", got)
+			}
+			raw, err := store.Stats(ctx)
+			if err != nil {
+				t.Fatalf("Stats: %v", err)
+			}
+			if !slices.Equal(raw.Sources, []entities.SourceState{{ID: id, Documents: 1, LastCheckpoint: statusCheckpoint}}) {
+				t.Errorf("stored identity changed: %+v", raw.Sources)
+			}
+		})
+	}
+}
+
+func TestStatusLabelsAreDistinctFromLiteralLabelsAndIndexedOrphans(t *testing.T) {
+	store, svc := newStatusFixture(t, entities.DeclaredWorkspace{
+		Sources: []string{"/private", "sources[0] (local id)"},
+		Clones: []entities.DeclaredClone{
+			{Name: "/private"}, {Name: "repos[0] (local remote)"}, {Name: `C:\private`},
+		},
+	})
+	ctx := context.Background()
+	if err := store.SetCursor(ctx, "/orphan", nil); err != nil {
+		t.Fatalf("SetCursor: %v", err)
+	}
+	got, err := svc.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	wantSources := []entities.SourceState{
+		{ID: "sources[1] (local id)", LastCheckpoint: statusCheckpoint},
+		{ID: "sources[2] (local id)", Configured: true},
+		{ID: "sources[0] (local id)", Configured: true},
+	}
+	if !slices.Equal(got.Sources, wantSources) {
+		t.Errorf("sources = %+v, want %+v", got.Sources, wantSources)
+	}
+	wantClones := []entities.CloneState{{Name: "repos[1] (local remote)"}, {Name: "repos[0] (local remote)"}, {Name: "repos[2] (local remote)"}}
+	if !slices.Equal(got.Clones, wantClones) {
+		t.Errorf("clones = %+v, want %+v", got.Clones, wantClones)
+	}
+}
+
+func TestStatusDoesNotTurnGitURLsIntoForgeReferences(t *testing.T) {
+	for _, remote := range []string{"https://git.example/group/repo.git", "ssh://git@git.example/group/repo.git"} {
+		t.Run(remote, func(t *testing.T) {
+			_, svc := newStatusFixture(t, entities.DeclaredWorkspace{Clones: []entities.DeclaredClone{{Name: remote}}})
+			got, err := svc.Status(context.Background())
+			if err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if !slices.Equal(got.Clones, []entities.CloneState{{Name: "repos[0] (local remote)"}}) {
+				t.Errorf("clone = %+v, want an opaque label, not a forged reference", got.Clones)
+			}
+		})
 	}
 }
 

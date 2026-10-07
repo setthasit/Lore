@@ -1185,8 +1185,9 @@ type StatusResponse struct {
 	Documents     int64                  `protobuf:"varint,1,opt,name=documents,proto3" json:"documents,omitempty"`
 	Chunks        int64                  `protobuf:"varint,2,opt,name=chunks,proto3" json:"chunks,omitempty"`
 	Edges         int64                  `protobuf:"varint,3,opt,name=edges,proto3" json:"edges,omitempty"`
-	Cursors       []*CursorAge           `protobuf:"bytes,4,rep,name=cursors,proto3" json:"cursors,omitempty"`
 	Lease         *LeaseState            `protobuf:"bytes,5,opt,name=lease,proto3" json:"lease,omitempty"`
+	Sources       []*SourceState         `protobuf:"bytes,6,rep,name=sources,proto3" json:"sources,omitempty"`
+	Clones        []*CloneState          `protobuf:"bytes,7,rep,name=clones,proto3" json:"clones,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1242,16 +1243,23 @@ func (x *StatusResponse) GetEdges() int64 {
 	return 0
 }
 
-func (x *StatusResponse) GetCursors() []*CursorAge {
+func (x *StatusResponse) GetLease() *LeaseState {
 	if x != nil {
-		return x.Cursors
+		return x.Lease
 	}
 	return nil
 }
 
-func (x *StatusResponse) GetLease() *LeaseState {
+func (x *StatusResponse) GetSources() []*SourceState {
 	if x != nil {
-		return x.Lease
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *StatusResponse) GetClones() []*CloneState {
+	if x != nil {
+		return x.Clones
 	}
 	return nil
 }
@@ -1377,28 +1385,30 @@ func (x *SyncEvent) GetAt() *timestamppb.Timestamp {
 	return nil
 }
 
-type CursorAge struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type SourceState struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Configured     bool                   `protobuf:"varint,2,opt,name=configured,proto3" json:"configured,omitempty"`
+	Documents      int64                  `protobuf:"varint,3,opt,name=documents,proto3" json:"documents,omitempty"`
+	LastCheckpoint *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_checkpoint,json=lastCheckpoint,proto3" json:"last_checkpoint,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
-func (x *CursorAge) Reset() {
-	*x = CursorAge{}
+func (x *SourceState) Reset() {
+	*x = SourceState{}
 	mi := &file_lore_v1_lore_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CursorAge) String() string {
+func (x *SourceState) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CursorAge) ProtoMessage() {}
+func (*SourceState) ProtoMessage() {}
 
-func (x *CursorAge) ProtoReflect() protoreflect.Message {
+func (x *SourceState) ProtoReflect() protoreflect.Message {
 	mi := &file_lore_v1_lore_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1410,21 +1420,35 @@ func (x *CursorAge) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CursorAge.ProtoReflect.Descriptor instead.
-func (*CursorAge) Descriptor() ([]byte, []int) {
+// Deprecated: Use SourceState.ProtoReflect.Descriptor instead.
+func (*SourceState) Descriptor() ([]byte, []int) {
 	return file_lore_v1_lore_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *CursorAge) GetSource() string {
+func (x *SourceState) GetId() string {
 	if x != nil {
-		return x.Source
+		return x.Id
 	}
 	return ""
 }
 
-func (x *CursorAge) GetUpdatedAt() *timestamppb.Timestamp {
+func (x *SourceState) GetConfigured() bool {
 	if x != nil {
-		return x.UpdatedAt
+		return x.Configured
+	}
+	return false
+}
+
+func (x *SourceState) GetDocuments() int64 {
+	if x != nil {
+		return x.Documents
+	}
+	return 0
+}
+
+func (x *SourceState) GetLastCheckpoint() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastCheckpoint
 	}
 	return nil
 }
@@ -2142,6 +2166,58 @@ func (x *Edge) GetConfidence() float32 {
 	return 0
 }
 
+type CloneState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Synced        bool                   `protobuf:"varint,2,opt,name=synced,proto3" json:"synced,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloneState) Reset() {
+	*x = CloneState{}
+	mi := &file_lore_v1_lore_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloneState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloneState) ProtoMessage() {}
+
+func (x *CloneState) ProtoReflect() protoreflect.Message {
+	mi := &file_lore_v1_lore_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloneState.ProtoReflect.Descriptor instead.
+func (*CloneState) Descriptor() ([]byte, []int) {
+	return file_lore_v1_lore_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *CloneState) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CloneState) GetSynced() bool {
+	if x != nil {
+		return x.Synced
+	}
+	return false
+}
+
 var File_lore_v1_lore_proto protoreflect.FileDescriptor
 
 const file_lore_v1_lore_proto_rawDesc = "" +
@@ -2222,13 +2298,14 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\x0fInstanceFailure\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\x0f\n" +
-	"\rStatusRequest\"\xb5\x01\n" +
+	"\rStatusRequest\"\xf3\x01\n" +
 	"\x0eStatusResponse\x12\x1c\n" +
 	"\tdocuments\x18\x01 \x01(\x03R\tdocuments\x12\x16\n" +
 	"\x06chunks\x18\x02 \x01(\x03R\x06chunks\x12\x14\n" +
-	"\x05edges\x18\x03 \x01(\x03R\x05edges\x12,\n" +
-	"\acursors\x18\x04 \x03(\v2\x12.lore.v1.CursorAgeR\acursors\x12)\n" +
-	"\x05lease\x18\x05 \x01(\v2\x13.lore.v1.LeaseStateR\x05lease\"\x0e\n" +
+	"\x05edges\x18\x03 \x01(\x03R\x05edges\x12)\n" +
+	"\x05lease\x18\x05 \x01(\v2\x13.lore.v1.LeaseStateR\x05lease\x12.\n" +
+	"\asources\x18\x06 \x03(\v2\x14.lore.v1.SourceStateR\asources\x12+\n" +
+	"\x06clones\x18\a \x03(\v2\x13.lore.v1.CloneStateR\x06clonesJ\x04\b\x04\x10\x05R\acursors\"\x0e\n" +
 	"\fWatchRequest\"\xc5\x01\n" +
 	"\tSyncEvent\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12(\n" +
@@ -2236,11 +2313,14 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\tdocuments\x18\x03 \x01(\x03R\tdocuments\x12\x16\n" +
 	"\x06chunks\x18\x04 \x01(\x03R\x06chunks\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12*\n" +
-	"\x02at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"^\n" +
-	"\tCursorAge\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x129\n" +
+	"\x02at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"\xa0\x01\n" +
+	"\vSourceState\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1e\n" +
 	"\n" +
-	"updated_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xa0\x01\n" +
+	"configured\x18\x02 \x01(\bR\n" +
+	"configured\x12\x1c\n" +
+	"\tdocuments\x18\x03 \x01(\x03R\tdocuments\x12C\n" +
+	"\x0flast_checkpoint\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0elastCheckpoint\"\xa0\x01\n" +
 	"\n" +
 	"LeaseState\x12\x16\n" +
 	"\x06holder\x18\x01 \x01(\tR\x06holder\x12;\n" +
@@ -2308,7 +2388,11 @@ const file_lore_v1_lore_proto_rawDesc = "" +
 	"\x04kind\x18\x03 \x01(\x0e2\x11.lore.v1.EdgeKindR\x04kind\x12\x1e\n" +
 	"\n" +
 	"confidence\x18\x04 \x01(\x02R\n" +
-	"confidence*\x92\x01\n" +
+	"confidence\"8\n" +
+	"\n" +
+	"CloneState\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06synced\x18\x02 \x01(\bR\x06synced*\x92\x01\n" +
 	"\n" +
 	"AnchorKind\x12\x1b\n" +
 	"\x17ANCHOR_KIND_UNSPECIFIED\x10\x00\x12\x15\n" +
@@ -2372,7 +2456,7 @@ func file_lore_v1_lore_proto_rawDescGZIP() []byte {
 }
 
 var file_lore_v1_lore_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_lore_v1_lore_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_lore_v1_lore_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_lore_v1_lore_proto_goTypes = []any{
 	(AnchorKind)(0),               // 0: lore.v1.AnchorKind
 	(NodeRole)(0),                 // 1: lore.v1.NodeRole
@@ -2396,7 +2480,7 @@ var file_lore_v1_lore_proto_goTypes = []any{
 	(*StatusResponse)(nil),        // 19: lore.v1.StatusResponse
 	(*WatchRequest)(nil),          // 20: lore.v1.WatchRequest
 	(*SyncEvent)(nil),             // 21: lore.v1.SyncEvent
-	(*CursorAge)(nil),             // 22: lore.v1.CursorAge
+	(*SourceState)(nil),           // 22: lore.v1.SourceState
 	(*LeaseState)(nil),            // 23: lore.v1.LeaseState
 	(*EvidenceBundle)(nil),        // 24: lore.v1.EvidenceBundle
 	(*Chain)(nil),                 // 25: lore.v1.Chain
@@ -2407,11 +2491,12 @@ var file_lore_v1_lore_proto_goTypes = []any{
 	(*EvidenceNode)(nil),          // 30: lore.v1.EvidenceNode
 	(*DocumentMeta)(nil),          // 31: lore.v1.DocumentMeta
 	(*Edge)(nil),                  // 32: lore.v1.Edge
-	(*timestamppb.Timestamp)(nil), // 33: google.protobuf.Timestamp
+	(*CloneState)(nil),            // 33: lore.v1.CloneState
+	(*timestamppb.Timestamp)(nil), // 34: google.protobuf.Timestamp
 }
 var file_lore_v1_lore_proto_depIdxs = []int32{
-	33, // 0: lore.v1.FindDecisionRequest.since:type_name -> google.protobuf.Timestamp
-	33, // 1: lore.v1.FindDecisionRequest.until:type_name -> google.protobuf.Timestamp
+	34, // 0: lore.v1.FindDecisionRequest.since:type_name -> google.protobuf.Timestamp
+	34, // 1: lore.v1.FindDecisionRequest.until:type_name -> google.protobuf.Timestamp
 	24, // 2: lore.v1.FindDecisionResponse.bundle:type_name -> lore.v1.EvidenceBundle
 	24, // 3: lore.v1.WhyResponse.bundle:type_name -> lore.v1.EvidenceBundle
 	3,  // 4: lore.v1.TraceRequest.direction:type_name -> lore.v1.Direction
@@ -2420,50 +2505,51 @@ var file_lore_v1_lore_proto_depIdxs = []int32{
 	24, // 7: lore.v1.HistoryOfResponse.bundle:type_name -> lore.v1.EvidenceBundle
 	23, // 8: lore.v1.TriggerResponse.took_over_from:type_name -> lore.v1.LeaseState
 	17, // 9: lore.v1.TriggerResponse.failures:type_name -> lore.v1.InstanceFailure
-	22, // 10: lore.v1.StatusResponse.cursors:type_name -> lore.v1.CursorAge
-	23, // 11: lore.v1.StatusResponse.lease:type_name -> lore.v1.LeaseState
-	4,  // 12: lore.v1.SyncEvent.phase:type_name -> lore.v1.SyncPhase
-	33, // 13: lore.v1.SyncEvent.at:type_name -> google.protobuf.Timestamp
-	33, // 14: lore.v1.CursorAge.updated_at:type_name -> google.protobuf.Timestamp
-	33, // 15: lore.v1.LeaseState.acquired_at:type_name -> google.protobuf.Timestamp
-	33, // 16: lore.v1.LeaseState.heartbeat_at:type_name -> google.protobuf.Timestamp
-	26, // 17: lore.v1.EvidenceBundle.anchor:type_name -> lore.v1.Anchor
-	30, // 18: lore.v1.EvidenceBundle.nodes:type_name -> lore.v1.EvidenceNode
-	25, // 19: lore.v1.EvidenceBundle.chains:type_name -> lore.v1.Chain
-	0,  // 20: lore.v1.Anchor.kinds:type_name -> lore.v1.AnchorKind
-	27, // 21: lore.v1.Anchor.code:type_name -> lore.v1.CodeAnchor
-	28, // 22: lore.v1.Anchor.doc:type_name -> lore.v1.DocRef
-	29, // 23: lore.v1.Anchor.window:type_name -> lore.v1.TimeWindow
-	33, // 24: lore.v1.DocRef.created_at:type_name -> google.protobuf.Timestamp
-	33, // 25: lore.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
-	33, // 26: lore.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
-	31, // 27: lore.v1.EvidenceNode.doc:type_name -> lore.v1.DocumentMeta
-	1,  // 28: lore.v1.EvidenceNode.role:type_name -> lore.v1.NodeRole
-	32, // 29: lore.v1.EvidenceNode.via:type_name -> lore.v1.Edge
-	33, // 30: lore.v1.DocumentMeta.created_at:type_name -> google.protobuf.Timestamp
-	33, // 31: lore.v1.DocumentMeta.updated_at:type_name -> google.protobuf.Timestamp
-	2,  // 32: lore.v1.Edge.kind:type_name -> lore.v1.EdgeKind
-	5,  // 33: lore.v1.QueryService.FindDecision:input_type -> lore.v1.FindDecisionRequest
-	7,  // 34: lore.v1.QueryService.Why:input_type -> lore.v1.WhyRequest
-	9,  // 35: lore.v1.QueryService.Trace:input_type -> lore.v1.TraceRequest
-	11, // 36: lore.v1.QueryService.ImpactOf:input_type -> lore.v1.ImpactOfRequest
-	13, // 37: lore.v1.QueryService.HistoryOf:input_type -> lore.v1.HistoryOfRequest
-	15, // 38: lore.v1.SyncService.Trigger:input_type -> lore.v1.TriggerRequest
-	18, // 39: lore.v1.SyncService.Status:input_type -> lore.v1.StatusRequest
-	20, // 40: lore.v1.SyncService.Watch:input_type -> lore.v1.WatchRequest
-	6,  // 41: lore.v1.QueryService.FindDecision:output_type -> lore.v1.FindDecisionResponse
-	8,  // 42: lore.v1.QueryService.Why:output_type -> lore.v1.WhyResponse
-	10, // 43: lore.v1.QueryService.Trace:output_type -> lore.v1.TraceResponse
-	12, // 44: lore.v1.QueryService.ImpactOf:output_type -> lore.v1.ImpactOfResponse
-	14, // 45: lore.v1.QueryService.HistoryOf:output_type -> lore.v1.HistoryOfResponse
-	16, // 46: lore.v1.SyncService.Trigger:output_type -> lore.v1.TriggerResponse
-	19, // 47: lore.v1.SyncService.Status:output_type -> lore.v1.StatusResponse
-	21, // 48: lore.v1.SyncService.Watch:output_type -> lore.v1.SyncEvent
-	41, // [41:49] is the sub-list for method output_type
-	33, // [33:41] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	23, // 10: lore.v1.StatusResponse.lease:type_name -> lore.v1.LeaseState
+	22, // 11: lore.v1.StatusResponse.sources:type_name -> lore.v1.SourceState
+	33, // 12: lore.v1.StatusResponse.clones:type_name -> lore.v1.CloneState
+	4,  // 13: lore.v1.SyncEvent.phase:type_name -> lore.v1.SyncPhase
+	34, // 14: lore.v1.SyncEvent.at:type_name -> google.protobuf.Timestamp
+	34, // 15: lore.v1.SourceState.last_checkpoint:type_name -> google.protobuf.Timestamp
+	34, // 16: lore.v1.LeaseState.acquired_at:type_name -> google.protobuf.Timestamp
+	34, // 17: lore.v1.LeaseState.heartbeat_at:type_name -> google.protobuf.Timestamp
+	26, // 18: lore.v1.EvidenceBundle.anchor:type_name -> lore.v1.Anchor
+	30, // 19: lore.v1.EvidenceBundle.nodes:type_name -> lore.v1.EvidenceNode
+	25, // 20: lore.v1.EvidenceBundle.chains:type_name -> lore.v1.Chain
+	0,  // 21: lore.v1.Anchor.kinds:type_name -> lore.v1.AnchorKind
+	27, // 22: lore.v1.Anchor.code:type_name -> lore.v1.CodeAnchor
+	28, // 23: lore.v1.Anchor.doc:type_name -> lore.v1.DocRef
+	29, // 24: lore.v1.Anchor.window:type_name -> lore.v1.TimeWindow
+	34, // 25: lore.v1.DocRef.created_at:type_name -> google.protobuf.Timestamp
+	34, // 26: lore.v1.TimeWindow.from:type_name -> google.protobuf.Timestamp
+	34, // 27: lore.v1.TimeWindow.to:type_name -> google.protobuf.Timestamp
+	31, // 28: lore.v1.EvidenceNode.doc:type_name -> lore.v1.DocumentMeta
+	1,  // 29: lore.v1.EvidenceNode.role:type_name -> lore.v1.NodeRole
+	32, // 30: lore.v1.EvidenceNode.via:type_name -> lore.v1.Edge
+	34, // 31: lore.v1.DocumentMeta.created_at:type_name -> google.protobuf.Timestamp
+	34, // 32: lore.v1.DocumentMeta.updated_at:type_name -> google.protobuf.Timestamp
+	2,  // 33: lore.v1.Edge.kind:type_name -> lore.v1.EdgeKind
+	5,  // 34: lore.v1.QueryService.FindDecision:input_type -> lore.v1.FindDecisionRequest
+	7,  // 35: lore.v1.QueryService.Why:input_type -> lore.v1.WhyRequest
+	9,  // 36: lore.v1.QueryService.Trace:input_type -> lore.v1.TraceRequest
+	11, // 37: lore.v1.QueryService.ImpactOf:input_type -> lore.v1.ImpactOfRequest
+	13, // 38: lore.v1.QueryService.HistoryOf:input_type -> lore.v1.HistoryOfRequest
+	15, // 39: lore.v1.SyncService.Trigger:input_type -> lore.v1.TriggerRequest
+	18, // 40: lore.v1.SyncService.Status:input_type -> lore.v1.StatusRequest
+	20, // 41: lore.v1.SyncService.Watch:input_type -> lore.v1.WatchRequest
+	6,  // 42: lore.v1.QueryService.FindDecision:output_type -> lore.v1.FindDecisionResponse
+	8,  // 43: lore.v1.QueryService.Why:output_type -> lore.v1.WhyResponse
+	10, // 44: lore.v1.QueryService.Trace:output_type -> lore.v1.TraceResponse
+	12, // 45: lore.v1.QueryService.ImpactOf:output_type -> lore.v1.ImpactOfResponse
+	14, // 46: lore.v1.QueryService.HistoryOf:output_type -> lore.v1.HistoryOfResponse
+	16, // 47: lore.v1.SyncService.Trigger:output_type -> lore.v1.TriggerResponse
+	19, // 48: lore.v1.SyncService.Status:output_type -> lore.v1.StatusResponse
+	21, // 49: lore.v1.SyncService.Watch:output_type -> lore.v1.SyncEvent
+	42, // [42:50] is the sub-list for method output_type
+	34, // [34:42] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_lore_v1_lore_proto_init() }
@@ -2482,7 +2568,7 @@ func file_lore_v1_lore_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lore_v1_lore_proto_rawDesc), len(file_lore_v1_lore_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   28,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -318,8 +318,8 @@ func TestStatusListsImplicitAndExplicitSourceIDsBeforeSync(t *testing.T) {
 	if !slices.Equal(stats.Sources, want) {
 		t.Errorf("sources = %+v, want %+v", stats.Sources, want)
 	}
-	if stats.Documents != 0 || stats.Chunks != 0 || stats.Edges != 0 || len(stats.Cursors) != 0 || stats.Lease != nil {
-		t.Errorf("stats = %+v, want zero counts, no cursors and no lease", stats)
+	if stats.Documents != 0 || stats.Chunks != 0 || stats.Edges != 0 || len(checkpointedSources(stats)) != 0 || stats.Lease != nil {
+		t.Errorf("stats = %+v, want zero counts, no checkpoints and no lease", stats)
 	}
 }
 

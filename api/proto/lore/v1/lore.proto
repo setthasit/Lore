@@ -112,8 +112,11 @@ message StatusResponse {
   int64 documents = 1;
   int64 chunks = 2;
   int64 edges = 3;
-  repeated CursorAge cursors = 4;
+  reserved 4;
+  reserved "cursors";
   LeaseState lease = 5;
+  repeated SourceState sources = 6;
+  repeated CloneState clones = 7;
 }
 
 message WatchRequest {}
@@ -128,9 +131,11 @@ message SyncEvent {
   google.protobuf.Timestamp at = 6;
 }
 
-message CursorAge {
-  string source = 1;
-  google.protobuf.Timestamp updated_at = 2;
+message SourceState {
+  string id = 1;
+  bool configured = 2;
+  int64 documents = 3;
+  google.protobuf.Timestamp last_checkpoint = 4;
 }
 
 message LeaseState {
@@ -206,6 +211,11 @@ message Edge {
   string dst = 2;
   EdgeKind kind = 3;
   float confidence = 4;
+}
+
+message CloneState {
+  string name = 1;
+  bool synced = 2;
 }
 
 enum AnchorKind {

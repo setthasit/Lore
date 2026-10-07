@@ -58,19 +58,26 @@ func (s *syncServer) Status(ctx context.Context, _ *lorev1.StatusRequest) (*lore
 		return nil, rpcError(s.log, "Status", err)
 	}
 
-	cursors := make([]*lorev1.CursorAge, len(stats.Cursors))
-	for i, cursor := range stats.Cursors {
-		cursors[i] = &lorev1.CursorAge{
-			Source:    cursor.Connector,
-			UpdatedAt: newTimestamp(cursor.UpdatedAt),
+	sources := make([]*lorev1.SourceState, len(stats.Sources))
+	for i, source := range stats.Sources {
+		sources[i] = &lorev1.SourceState{
+			Id:             source.ID,
+			Configured:     source.Configured,
+			Documents:      source.Documents,
+			LastCheckpoint: newTimestamp(source.LastCheckpoint),
 		}
+	}
+	clones := make([]*lorev1.CloneState, len(stats.Clones))
+	for i, clone := range stats.Clones {
+		clones[i] = &lorev1.CloneState{Name: clone.Name, Synced: clone.Synced}
 	}
 
 	return &lorev1.StatusResponse{
 		Documents: stats.Documents,
 		Chunks:    stats.Chunks,
 		Edges:     stats.Edges,
-		Cursors:   cursors,
+		Sources:   sources,
+		Clones:    clones,
 		Lease:     newLeaseState(stats.Lease),
 	}, nil
 }
