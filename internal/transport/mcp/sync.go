@@ -17,7 +17,7 @@ const (
 	syncStatusName = "sync_status"
 )
 
-const syncNowDescription = `Refresh the index now: pull every configured source's changes into it, or just one source, and answer once the round has finished.
+const syncNowDescription = `When the index may be out of date, refresh it now: pull every configured source's changes into it, or just one source, and answer once the round has finished.
 
 Use this when sync_status shows the source you need is stale, or when the user says the thing you are looking for landed after the last checkpoint. Every other tool here reads the index; this is the only one that writes it, so reach for it to fix a thin or empty result, not as a warm-up.
 
@@ -25,7 +25,7 @@ Rounds are exclusive across every process sharing this workspace. A round that c
 
 Returns what the round covered: synced names the source, or all configured sources, and took_over_from appears only when this round reclaimed the lock from a holder that had stopped checking in. Sources fail independently, so failures lists any instance that gave up at its last checkpoint while the rest of the round committed — a populated list is a partial refresh, not a failed one.`
 
-const syncStatusDescription = `Report the state of the index: how much is stored, how fresh each source is, and whether a sync round is writing right now.
+const syncStatusDescription = `When a result came back empty or with fewer than 3 documents, or you need to know what is indexed, check the index state: how much is stored, how fresh each source is, and whether a sync round is writing right now.
 
 Use this before trusting a thin or empty evidence bundle from find_decision, why, trace, impact_of or history_of — a source that last checkpointed days ago cannot hold what happened yesterday — and use sync_now to refresh it.
 

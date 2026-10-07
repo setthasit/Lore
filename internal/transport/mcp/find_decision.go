@@ -14,7 +14,7 @@ import (
 
 const findDecisionName = "find_decision"
 
-const findDecisionDescription = `Find the recorded evidence behind a decision: the commits, pull requests, reviews, tickets and design pages that explain why it was made.
+const findDecisionDescription = `Answer why a product, design or architecture decision was made: search design pages, decision records, tickets, pull requests and commits for the evidence behind it.
 
 Use this for breadth across a decision; use trace for depth on one document, impact_of for the consequences of a decision, history_of for how one file evolved.
 

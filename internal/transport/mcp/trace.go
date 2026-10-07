@@ -11,7 +11,7 @@ import (
 
 const traceName = "trace"
 
-const traceDescription = `Trace one document's provenance neighborhood: what it came from, what came out of it, and its own text up to 8,000 characters.
+const traceDescription = `Find what one document says and what it links to: follow what it came from and what came out of it, and read its own text up to 8,000 characters.
 
 Use this for depth on one document; use find_decision for breadth across a decision, impact_of for the consequences of a decision, history_of for how one file evolved.
 
