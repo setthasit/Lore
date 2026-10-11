@@ -14,7 +14,7 @@ registration: `registerSyncStatus` sets it and `registerSyncNow` does not
 file. Only `sync_now` mutates local state, which is the index and never a
 source.
 
-The server sends instructions in the `initialize` response. They describe
+The server sends instructions at client connect, in the legacy `initialize` response or the modern `server/discover` response. They describe
 Lore's indexed design pages, decisions, tickets, pull requests and commits.
 The index snapshot is built once per process for `lore mcp` and at request
 time for `lore serve` (`internal/transport/mcp/server.go`, `connectInstructions`,
