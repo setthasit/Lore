@@ -11,7 +11,7 @@ import (
 
 const impactName = "impact_of"
 
-const impactDescription = `Find what followed from a decision: the changes, follow-ups, reverts and discussions that came after it.
+const impactDescription = `Find what followed a decision: the changes, follow-ups, reverts and discussions that came after it.
 
 Use this for the consequences of a decision; use find_decision for breadth across a decision, trace for depth on one document, history_of for how one file evolved.
 

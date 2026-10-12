@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -100,7 +101,10 @@ func serveMCPWithForgeToken(t *testing.T, token string) result {
 	}, registry.OriginBuiltin); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	return runOn(t, reg, &Runtime{Sink: reg.Sink()}, "", "mcp")
+	rt := mockStatus(t, entities.IndexStats{}, nil)
+	rt.Sink = reg.Sink()
+	rt.Log = slog.New(slog.DiscardHandler)
+	return runOn(t, reg, rt, "", "mcp")
 }
 
 func TestLiteralSecretNoticeReachesStderrOnly(t *testing.T) {

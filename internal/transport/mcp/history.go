@@ -11,7 +11,7 @@ import (
 
 const historyName = "history_of"
 
-const historyDescription = `Follow how one file evolved: walk the commits that touched it in a registered local clone, then pick up the pull requests, reviews, tickets and design pages linked to each of them.
+const historyDescription = `Find how one file evolved: walk the commits that touched it in a registered local clone, then pick up the pull requests, reviews, tickets and design pages linked to each of them.
 
 Use this for the evolution of a whole file; use why for breadth on a span of lines you can name, trace for depth on one document, impact_of for the consequences of one decision.
 

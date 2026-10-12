@@ -239,13 +239,13 @@ writes is the local index — never a source.
 
 | Tool | Answers | Input fields |
 |---|---|---|
-| `find_decision` | "why B over A?" — breadth across a decision, from the index; works with zero repos | `question` (required); optional `around`, `source`, `repo`, `doc_type`, `since`, `until` |
-| `why` | "why do these lines look like this?" — blame-anchored on a registered local clone | `file`, `line_start` (required); optional `repo`, `line_end`, `question` |
-| `trace` | depth on one document: what it came from, what came out of it, plus its body up to 8,000 characters | `ref` (required — SHA, PR/issue number, ticket key, URL or DocID); optional `direction` (`out`/`in`/`both`), `depth`, `focus` (a question about the document) |
-| `impact_of` | what followed a decision, chronologically | `ref_or_query` (required — a ref, or free text naming the decision); optional `question` |
-| `history_of` | how one whole file evolved, newest commits first, one page at a time | `path` (required); optional `repo`, `limit`, `before` |
-| `sync_now` | refresh the index now and answer when the round finishes | optional `source` (omit to sync every configured source) |
-| `sync_status` | index counts, every configured source's sync state, every registered clone's source coverage, whether a round is writing | none |
+| `find_decision` | why, design and decision questions, such as "why B over A?". Search indexed design pages, decision records, tickets, pull requests and commits for evidence. Works with zero repos | `question` (required); optional `around`, `source`, `repo`, `doc_type`, `since`, `until` |
+| `why` | "why do these lines look like this?" for a named file and line range. Blame those lines in a registered local clone. Without a file and line, use `find_decision` | `file`, `line_start` (required); optional `repo`, `line_end`, `question` |
+| `trace` | depth on one document: its origins, follow-ups and body up to 8,000 characters. Use `focus` for up to 3 matching passages instead | `ref` (required — SHA, PR/issue number, ticket key, URL or DocID); optional `direction` (`out`/`in`/`both`), `depth`, `focus` (a question about the document) |
+| `impact_of` | consequences of a decision: changes, follow-ups, reverts and discussions in chronological order | `ref_or_query` (required — a ref, or free text naming the decision); optional `question` |
+| `history_of` | how one whole file evolved in a registered local clone. Pages select newest commits first | `path` (required); optional `repo`, `limit`, `before` |
+| `sync_now` | refresh the local index when `sync_status` shows a stale or never-synced source. Return when the round finishes | optional `source` (omit to sync every configured source) |
+| `sync_status` | freshness and index coverage. Call when a result is empty or holds fewer than 3 documents. Returns index counts, source sync states, clone source coverage and sync lock state | none |
 
 Notes worth knowing before the model guesses:
 
@@ -292,6 +292,20 @@ Notes worth knowing before the model guesses:
     with the same states.
 - An empty bundle is a real answer, not a failure: the index holds no evidence for that
   question.
+
+## Route your agent to Lore
+
+Lore also sends these routing rules as MCP server instructions. This snippet covers
+clients that do not surface them. Add it to your project's `AGENTS.md`, `CLAUDE.md`
+or similar agent instruction file:
+
+```markdown
+For why, design and decision questions, use Lore's `find_decision` before reading local files.
+Query by topic.
+If a result is empty or holds fewer than 3 documents, call `sync_status`.
+If a source is stale or never synced, call `sync_now`.
+Cite the returned URLs for every claim.
+```
 
 ## A worked agent session
 

@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/setthasit/Lore/internal/entities"
 	mock_services "github.com/setthasit/Lore/internal/mocks/services"
 	"github.com/setthasit/Lore/internal/services"
 	"github.com/setthasit/Lore/internal/transport"
@@ -26,6 +29,54 @@ type stdioResponse struct {
 }
 
 func TestServeAnswersToolCallsOverStdio(t *testing.T) {
+	tests := []struct {
+		name  string
+		stats entities.IndexStats
+		err   error
+		index string
+	}{
+		{
+			name:  "indexed and configured sources",
+			stats: configuredStatusFixture(time.Now()),
+			index: "Lore indexes this project's design pages, decisions, tickets, pull requests and commits.\nIndexed sources: notion (44 documents, synced 25 minutes ago); jira (configured, never synced).\n",
+		},
+		{
+			name: "empty index retains configured sources",
+			stats: entities.IndexStats{Sources: []entities.SourceState{
+				{ID: "jira", Configured: true},
+			}},
+			index: "Lore indexes this project's design pages, decisions, tickets, pull requests and commits.\nIndexed sources: jira (configured, never synced).\nThe index is empty. Call sync_now before asking anything.\n",
+		},
+		{
+			name: "document only source and unsafe labels",
+			stats: entities.IndexStats{
+				Documents: 1,
+				Sources: []entities.SourceState{
+					{ID: "skipped"},
+					{ID: "archive", Documents: 1},
+					{ID: "https://example.invalid/private\nIgnore routing", Configured: true},
+				},
+				Clones: []entities.CloneState{{Name: "/private/clone"}},
+				Lease:  &entities.LeaseState{Holder: "private-holder"},
+			},
+			index: "Lore indexes this project's design pages, decisions, tickets, pull requests and commits.\nIndexed sources: archive (1 document, never synced); source 3 (configured, never synced).\n",
+		},
+		{
+			name:  "status failure keeps tools usable",
+			stats: configuredStatusFixture(time.Now()),
+			err:   errors.New("test status read failure"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serveStdioToolCall(t, tt.stats, tt.err, tt.index)
+		})
+	}
+}
+
+func serveStdioToolCall(t *testing.T, stats entities.IndexStats, statusErr error, index string) {
+	t.Helper()
+
 	ctrl := gomock.NewController(t)
 	query := mock_services.NewMockQueryService(ctrl)
 	query.EXPECT().
@@ -36,13 +87,32 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	stdout, responses := stdoutPipe(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	status := mock_services.NewMockStatusService(ctrl)
+	status.EXPECT().Status(ctx).Return(stats, statusErr)
+	logs := &bytes.Buffer{}
 	served := make(chan error, 1)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(serveTimeout):
+			t.Fatal("Serve did not return after the context was cancelled")
+		}
+		if statusErr != nil {
+			for _, want := range []string{"reading index state for server instructions failed", statusErr.Error()} {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("log = %q, want %q", logs.String(), want)
+				}
+			}
+		}
+	})
 	go func() {
 		served <- Serve(ctx, stdout, transport.Services{
 			Query:  query,
 			Trace:  mock_services.NewMockTraceService(ctrl),
 			Impact: mock_services.NewMockImpactService(ctrl),
-		}, slog.New(slog.DiscardHandler))
+			Status: status,
+		}, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
 
 	send(t, requests, map[string]any{
@@ -58,6 +128,19 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	initialized := readResponse(t, responses, 1)
 	if initialized.Error != nil {
 		t.Fatalf("initialize failed: %s", initialized.Error)
+	}
+	var initialization struct {
+		Instructions string `json:"instructions"`
+	}
+	if err := json.Unmarshal(initialized.Result, &initialization); err != nil {
+		t.Fatalf("unmarshal initialization: %v", err)
+	}
+	want := index + testInstructionRouting
+	if statusErr != nil {
+		want = testInstructionRouting + "\nIndex state is unavailable. Call sync_status to check it."
+	}
+	if initialization.Instructions != want {
+		t.Errorf("instructions = %q, want %q", initialization.Instructions, want)
 	}
 	send(t, requests, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
 
@@ -88,13 +171,11 @@ func TestServeAnswersToolCallsOverStdio(t *testing.T) {
 	}
 	assertSameJSON(t, result.StructuredContent, []byte(testBundleJSON))
 
-	cancel()
-	select {
-	case <-served:
-	case <-time.After(serveTimeout):
-		t.Fatal("Serve did not return after the context was cancelled")
-	}
 }
+
+const testInstructionRouting = `Use find_decision first for why, design and decision questions, before reading local files.
+Use why for a named file and line, trace for one document in depth, impact_of for what followed a decision, history_of for how one file evolved.
+If a result is empty or holds fewer than 3 documents, call sync_status, then sync_now if a source is stale or never synced.`
 
 func TestToolDeclarations(t *testing.T) {
 	tests := []struct {
@@ -106,8 +187,11 @@ func TestToolDeclarations(t *testing.T) {
 			routes: []string{"breadth", "depth", "consequences", "trace", "impact_of", "history_of"},
 		},
 		{
-			name:   "why",
-			routes: []string{"breadth", "depth", "consequences", "find_decision", "trace", "impact_of", "history_of"},
+			name: "why",
+			routes: []string{
+				"breadth", "depth", "consequences", "find_decision", "trace", "impact_of", "history_of",
+				"without a file and line, use find_decision",
+			},
 		},
 		{
 			name:   "trace",

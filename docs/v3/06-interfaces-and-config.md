@@ -14,6 +14,36 @@ registration: `registerSyncStatus` sets it and `registerSyncNow` does not
 file. Only `sync_now` mutates local state, which is the index and never a
 source.
 
+The server sends instructions at client connect, in the legacy `initialize` response or the modern `server/discover` response. They describe
+Lore's indexed design pages, decisions, tickets, pull requests and commits.
+The index snapshot is built once per process for `lore mcp` and at request
+time for `lore serve` (`internal/transport/mcp/server.go`, `connectInstructions`,
+and `internal/transport/mcp/http.go`). HTTP connect ages reflect that connect,
+not process startup. Instruction ages use whole minutes rounded down.
+Ages below one minute say `synced under a minute ago`.
+For example, `notion` with 44 documents and a checkpoint 1,540 seconds before
+connect is shown as `notion (44 documents, synced 25 minutes ago)`.
+The index-state portion contains only bounded source labels, document counts,
+configured state and ages. No other configuration values are included.
+A source id is displayed only if it has 1–64 ASCII letters, digits, dots,
+underscores or hyphens (`internal/transport/mcp/instructions.go`,
+`instructionSourceLabel`). Every other id becomes `source N`, where N is its
+one-based position in the source list before filtering. Raw ids with control
+characters, URLs, paths or more than 64 characters never appear there.
+Stored ids and source ids on other surfaces are unchanged. Configured sources
+remain listed with their sync state even when the index has zero documents.
+Zero documents adds empty-index guidance to call `sync_now` before asking.
+An index with documents is not described as empty, even without checkpoints.
+An unconfigured source with one document and no checkpoint is shown as
+`1 document, never synced`, without claiming it is configured. Routing tells
+agents to use `find_decision` first for why, design and decision questions
+before reading local files. It routes file-and-line questions to `why`, depth
+on one document to `trace`, consequences to `impact_of` and file evolution
+to `history_of`. An empty result or one with fewer than 3 documents directs
+the agent to `sync_status`, then `sync_now` if a source is stale or never
+synced. If the status read fails, instructions contain routing plus
+`Index state is unavailable. Call sync_status to check it.`
+
 | Tool | Input | Returns |
 |---|---|---|
 | `find_decision` | `question`, optional `around` (event text or date), `source`, `repo`, `doc_type`, `since`, `until` | EvidenceBundle seeded by retrieval; works with zero repos |
@@ -40,7 +70,8 @@ source.
 - `sync_lock`: `held` is always present. When held, `holder`, `held_for_seconds`
   and `last_heartbeat_seconds_ago` are present too. Otherwise they are omitted.
 
-All MCP ages are whole seconds counted at call time, not wall-clock timestamps.
+All MCP `sync_status` ages are whole seconds counted at call time, not
+wall-clock timestamps.
 Zero ages are present, and empty `sources` or `clones` are `[]`, not omitted.
 MCP `sync_status`, gRPC `Status` and `lore status` list the same sources and
 clones with the same states through `StatusService` (`internal/services/status.go`).

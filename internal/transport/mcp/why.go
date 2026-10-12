@@ -11,7 +11,7 @@ import (
 
 const whyName = "why"
 
-const whyDescription = `Explain why a span of code is the way it is: blame those lines in a registered local clone, then follow the commits, pull requests, reviews, tickets and design pages behind them.
+const whyDescription = `Answer why code in a named file and line range looks the way it does: blame those lines in a registered local clone, then follow the commits, pull requests, reviews, tickets and design pages behind them. For why questions without a file and line, use find_decision.
 
 Use this when the question points at code you can name by file and line; use find_decision for breadth when there is no line to point at, trace for depth on one document, impact_of for the consequences of a decision, history_of for how a whole file evolved.
 

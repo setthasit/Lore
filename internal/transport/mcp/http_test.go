@@ -41,7 +41,14 @@ func serveOverHTTP(t *testing.T) *httpFixture {
 		t.Fatalf("listen: %v", err)
 	}
 
-	return startHTTPFixture(t, listener, newMockedTools(t).services())
+	return startHTTPFixture(t, listener, newMockedHTTPTools(t).services())
+}
+
+func newMockedHTTPTools(t *testing.T) toolFixture {
+	t.Helper()
+	f := newMockedTools(t)
+	f.status.EXPECT().Status(gomock.Any()).Return(entities.IndexStats{}, nil).AnyTimes()
+	return f
 }
 
 func startHTTPFixture(t *testing.T, listener net.Listener, svc transport.Services) *httpFixture {
@@ -89,6 +96,7 @@ func (f *httpFixture) closeClient(t *testing.T) {
 		if err := f.session.Close(); err != nil {
 			t.Errorf("close client: %v", err)
 		}
+		f.session = nil
 	}
 	f.client.CloseIdleConnections()
 }
@@ -98,7 +106,9 @@ func (f *httpFixture) listTools(t *testing.T) []string {
 
 	session := f.connect(t)
 	defer f.closeClient(t)
+	start := time.Now()
 	advertised, err := session.ListTools(context.Background(), nil)
+	t.Logf("cold tools/list round trip (loopback HTTP, mocked Status): %s", time.Since(start))
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
@@ -122,6 +132,58 @@ func TestServeHTTPAdvertisesTheSameToolsAsStdio(t *testing.T) {
 	if len(names) != len(want) {
 		t.Errorf("tools = %v, want exactly %d", names, len(want))
 	}
+}
+
+func TestServeHTTPRefreshesInstructionsAtEachConnect(t *testing.T) {
+	tools := newMockedTools(t)
+	var ageSeconds atomic.Int64
+	ageSeconds.Store(60)
+	tools.status.EXPECT().Status(gomock.Any()).DoAndReturn(func(context.Context) (entities.IndexStats, error) {
+		stats := configuredStatusFixture(time.Now())
+		stats.Sources[0].LastCheckpoint = time.Now().Add(-time.Duration(ageSeconds.Load()) * time.Second)
+		return stats, nil
+	}).AnyTimes()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := startHTTPFixture(t, listener, tools.services())
+	for _, connect := range []struct {
+		age  int64
+		line string
+	}{
+		{60, "Indexed sources: notion (44 documents, synced 1 minutes ago); jira (configured, never synced)."},
+		{7200, "Indexed sources: notion (44 documents, synced 120 minutes ago); jira (configured, never synced)."},
+	} {
+		ageSeconds.Store(connect.age)
+		session := f.connect(t)
+		want := "Lore indexes this project's design pages, decisions, tickets, pull requests and commits.\n" + connect.line + "\n" + testInstructionRouting
+		if got := session.InitializeResult().Instructions; got != want {
+			t.Errorf("instructions = %q, want %q", got, want)
+		}
+		f.closeClient(t)
+	}
+}
+
+func TestServeHTTPKeepsToolsUsableWhenInstructionStatusFails(t *testing.T) {
+	tools := newMockedTools(t)
+	tools.status.EXPECT().Status(gomock.Any()).Return(configuredStatusFixture(time.Now()), errors.New("test status read failure")).AnyTimes()
+	tools.query.EXPECT().FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).Return(testBundle(), nil)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := startHTTPFixture(t, listener, tools.services())
+	session := f.connect(t)
+	want := testInstructionRouting + "\nIndex state is unavailable. Call sync_status to check it."
+	if got := session.InitializeResult().Instructions; got != want {
+		t.Errorf("instructions = %q, want %q", got, want)
+	}
+	result, err := session.CallTool(context.Background(), &sdk.CallToolParams{Name: "find_decision", Arguments: questionArgs(testQuestion)})
+	if err != nil {
+		t.Fatalf("call find_decision: %v", err)
+	}
+	assertResultJSON(t, result, testBundleJSON)
 }
 
 func TestServeHTTPServesNoPathButTheEndpoint(t *testing.T) {
@@ -237,7 +299,7 @@ func TestHTTPFixtureClosesSpeculativeConnectionsAfterCompletedRequests(t *testin
 	}
 	dialStarted, reused := make(chan struct{}), make(chan struct{}, 1)
 	observed := &responseEndListener{Listener: listener, dialStarted: dialStarted, unused: make(chan *unusedHTTPConnection, 1)}
-	f := startHTTPFixture(t, observed, newMockedTools(t).services())
+	f := startHTTPFixture(t, observed, newMockedHTTPTools(t).services())
 	clientTransport := f.client.Transport.(*http.Transport)
 	dial := clientTransport.DialContext
 	var dials atomic.Int32
@@ -296,7 +358,7 @@ type httpToolResult struct {
 
 func activeHTTPToolCall(t *testing.T) (*httpFixture, <-chan httpToolResult, context.CancelFunc) {
 	t.Helper()
-	tools := newMockedTools(t)
+	tools := newMockedHTTPTools(t)
 	started := make(chan struct{})
 	releaseCtx, release := context.WithCancel(context.Background())
 	tools.query.EXPECT().FindDecision(gomock.Any(), services.FindDecisionRequest{Question: testQuestion}).DoAndReturn(
